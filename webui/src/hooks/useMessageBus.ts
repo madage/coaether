@@ -12,6 +12,11 @@ export interface ContentBlock {
   indent?: number;
   collapsible?: boolean;
   collapsed?: boolean;
+
+  // Tool use fields
+  tool?: string;
+  tool_input?: string;
+  status?: string;
 }
 
 export interface Envelope {
@@ -98,7 +103,7 @@ export function useMessageBus({ userID, onMessage }: UseMessageBusOptions) {
         }
 
         // Add to messages (skip internal system messages)
-        if (env.type !== 'pong' && env.type !== 'hello') {
+        if (env.type !== 'pong' && env.type !== 'hello' && env.type !== 'permission.response') {
           setMessages((prev) => [...prev, env]);
         }
 

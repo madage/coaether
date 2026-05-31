@@ -6,7 +6,6 @@ import { NodeList } from './components/NodeList';
 import { SessionList } from './components/SessionList';
 import { CreateSession } from './components/CreateSession';
 import { LangSwitcher } from './components/LangSwitcher';
-import { PermissionDialog } from './components/PermissionDialog';
 import { useDashboardWS } from './hooks/useDashboardWS';
 import { useLang } from './i18n/context';
 import { auth as authApi } from './api/client';
@@ -24,33 +23,36 @@ function App() {
   const [authError, setAuthError] = useState<string | null>(null);
   const { nodes, sessions, connected: dashboardConnected } = useDashboardWS();
 
-  // Pending permission request from claude
-  const [pendingPermission, setPendingPermission] = useState<Envelope | null>(null);
+  // Queue of pending permission requests from claude
+  const [pendingPermissions, setPendingPermissions] = useState<Envelope[]>([]);
 
   // Message Bus — only connect when authenticated
   const bus = useMessageBus({
     userID: auth.user?.id || 'anonymous',
     onMessage: useCallback((env: Envelope) => {
       if (env.type === 'permission.request') {
-        setPendingPermission(env);
+        setPendingPermissions((prev) => [...prev, env]);
       }
     }, []),
   });
 
   const sendPermissionResponse = useCallback((approved: boolean) => {
-    const req = pendingPermission;
-    if (!req || !bus.sessionID) return;
-    bus.send({
-      type: 'permission.response',
-      to: `session://${bus.sessionID}`,
-      session_id: bus.sessionID,
-      payload: {
-        tool_use_id: req.payload?.tool_use_id,
-        approved,
-      },
-    });
-    setPendingPermission(null);
-  }, [pendingPermission, bus]);
+    const queue = pendingPermissions;
+    if (queue.length === 0 || !bus.sessionID) return;
+    // Approve (or deny) ALL pending requests in one batch
+    for (const req of queue) {
+      bus.send({
+        type: 'permission.response',
+        to: `session://${bus.sessionID}`,
+        session_id: bus.sessionID,
+        payload: {
+          tool_use_id: req.payload?.tool_use_id,
+          approved,
+        },
+      });
+    }
+    setPendingPermissions([]);
+  }, [pendingPermissions, bus]);
 
   const handleNodeSelect = useCallback((node: Node) => {
     void node;
@@ -348,20 +350,13 @@ function App() {
             onSend={handleSendMessage}
             disabled={!busConnected}
             placeholder={busConnected ? 'Type a message and press Enter...' : 'Connecting...'}
+            pendingPermissions={pendingPermissions.length}
+            onPermissionResponse={(approved) => sendPermissionResponse(approved)}
           />
         </div>
       </div>
     </div>
 
-      {pendingPermission && (
-        <PermissionDialog
-          toolName={pendingPermission.payload?.tool || ''}
-          toolInput={pendingPermission.payload?.input || ''}
-          promptText={pendingPermission.payload?.message || 'Allow this tool call?'}
-          onAllow={() => sendPermissionResponse(true)}
-          onDeny={() => sendPermissionResponse(false)}
-        />
-      )}
     </>
   );
 }

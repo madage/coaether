@@ -39,6 +39,11 @@ export function MessageStream({ messages, className = '' }: MessageStreamProps) 
           return <ErrorMessage key={i} env={env} />;
         }
 
+        // Permission requests (inline display)
+        if (env.type === 'permission.request') {
+          return <PermissionRequestBlock key={i} env={env} />;
+        }
+
         // Messages / events with content blocks
         if (showContent && env.payload?.content) {
           return (
@@ -311,12 +316,17 @@ function ToolUseBlock({ block }: { block: ContentBlock }) {
   return (
     <div style={{ margin: '8px 0', padding: '8px 12px', background: '#f3e5f5', borderRadius: '6px', border: '1px solid #ce93d8' }}>
       <div style={{ fontSize: '0.8em', color: '#7b1fa2', marginBottom: '4px' }}>
-        Tool: {block.language || 'unknown'}
+        Tool: {block.tool || block.language || 'unknown'}
       </div>
-      {block.content && (
+      {(block.tool_input || block.content) && (
         <pre style={{ margin: 0, fontSize: '0.85em', whiteSpace: 'pre-wrap', color: '#4a148c' }}>
-          {block.content}
+          {block.tool_input || block.content}
         </pre>
+      )}
+      {block.status && (
+        <div style={{ fontSize: '0.75em', color: '#9c27b0', marginTop: '4px' }}>
+          Status: {block.status}
+        </div>
       )}
     </div>
   );
@@ -347,4 +357,50 @@ function CardBlock({ block }: { block: ContentBlock }) {
       )}
     </div>
   );
+}
+
+function PermissionRequestBlock({ env }: { env: { payload?: { tool?: string; input?: string; message?: string } } }) {
+  const { tool, input, message } = env.payload || {};
+  return (
+    <div style={{
+      margin: '12px 0',
+      padding: '12px 16px',
+      background: '#fff3e0',
+      border: '1px solid #ffe0b2',
+      borderRadius: '8px',
+    }}>
+      <div style={{ fontSize: '0.85em', color: '#e65100', fontWeight: 600, marginBottom: '4px' }}>
+        🔧 工具请求: {tool || 'unknown'}
+      </div>
+      {message && (
+        <div style={{ fontSize: '0.85em', color: '#bf360c', marginBottom: '6px' }}>
+          {message}
+        </div>
+      )}
+      {input && (
+        <pre style={{
+          margin: '4px 0 0',
+          fontSize: '0.8em',
+          whiteSpace: 'pre-wrap',
+          color: '#555',
+          background: '#fff',
+          padding: '8px',
+          borderRadius: '4px',
+          maxHeight: '160px',
+          overflow: 'auto',
+        }}>
+          {formatInput(input)}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+function formatInput(input: string): string {
+  try {
+    const parsed = JSON.parse(input);
+    return JSON.stringify(parsed, null, 2);
+  } catch {
+    return input;
+  }
 }

@@ -136,7 +136,7 @@ func (b *ClaudeCLIBackend) startSession(sessionID string) *claudeSession {
 	args := []string{
 		"--output-format", "stream-json",
 		"--input-format", "stream-json",
-		"--permission-prompt-tool", "stdio",
+		"--dangerously-skip-permissions",
 		"--verbose",
 	}
 
@@ -187,9 +187,7 @@ func (b *ClaudeCLIBackend) startSession(sessionID string) *claudeSession {
 		scanner := bufio.NewScanner(stderr)
 		for scanner.Scan() {
 			line := scanner.Text()
-			if strings.Contains(line, "error") || strings.Contains(line, "Error") {
-				log.Printf("[ClaudeCLI][%s] %s", sid, line)
-			}
+			log.Printf("[ClaudeCLI][%s][stderr] %s", sid, line)
 		}
 	}()
 
@@ -237,6 +235,12 @@ func (b *ClaudeCLIBackend) readStdout(sess *claudeSession, stdout io.Reader) {
 			b.handleResultEvent(sess, &evt)
 		case "permission":
 			b.handlePermissionEvent(sess, &evt)
+		case "control_request":
+			b.handleControlRequest(sess, line)
+		case "user":
+			b.handleUserEvent(sess, line)
+		default:
+			log.Printf("[ClaudeCLI][%s] Unhandled: %s", sid, evt.Type)
 		}
 	}
 
@@ -306,11 +310,24 @@ func (b *ClaudeCLIBackend) handleAssistantEvent(sess *claudeSession, evt *stream
 
 		case "tool_use":
 			inputJSON, _ := json.Marshal(block.Input)
+			// Permission routing (consumed by runtime for approval flow)
 			b.sendToBus(protocol.NewEnvelope("", sessionTo(sess.sessionID), protocol.MsgToolUse,
 				&protocol.Payload{
 					ToolUseID: block.ID,
 					Tool:      block.Name,
 					Input:     string(inputJSON),
+				}).WithSession(sess.sessionID))
+			// Display event (consumed by frontend for rendering)
+			b.sendToBus(protocol.NewEnvelope("", sessionTo(sess.sessionID), protocol.MsgEvent,
+				&protocol.Payload{
+					Content: []protocol.ContentBlock{
+						{
+							Type:      "tool_use",
+							Tool:      block.Name,
+							ToolInput: string(inputJSON),
+							Status:    "running",
+						},
+					},
 				}).WithSession(sess.sessionID))
 		}
 	}
@@ -372,6 +389,124 @@ func (b *ClaudeCLIBackend) handlePermissionEvent(sess *claudeSession, evt *strea
 		}).WithSession(sess.sessionID))
 }
 
+
+func (b *ClaudeCLIBackend) handleControlRequest(sess *claudeSession, rawLine string) {
+	var raw struct {
+		RequestID string `json:"request_id"`
+		Request   struct {
+			Subtype     string `json:"subtype"`
+			ToolName    string `json:"tool_name"`
+			DisplayName string `json:"display_name"`
+			Input       any    `json:"input"`
+			Description string `json:"description"`
+		} `json:"request"`
+	}
+	if err := json.Unmarshal([]byte(rawLine), &raw); err != nil {
+		log.Printf("[ClaudeCLI][%s] ControlRequest parse error: %v", sess.sessionID, err)
+		b.handleControlRequestGeneric(sess, rawLine)
+		return
+	}
+
+	if raw.Request.Subtype != "can_use_tool" {
+		shortID := sess.sessionID
+		if len(shortID) > 8 {
+			shortID = shortID[:8]
+		}
+		log.Printf("[ClaudeCLI][%s] Unhandled control_request subtype: %s", shortID, raw.Request.Subtype)
+		return
+	}
+
+	inputStr := ""
+	if raw.Request.Input != nil {
+		b, _ := json.Marshal(raw.Request.Input)
+		inputStr = string(b)
+	}
+
+	shortID := sess.sessionID
+	if len(shortID) > 8 {
+		shortID = shortID[:8]
+	}
+	log.Printf("[ClaudeCLI][%s] ControlRequest: tool=%s id=%s input=%s", shortID, raw.Request.ToolName, raw.RequestID, truncate(inputStr, 100))
+
+	log.Printf("[ClaudeCLI][%s] Forwarding permission request: %s (id=%s)", shortID, raw.Request.ToolName, raw.RequestID)
+	b.sendToBus(protocol.NewEnvelope("", sessionTo(sess.sessionID), protocol.MsgPermissionRequest,
+		&protocol.Payload{
+			ToolUseID: raw.RequestID,
+			Tool:      raw.Request.ToolName,
+			Input:     inputStr,
+			Message:   raw.Request.Description,
+		}).WithSession(sess.sessionID))
+}
+
+func (b *ClaudeCLIBackend) handleControlRequestGeneric(sess *claudeSession, rawLine string) {
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(rawLine), &raw); err != nil {
+		return
+	}
+
+	requestID := getStr(raw, "request_id")
+	if requestID == "" {
+		return
+	}
+
+	var toolName string
+	if req, ok := raw["request"].(map[string]any); ok {
+		toolName = getStr(req, "tool_name")
+		if toolName == "" {
+			toolName = getStr(req, "name")
+		}
+	}
+
+	log.Printf("[ClaudeCLI] Auto-approving (generic): %s (id=%s)", toolName, requestID)
+	jsonMsg := fmt.Sprintf(`{"type":"control_response","request_id":%s,"response":{"approved":true}}`,
+		jsonEscape(requestID))
+	if _, err := io.WriteString(sess.stdin, jsonMsg+"\n"); err != nil {
+		log.Printf("[ClaudeCLI] Control response write error (generic): %v", err)
+	}
+	b.sendToBus(protocol.NewEnvelope("", sessionTo(sess.sessionID), protocol.MsgPermissionRequest,
+		&protocol.Payload{
+			ToolUseID: requestID,
+			Tool:      toolName,
+			Input:     "",
+			Message:   "Allow this tool call?",
+		}).WithSession(sess.sessionID))
+}
+
+func (b *ClaudeCLIBackend) handleUserEvent(sess *claudeSession, rawLine string) {
+	// Forward tool_result to bus for display purposes only.
+	var raw struct {
+		Message struct {
+			Role    string `json:"role"`
+			Content []struct {
+				Type        string `json:"type"`
+				ToolUseID   string `json:"tool_use_id"`
+				Content     string `json:"content"`
+				IsError     bool   `json:"is_error"`
+			} `json:"content"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(rawLine), &raw); err != nil {
+		return
+	}
+
+	// Forward to bus for display only — do NOT echo back to stdin
+	// (claude already processed the tool result internally)
+	for _, block := range raw.Message.Content {
+		if block.Type == "tool_result" {
+			b.sendToBus(protocol.NewEnvelope("", sessionTo(sess.sessionID), protocol.MsgEvent,
+				&protocol.Payload{
+					Content: []protocol.ContentBlock{
+						{
+							Type:    "tool_result",
+							Content: block.Content,
+							Status:  "done",
+						},
+					},
+				}).WithSession(sess.sessionID))
+		}
+	}
+}
+
 func (b *ClaudeCLIBackend) HandlePermissionResponse(env *protocol.Envelope) {
 	if env.Payload == nil {
 		return
@@ -382,23 +517,25 @@ func (b *ClaudeCLIBackend) HandlePermissionResponse(env *protocol.Envelope) {
 	if !ok {
 		return
 	}
-	approvalID := env.Payload.ToolUseID
-	if approvalID == "" {
+	requestID := env.Payload.ToolUseID
+	if requestID == "" {
 		return
 	}
 	approved := env.Payload.Approved
-	jsonMsg := fmt.Sprintf(`{"type":"approval","approval_id":%s,"approved":%t}`,
-		jsonEscape(approvalID), approved)
 
 	sid := sess.sessionID
 	if len(sid) > 8 {
 		sid = sid[:8]
 	}
-	log.Printf("[ClaudeCLI][%s] Permission response: %s -> %v", sid, approvalID, approved)
-
-	_, err := io.WriteString(sess.stdin, jsonMsg+"\n")
-	if err != nil {
-		log.Printf("[ClaudeCLI][%s] Permission write error: %v", sid, err)
+	log.Printf("[ClaudeCLI][%s] Permission response: %s -> %v", sid, requestID, approved)
+	if approved {
+		log.Printf("[ClaudeCLI][%s] STDIN << control_response", sid)
+		jsonMsg := fmt.Sprintf(`{"type":"control_response","request_id":%s,"response":{"approved":true}}`,
+			jsonEscape(requestID))
+		io.WriteString(sess.stdin, jsonMsg+"\n")
+	} else {
+		log.Printf("[ClaudeCLI][%s] Denied, closing session", sid)
+		b.CloseSession(sess.sessionID)
 	}
 }
 
@@ -413,6 +550,7 @@ func (b *ClaudeCLIBackend) processMessage(sess *claudeSession, env *protocol.Env
 
 	// Send JSON formatted message
 	jsonMsg := fmt.Sprintf(`{"type":"user","message":{"role":"user","content":%s}}`, jsonEscape(text))
+	log.Printf("[ClaudeCLI][%s] STDIN << %s", sid, truncate(jsonMsg, 200))
 	_, err := io.WriteString(sess.stdin, jsonMsg+"\n")
 	if err != nil {
 		log.Printf("[ClaudeCLI][%s] Write error: %v", sid, err)
@@ -506,6 +644,35 @@ func (s *claudeSession) updateActivity() {
 	s.mu.Lock()
 	s.lastActivity = time.Now()
 	s.mu.Unlock()
+}
+
+// getStr safely extracts a string from a map.
+func getStr(m map[string]any, key string) string {
+	v, ok := m[key]
+	if !ok {
+		return ""
+	}
+	s, _ := v.(string)
+	return s
+}
+
+// coalesce returns the first non-empty string.
+func coalesce(ss ...string) string {
+	for _, s := range ss {
+		if s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// truncate shortens a string to n runes for logging.
+func truncate(s string, n int) string {
+	runes := []rune(s)
+	if len(runes) <= n {
+		return s
+	}
+	return string(runes[:n]) + "..."
 }
 
 func min(a, b int) int {

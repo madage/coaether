@@ -2,11 +2,12 @@ interface PermissionDialogProps {
   toolName: string;
   toolInput: string;
   promptText: string;
+  pendingCount?: number;
   onAllow: () => void;
   onDeny: () => void;
 }
 
-export function PermissionDialog({ toolName, toolInput, promptText, onAllow, onDeny }: PermissionDialogProps) {
+export function PermissionDialog({ toolName, toolInput, promptText, pendingCount, onAllow, onDeny }: PermissionDialogProps) {
   return (
     <div style={{
       position: 'fixed',
@@ -26,11 +27,11 @@ export function PermissionDialog({ toolName, toolInput, promptText, onAllow, onD
         boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
       }}>
         <div style={{ fontSize: '1.1em', fontWeight: 600, marginBottom: '4px', color: '#1a1a2e' }}>
-          Permission Required
+          Permission Required{pendingCount && pendingCount > 1 ? ` (1/${pendingCount})` : ''}
         </div>
 
         <div style={{ fontSize: '0.85em', color: '#666', marginBottom: '16px' }}>
-          {promptText}
+          {promptText}{pendingCount && pendingCount > 1 ? ` (and ${pendingCount - 1} more pending operation${pendingCount > 2 ? 's' : ''})` : ''}
         </div>
 
         <div style={{
