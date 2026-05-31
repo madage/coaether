@@ -80,6 +80,20 @@ export const zh = {
   loading: '加载中',
   optional: '可选',
 
+  // Chat
+  chat: '聊天',
+  noMessages: '暂无消息。发送消息开始对话。',
+  send: '发送',
+  inputPlaceholder: '输入消息，按 Enter 发送...',
+  connecting: '连接中...',
+  sessionActive: '活跃',
+  clear: '清空',
+  sessionNoActive: '无活跃会话',
+  connected: '已连接',
+  offline: '离线',
+  you: '你',
+  system: '系统',
+
   // Language
   switchLang: 'English',
 } as const;

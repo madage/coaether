@@ -55,12 +55,32 @@ export function useDashboardWS() {
 
           case 'node_status': {
             const p = msg.payload as { node_id: string; name: string; status: string };
-            setState((prev) => ({
-              ...prev,
-              nodes: prev.nodes.map((n) =>
-                n.id === p.node_id ? { ...n, status: p.status as Node['status'] } : n,
-              ),
-            }));
+            setState((prev) => {
+              const exists = prev.nodes.find((n) => n.id === p.node_id);
+              if (!exists) {
+                // New node from bus runtime — add it
+                const newNode: Node = {
+                  id: p.node_id,
+                  user_id: '',
+                  name: p.name || p.node_id,
+                  os: 'bus',
+                  arch: '',
+                  status: p.status as Node['status'],
+                  version: '',
+                  ip: 'bus',
+                  max_sessions: 3,
+                  last_seen: new Date().toISOString(),
+                  created_at: new Date().toISOString(),
+                };
+                return { ...prev, nodes: [...prev.nodes, newNode] };
+              }
+              return {
+                ...prev,
+                nodes: prev.nodes.map((n) =>
+                  n.id === p.node_id ? { ...n, status: p.status as Node['status'] } : n,
+                ),
+              };
+            });
             break;
           }
 

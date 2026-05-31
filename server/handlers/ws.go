@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/superco/server/models"
+	"github.com/superco/server/protocol"
 )
 
 var upgrader = websocket.Upgrader{
@@ -38,6 +40,7 @@ type NodeConnection struct {
 type WSHub struct {
 	DB           *sql.DB
 	JWTSecret    string
+	Bus          *protocol.MessageBus
 	Nodes        map[string]*NodeConnection
 	NodesBySess  map[string]string // session_id -> node_id
 	Sessions     map[string]*NodeConnection // session_id -> ui conn
@@ -46,10 +49,11 @@ type WSHub struct {
 	Mu           sync.RWMutex
 }
 
-func NewWSHub(db *sql.DB, jwtSecret string) *WSHub {
+func NewWSHub(db *sql.DB, jwtSecret string, bus *protocol.MessageBus) *WSHub {
 	return &WSHub{
 		DB:           db,
 		JWTSecret:    jwtSecret,
+		Bus:          bus,
 		Nodes:        make(map[string]*NodeConnection),
 		NodesBySess:  make(map[string]string),
 		Sessions:     make(map[string]*NodeConnection),
@@ -86,7 +90,7 @@ func (h *WSHub) HandleNodeWS(c *gin.Context) {
 	log.Printf("[WS] Node connected: %s (%s)", nodeID, nodeName)
 
 	// Broadcast node status to dashboards
-	h.broadcastToDashboards("node_status", map[string]interface{}{
+	h.BroadcastToDashboards("node_status", map[string]interface{}{
 		"node_id": nodeID,
 		"name":    nodeName,
 		"status":  "online",
@@ -102,7 +106,7 @@ func (h *WSHub) HandleNodeWS(c *gin.Context) {
 		log.Printf("[WS] Node disconnected: %s", nodeID)
 
 		// Broadcast node offline to dashboards
-		h.broadcastToDashboards("node_status", map[string]interface{}{
+		h.BroadcastToDashboards("node_status", map[string]interface{}{
 			"node_id": nodeID,
 			"name":    nodeName,
 			"status":  "offline",
@@ -306,6 +310,45 @@ func (h *WSHub) sendDashboardInit(nc *NodeConnection, userID string) {
 		log.Printf("[WS] Failed to query nodes for init: %v", err)
 	}
 
+	// Add bus-connected runtime endpoints as virtual nodes for dashboard visibility.
+	// Skip any already in the DB result to avoid duplicates.
+	if h.Bus != nil {
+		existing := make(map[string]bool, len(nodes))
+		for _, n := range nodes {
+			existing[n.ID] = true
+		}
+		busNodes := h.Bus.EndpointsByType(protocol.EndpointRuntime)
+		for _, ep := range busNodes {
+			nodeID := "bus-" + strings.ReplaceAll(ep.ID, "://", "--")
+			if existing[nodeID] {
+				continue
+			}
+			getMeta := func(key, def string) string {
+				if v, ok := ep.Metadata[key]; ok {
+					if s, ok := v.(string); ok {
+						return s
+					}
+				}
+				return def
+			}
+			nodes = append(nodes, models.Node{
+				ID:        nodeID,
+				Name:      getMeta("name", ep.ID),
+				Status:    models.NodeStatusOnline,
+				OS:        getMeta("os", "unknown"),
+				Arch:      getMeta("arch", ""),
+				Version:   getMeta("version", ""),
+				IP:        "bus",
+				MaxSessions: 3,
+				LastSeen:  time.Now(),
+				CreatedAt: time.Now(),
+			})
+		}
+		if len(busNodes) > 0 {
+			log.Printf("[WS] Added %d bus runtime(s) to dashboard init", len(busNodes))
+		}
+	}
+
 	// Fetch sessions for this user
 	sessions := make([]models.SessionResp, 0)
 	srows, err := h.DB.Query(
@@ -334,7 +377,7 @@ func (h *WSHub) sendDashboardInit(nc *NodeConnection, userID string) {
 	nc.Mu.Unlock()
 }
 
-func (h *WSHub) broadcastToDashboards(msgType string, payload interface{}) {
+func (h *WSHub) BroadcastToDashboards(msgType string, payload interface{}) {
 	data, err := json.Marshal(WSMessage{Type: msgType, Payload: mustJSON(payload)})
 	if err != nil {
 		return
@@ -408,7 +451,7 @@ func (h *WSHub) handleNodeMessage(nc *NodeConnection, msg WSMessage) {
 		h.cleanupSessionBinding(payload.SessionID)
 
 		// Broadcast session update to dashboards
-		h.broadcastToDashboards("session_update", map[string]interface{}{
+		h.BroadcastToDashboards("session_update", map[string]interface{}{
 			"id":     payload.SessionID,
 			"status": status,
 		})
@@ -562,7 +605,7 @@ func (h *WSHub) SendTaskToNode(nodeID, sessionID string, task interface{}) bool 
 
 // BroadcastSessionUpdate sends a session status update to all dashboard clients.
 func (h *WSHub) BroadcastSessionUpdate(sessionID string, status interface{}, prompt, workspace, nodeID string) {
-	h.broadcastToDashboards("session_update", map[string]interface{}{
+	h.BroadcastToDashboards("session_update", map[string]interface{}{
 		"id":        sessionID,
 		"status":    status,
 		"prompt":    prompt,

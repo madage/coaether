@@ -3,20 +3,34 @@ package handlers
 import (
 	"database/sql"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/superco/server/models"
+	"github.com/superco/server/protocol"
 	"github.com/superco/server/redis"
 )
 
 type NodeHandler struct {
-	DB *sql.DB
+	DB  *sql.DB
+	Bus *protocol.MessageBus
 }
 
-func NewNodeHandler(db *sql.DB) *NodeHandler {
-	return &NodeHandler{DB: db}
+func NewNodeHandler(db *sql.DB, bus *protocol.MessageBus) *NodeHandler {
+	return &NodeHandler{DB: db, Bus: bus}
+}
+
+// isBusNode checks if this is a bus-connected virtual node.
+// Returns the original endpoint ID (e.g., "runtime://runtime-default").
+func isBusNode(nodeID string) string {
+	if len(nodeID) > 4 && nodeID[:4] == "bus-" {
+		raw := nodeID[4:]
+		// Desanitize: runtime--runtime-default → runtime://runtime-default
+		return strings.ReplaceAll(raw, "--", "://")
+	}
+	return ""
 }
 
 func (h *NodeHandler) Register(c *gin.Context) {
@@ -135,6 +149,29 @@ func (h *NodeHandler) GetByID(c *gin.Context) {
 
 func (h *NodeHandler) ListAgents(c *gin.Context) {
 	nodeID := c.Param("id")
+
+	// For bus-connected virtual nodes, return runtime capabilities as agents
+	if epID := isBusNode(nodeID); epID != "" && h.Bus != nil {
+		ep := h.Bus.GetEndpoint(epID)
+		if ep != nil {
+			agents := make([]models.Agent, 0, len(ep.Capabilities))
+			for _, cap := range ep.Capabilities {
+				agents = append(agents, models.Agent{
+					ID:           epID + "/" + cap.ID,
+					NodeID:       nodeID,
+					Name:         cap.Name,
+					Command:      cap.ID,
+					Version:      cap.Version,
+					Enabled:      true,
+					AutoDetected: true,
+					CreatedAt:    time.Now(),
+					UpdatedAt:    time.Now(),
+				})
+			}
+			c.JSON(http.StatusOK, gin.H{"agents": agents})
+			return
+		}
+	}
 
 	rows, err := h.DB.Query(
 		`SELECT id, node_id, name, command, version, enabled, auto_detected, created_at, updated_at

@@ -1,133 +1,61 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { Terminal } from './components/Terminal';
+import { useMessageBus, type Envelope } from './hooks/useMessageBus';
+import { MessageStream } from './components/MessageStream';
+import { InputArea } from './components/InputArea';
 import { NodeList } from './components/NodeList';
 import { SessionList } from './components/SessionList';
 import { CreateSession } from './components/CreateSession';
 import { LangSwitcher } from './components/LangSwitcher';
-import { useWebSocket } from './hooks/useWebSocket';
 import { useDashboardWS } from './hooks/useDashboardWS';
 import { useLang } from './i18n/context';
-import { auth as authApi, sessions as sessionsApi } from './api/client';
+import { auth as authApi } from './api/client';
 import type { Node, Session, AuthState } from './types';
 
-type Page = 'nodes' | 'sessions' | 'terminal';
+type Page = 'nodes' | 'sessions' | 'chat';
 
 function App() {
   const { t, lang } = useLang();
   const [auth, setAuth] = useState<AuthState>({ token: null, user: null });
   const [page, setPage] = useState<Page>('nodes');
-  const [activeSessionID, setActiveSessionID] = useState<string | null>(null);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [isRegister, setIsRegister] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
-  // Real-time dashboard data (nodes + sessions)
-  const { nodes, sessions } = useDashboardWS();
-  // Track whether we've received WS data for the current session
-  const receivedData = useRef(false);
+  const { nodes, sessions, connected: dashboardConnected } = useDashboardWS();
 
-  // Check for existing token
-  useEffect(() => {
-    const token = localStorage.getItem('token');
-    const userStr = localStorage.getItem('user');
-    if (token && userStr) {
-      try {
-        setAuth({ token, user: JSON.parse(userStr) });
-      } catch {
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-      }
-    }
-  }, []);
-
-  // WebSocket hook for terminal — clear "waiting" on first data
-  const onOutput = useCallback((data: string) => {
-    if (!receivedData.current) {
-      receivedData.current = true;
-      Terminal.clear();
-    }
-    Terminal.write(data);
-  }, []);
-
-  const onTaskResult = useCallback((success: boolean, error?: string) => {
-    if (success) {
-      Terminal.writeln(`\r\n\x1b[32m${t('sessionCompleted')}\x1b[0m`);
-    } else {
-      Terminal.writeln(`\r\n\x1b[31m${t('sessionFailed')}${error || t('unknownError')}]\x1b[0m`);
-    }
-  }, [t]);
-
-  const { sendInput } = useWebSocket({
-    sessionID: activeSessionID || '',
-    onOutput,
-    onTaskResult,
+  // Message Bus — only connect when authenticated
+  const bus = useMessageBus({
+    userID: auth.user?.id || 'anonymous',
+    onMessage: useCallback((env: Envelope) => {
+      // Could handle specific message types here if needed
+      console.log('[App] Bus message:', env.type);
+    }, []),
   });
 
-  async function handleAuth(e: React.FormEvent) {
-    e.preventDefault();
-    setAuthError(null);
-    try {
-      const fn = isRegister ? authApi.register : authApi.login;
-      const data = await fn(username, password);
-      localStorage.setItem('token', data.token);
-      localStorage.setItem('user', JSON.stringify(data.user));
-      setAuth({ token: data.token, user: data.user });
-    } catch (err) {
-      setAuthError(err instanceof Error ? err.message : t('authFailed'));
-    }
-  }
-
-  function handleLogout() {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    setAuth({ token: null, user: null });
-  }
-
-  function handleNodeSelect(node: Node) {
+  const handleNodeSelect = useCallback((node: Node) => {
     void node;
-  }
+  }, []);
 
-  async function handleSessionSelect(session: Session) {
-    receivedData.current = false;
-    setActiveSessionID(session.id);
-    setPage('terminal');
+  const handleSessionSelect = useCallback((session: Session) => {
+    setPage('chat');
+    // For existing sessions, we'd need to join via bus
+    // For now, this just navigates to the chat page
+  }, []);
 
-    // Defer to let UI update
-    setTimeout(async () => {
-      if (session.status === 'completed' || session.status === 'failed') {
-        Terminal.writeln('Loading...');
-        try {
-          const detail = await sessionsApi.getByID(session.id);
-          if (detail.output_log) {
-            Terminal.clear();
-            Terminal.write(detail.output_log);
-          } else {
-            Terminal.clear();
-            Terminal.writeln(t('sessionCompleted'));
-          }
-          if (detail.error_log) {
-            Terminal.writeln(`\r\n\x1b[31mError: ${detail.error_log}\x1b[0m`);
-          }
-        } catch {
-          Terminal.clear();
-          Terminal.writeln(t('sessionCompleted'));
-        }
-      } else {
-        // For pending/running sessions, show waiting message
-        Terminal.writeln(t('waitingForSession'));
-      }
-    }, 0);
-  }
+  const handleSessionCreated = useCallback(async (sessionID: string) => {
+    // Session was created via REST API
+    // Now create the bus session for real-time messaging
+    setPage('chat');
+  }, []);
 
-  function handleSessionCreated(sessionID: string) {
-    receivedData.current = false;
-    setActiveSessionID(sessionID);
-    setPage('terminal');
-
-    setTimeout(() => {
-      Terminal.writeln(t('waitingForSession'));
-    }, 0);
-  }
+  const handleSendMessage = useCallback((text: string): boolean => {
+    if (!bus.sessionID) {
+      // No active session — create one with the available agent
+      bus.createSession([{ id: 'claude', backend: 'api' }]);
+      return false;
+    }
+    return bus.sendMessage(text);
+  }, [bus]);
 
   // Login screen
   if (!auth.token) {
@@ -159,7 +87,19 @@ function App() {
             {t('appSubtitle')}
           </p>
 
-          <form onSubmit={handleAuth}>
+          <form onSubmit={async (e) => {
+            e.preventDefault();
+            setAuthError(null);
+            try {
+              const fn = isRegister ? authApi.register : authApi.login;
+              const data = await fn(username, password);
+              localStorage.setItem('token', data.token);
+              localStorage.setItem('user', JSON.stringify(data.user));
+              setAuth({ token: data.token, user: data.user });
+            } catch (err) {
+              setAuthError(err instanceof Error ? err.message : t('authFailed'));
+            }
+          }}>
             <div style={{ marginBottom: '16px' }}>
               <input
                 type="text"
@@ -210,7 +150,9 @@ function App() {
     );
   }
 
-  // Main app
+  const busConnected = bus.connected;
+  const hasSession = bus.sessionID !== null;
+
   return (
     <div style={{ display: 'flex', height: '100vh', background: '#f5f5f5' }}>
       {/* Sidebar */}
@@ -231,7 +173,7 @@ function App() {
         </div>
 
         <nav style={{ display: 'flex', flexDirection: 'column', padding: '8px' }}>
-          {(['nodes', 'sessions', 'terminal'] as Page[]).map((p) => (
+          {(['nodes', 'sessions', 'chat'] as Page[]).map((p) => (
             <button
               key={p}
               onClick={() => setPage(p)}
@@ -247,15 +189,37 @@ function App() {
                 marginBottom: '2px',
               }}
             >
-              {p === 'nodes' ? `📡 ${t('navNodes')}` : p === 'sessions' ? `📋 ${t('navSessions')}` : `💻 ${t('navTerminal')}`}
+              {p === 'nodes' ? `📡 ${t('navNodes')}` : p === 'sessions' ? `📋 ${t('navSessions')}` : `💬 Chat`}
             </button>
           ))}
         </nav>
 
+        {/* Connection status */}
+        <div style={{ padding: '8px 16px', fontSize: '0.75em', color: '#666' }}>
+          <span style={{
+            display: 'inline-block',
+            width: '8px',
+            height: '8px',
+            borderRadius: '50%',
+            background: busConnected ? '#4caf50' : '#f44336',
+            marginRight: '4px',
+          }} />
+          Bus: {busConnected ? 'connected' : 'offline'}
+          {hasSession && (
+            <span style={{ marginLeft: '8px', color: '#4caf50' }}>
+              | Session: {bus.sessionID?.slice(0, 6)}...
+            </span>
+          )}
+        </div>
+
         <div style={{ marginTop: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
           <LangSwitcher />
           <button
-            onClick={handleLogout}
+            onClick={() => {
+              localStorage.removeItem('token');
+              localStorage.removeItem('user');
+              setAuth({ token: null, user: null });
+            }}
             style={{
               width: '100%',
               padding: '8px',
@@ -271,10 +235,10 @@ function App() {
         </div>
       </div>
 
-      {/* Main content area with overlay approach for terminal persistence */}
-      <div style={{ flex: 1, overflow: 'auto', position: 'relative' }}>
+      {/* Main content */}
+      <div style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
         {/* Nodes page */}
-        <div style={{ display: page === 'nodes' ? 'block' : 'none', padding: '24px', maxWidth: '800px' }}>
+        <div style={{ display: page === 'nodes' ? 'block' : 'none', padding: '24px', maxWidth: '800px', height: '100%', overflow: 'auto' }}>
           <h2>{t('agentNodes')}</h2>
           <NodeList nodes={nodes} onSelect={handleNodeSelect} />
           <div style={{ fontSize: '0.85em', color: '#999', marginTop: '8px' }}>
@@ -283,7 +247,7 @@ function App() {
         </div>
 
         {/* Sessions page */}
-        <div style={{ display: page === 'sessions' ? 'flex' : 'none', maxWidth: '1200px', height: '100%' }}>
+        <div style={{ display: page === 'sessions' ? 'flex' : 'none', height: '100%' }}>
           <div style={{ flex: 1, padding: '24px', overflow: 'auto' }}>
             <SessionList sessions={sessions} onSelect={handleSessionSelect} />
           </div>
@@ -292,38 +256,48 @@ function App() {
           </div>
         </div>
 
-        {/* Terminal page — always rendered but hidden when not active */}
-        <div style={{ display: page === 'terminal' ? 'flex' : 'none', padding: '24px', height: '100%', flexDirection: 'column' }}>
-          <div style={{ marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <h3 style={{ margin: 0 }}>
-              {t('session')}: {activeSessionID ? activeSessionID.substring(0, 8) + '...' : t('none')}
+        {/* Chat page — message bus UI */}
+        <div style={{ display: page === 'chat' ? 'flex' : 'none', height: '100%', flexDirection: 'column' }}>
+          {/* Session header */}
+          <div style={{ padding: '12px 16px', borderBottom: '1px solid #e0e0e0', background: '#fff', display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <h3 style={{ margin: 0, fontSize: '1em' }}>
+              {hasSession ? `Session: ${bus.sessionID!.slice(0, 8)}...` : 'No active session'}
             </h3>
-            <button
-              onClick={() => {
-                setActiveSessionID(null);
-                setPage('nodes');
-              }}
-              style={{
-                padding: '6px 12px',
-                background: '#f44336',
-                color: '#fff',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                fontSize: '0.85em',
-              }}
-            >
-              {t('disconnect')}
-            </button>
+            {!busConnected && (
+              <span style={{ fontSize: '0.8em', color: '#f44336' }}>Disconnected</span>
+            )}
+            <div style={{ flex: 1 }} />
+            {hasSession && (
+              <button
+                onClick={() => {
+                  bus.sendMessage('/clear');
+                }}
+                style={{
+                  padding: '4px 10px',
+                  background: '#f5f5f5',
+                  color: '#666',
+                  border: '1px solid #ddd',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontSize: '0.8em',
+                }}
+              >
+                Clear
+              </button>
+            )}
           </div>
-          <div style={{ flex: 1 }}>
-            <Terminal onInput={sendInput} />
+
+          {/* Messages */}
+          <div style={{ flex: 1, overflow: 'auto' }}>
+            <MessageStream messages={bus.messages} />
           </div>
-          {!activeSessionID && (
-            <div style={{ marginTop: '12px', padding: '16px', background: '#fff3e0', borderRadius: '6px', color: '#e65100' }}>
-              {t('noActiveSession')}
-            </div>
-          )}
+
+          {/* Input area */}
+          <InputArea
+            onSend={handleSendMessage}
+            disabled={!busConnected}
+            placeholder={busConnected ? 'Type a message and press Enter...' : 'Connecting...'}
+          />
         </div>
       </div>
     </div>

@@ -9,6 +9,7 @@ import (
 	"github.com/superco/server/handlers"
 	"github.com/superco/server/middleware"
 	"github.com/superco/server/redis"
+	"github.com/superco/server/protocol"
 	"github.com/superco/server/services"
 )
 
@@ -36,11 +37,16 @@ func main() {
 	taskQueue.Start()
 	defer taskQueue.Stop()
 
+	// Message Bus (new architecture)
+	messageBus := protocol.NewMessageBus()
+	busH := handlers.NewBusHandler(messageBus)
+
 	// Handlers
 	authH := handlers.NewAuthHandler(database.DB, cfg.JWTSecret)
-	nodeH := handlers.NewNodeHandler(database.DB)
-	wsHub := handlers.NewWSHub(database.DB, cfg.JWTSecret)
+	nodeH := handlers.NewNodeHandler(database.DB, messageBus)
+	wsHub := handlers.NewWSHub(database.DB, cfg.JWTSecret, messageBus)
 	sessionH := handlers.NewSessionHandler(database.DB, wsHub)
+	busH.Hub = wsHub // link for dashboard broadcasting
 
 	// Router
 	r := gin.Default()
@@ -70,6 +76,7 @@ func main() {
 	r.GET("/ws/node", wsHub.HandleNodeWS)
 	r.GET("/ws/ui", wsHub.HandleUIWS)
 	r.GET("/ws/dashboard", wsHub.HandleDashboardWS)
+	r.GET("/ws/bus", busH.HandleWS)
 
 	// Auth required
 	api := r.Group("/api")

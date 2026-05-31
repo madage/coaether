@@ -80,6 +80,20 @@ export const en = {
   loading: 'Loading',
   optional: 'optional',
 
+  // Chat
+  chat: 'Chat',
+  noMessages: 'No messages yet. Send a message to start the conversation.',
+  send: 'Send',
+  inputPlaceholder: 'Type a message and press Enter...',
+  connecting: 'Connecting...',
+  sessionActive: 'Active',
+  clear: 'Clear',
+  sessionNoActive: 'No active session',
+  connected: 'connected',
+  offline: 'offline',
+  you: 'You',
+  system: 'System',
+
   // Language
   switchLang: '中文',
 } as const;

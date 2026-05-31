@@ -1,7 +1,19 @@
+# === Vite ===
+.vite/
+
 # === Go ===
 server/bin/
 server/tmp/
 agent-node/builds/
+bin/
+agent-runtime/agent-runtime
+agent-runtime/server
+agent-runtime/bin/
+server/agent-node
+server/agent-runtime
+server/superco-server
+server/handlers/superco-server
+agent-node/agent-node
 *.exe
 *.exe~
 *.dll
