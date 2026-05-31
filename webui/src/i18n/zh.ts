@@ -65,6 +65,21 @@ export const zh = {
   sessionFailed: '[会话执行失败：',
   unknownError: '未知错误',
 
+  // Agents
+  agents: 'Agent',
+  noAgents: '该节点没有 Agent',
+  scanAgents: '扫描',
+  scanning: '扫描中...',
+  maxSessions: '最大会话数',
+  agent: 'Agent',
+  selectAgent: '选择一个 Agent...',
+  noAgentsOnNode: '该节点没有可用 Agent。点击"扫描"检测已安装的 AI 工具。',
+  enabled: '已启用',
+  disabled: '已禁用',
+  agentHint: 'Agent 从 PATH 中自动检测。可切换启用/禁用。',
+  loading: '加载中',
+  optional: '可选',
+
   // Language
   switchLang: 'English',
 } as const;

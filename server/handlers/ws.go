@@ -165,6 +165,7 @@ func (h *WSHub) HandleUIWS(c *gin.Context) {
 
 	log.Printf("[WS] UI connected to session: %s", sessionID)
 
+	defer h.cleanupSessionBinding(sessionID)
 	defer func() {
 		// Notify node to stop the shell when UI disconnects
 		stopPayload, _ := json.Marshal(WSMessage{
@@ -188,7 +189,6 @@ func (h *WSHub) HandleUIWS(c *gin.Context) {
 
 		conn.Close()
 	}()
-	defer h.cleanupSessionBinding(sessionID)
 
 	for {
 		_, msgBytes, err := conn.ReadMessage()
@@ -309,14 +309,14 @@ func (h *WSHub) sendDashboardInit(nc *NodeConnection, userID string) {
 	// Fetch sessions for this user
 	sessions := make([]models.SessionResp, 0)
 	srows, err := h.DB.Query(
-		`SELECT id, status, prompt, workspace, node_id, created_at
+		`SELECT id, agent_id, status, prompt, workspace, node_id, created_at
 		 FROM sessions WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50`, userID,
 	)
 	if err == nil {
 		defer srows.Close()
 		for srows.Next() {
 			var s models.SessionResp
-			if err := srows.Scan(&s.ID, &s.Status, &s.Prompt, &s.Workspace, &s.NodeID, &s.CreatedAt); err == nil {
+			if err := srows.Scan(&s.ID, &s.AgentID, &s.Status, &s.Prompt, &s.Workspace, &s.NodeID, &s.CreatedAt); err == nil {
 				sessions = append(sessions, s)
 			}
 		}
@@ -413,9 +413,36 @@ func (h *WSHub) handleNodeMessage(nc *NodeConnection, msg WSMessage) {
 			"status": status,
 		})
 
+	case "agent_list":
+		var payload struct {
+			Agents []models.AgentScanResult `json:"agents"`
+		}
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			return
+		}
+		h.handleAgentList(nc.NodeID, payload.Agents)
+
 	case "claim_task":
 		h.assignTask(nc)
 	}
+}
+
+func (h *WSHub) handleAgentList(nodeID string, agents []models.AgentScanResult) {
+	// Delete old auto-detected agents, then insert current ones
+	h.DB.Exec("DELETE FROM agents WHERE node_id = $1 AND auto_detected = true", nodeID)
+
+	for _, a := range agents {
+		h.DB.Exec(
+			`INSERT INTO agents (id, node_id, name, command, version, enabled, auto_detected, created_at, updated_at)
+			 VALUES ($1, $2, $3, $4, $5, true, true, NOW(), NOW())
+			 ON CONFLICT DO NOTHING`,
+			uuid.New().String(), nodeID, a.Name, a.Command, a.Version,
+		)
+	}
+
+	var count int
+	h.DB.QueryRow("SELECT COUNT(*) FROM agents WHERE node_id = $1", nodeID).Scan(&count)
+	log.Printf("[WS] Node %s reported %d agents (%d total)", nodeID, len(agents), count)
 }
 
 func (h *WSHub) assignTask(nc *NodeConnection) {

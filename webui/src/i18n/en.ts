@@ -65,6 +65,21 @@ export const en = {
   sessionFailed: '[Session failed: ',
   unknownError: 'unknown error',
 
+  // Agents
+  agents: 'Agents',
+  noAgents: 'No agents found on this node',
+  scanAgents: 'Scan',
+  scanning: 'Scanning...',
+  maxSessions: 'Max sessions',
+  agent: 'Agent',
+  selectAgent: 'Select an agent...',
+  noAgentsOnNode: 'This node has no available agents. Click "Scan" to detect installed agents.',
+  enabled: 'Enabled',
+  disabled: 'Disabled',
+  agentHint: 'Agents are auto-detected from PATH. Toggle to enable/disable.',
+  loading: 'Loading',
+  optional: 'optional',
+
   // Language
   switchLang: '中文',
 } as const;

@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"os"
 	"runtime"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -25,9 +27,12 @@ type NodeClient struct {
 	conn         *websocket.Conn
 	writeCh      chan []byte
 	done         chan struct{}
-	pty          platform.PTY
-	procCtrl     platform.ProcessController
-	sessionPTYs  map[string]*sessionPTY
+
+	// Multi-session support
+	maxSessions    int32
+	activeSessions int32
+	sessionMu      sync.Mutex
+	sessionPTYs    map[string]*sessionPTY
 }
 
 type sessionPTY struct {
@@ -49,9 +54,11 @@ type wsMessage struct {
 }
 
 type taskPayload struct {
-	SessionID string `json:"session_id"`
-	Prompt    string `json:"prompt"`
-	Workspace string `json:"workspace"`
+	SessionID    string `json:"session_id"`
+	AgentID      string `json:"agent_id"`
+	AgentCommand string `json:"agent_command"`
+	Prompt       string `json:"prompt"`
+	Workspace    string `json:"workspace"`
 }
 
 type outputPayload struct {
@@ -63,6 +70,7 @@ type taskResultPayload struct {
 	SessionID string `json:"session_id"`
 	Success   bool   `json:"success"`
 	Error     string `json:"error,omitempty"`
+	AgentID   string `json:"agent_id,omitempty"`
 }
 
 func NewNodeClient(serverURL, token, name string) *NodeClient {
@@ -72,12 +80,13 @@ func NewNodeClient(serverURL, token, name string) *NodeClient {
 	}
 
 	return &NodeClient{
-		ServerURL:   serverURL,
-		Token:       token,
-		Name:        name,
-		writeCh:     make(chan []byte, 256),
-		done:        make(chan struct{}),
-		sessionPTYs: make(map[string]*sessionPTY),
+		ServerURL:    serverURL,
+		Token:        token,
+		Name:         name,
+		maxSessions:  3,
+		writeCh:      make(chan []byte, 256),
+		done:         make(chan struct{}),
+		sessionPTYs:  make(map[string]*sessionPTY),
 	}
 }
 
@@ -93,22 +102,16 @@ func (nc *NodeClient) Run() error {
 
 	log.Printf("[WS] Connected to %s as node %s", nc.ServerURL, nc.NodeID)
 
-	// Write pump
 	go nc.writePump()
-
-	// Heartbeat
 	go nc.heartbeat()
 
-	// Read pump
+	// Scan and report agents on connect
+	nc.reportAgents()
+
 	return nc.readPump()
 }
 
 func (nc *NodeClient) connectAndRun() error {
-	// Step 1: Register with backend via HTTP
-	// In MVP, we register via WebSocket after initial auth
-	// For simplicity, we'll dial directly with node registration
-
-	// For now, generate a node ID and connect
 	nc.NodeID = uuid.New().String()
 
 	q := url.Values{}
@@ -128,7 +131,25 @@ func (nc *NodeClient) connectAndRun() error {
 	go nc.writePump()
 	go nc.heartbeat()
 
+	// Scan and report agents on connect
+	nc.reportAgents()
+
 	return nc.readPump()
+}
+
+func (nc *NodeClient) reportAgents() {
+	agents := scanAgents()
+	if len(agents) == 0 {
+		log.Printf("[Scanner] No known agents found in PATH")
+		return
+	}
+	log.Printf("[Scanner] Found %d agent(s):", len(agents))
+	for _, a := range agents {
+		log.Printf("  - %s (%s) %s", a.Name, a.Command, a.Version)
+	}
+	nc.send("agent_list", map[string]interface{}{
+		"agents": agents,
+	})
 }
 
 func (nc *NodeClient) writePump() {
@@ -187,6 +208,8 @@ func (nc *NodeClient) readPump() error {
 			nc.handlePause(msg.Payload)
 		case "resume":
 			nc.handleResume(msg.Payload)
+		case "scan_agents":
+			nc.reportAgents()
 		}
 	}
 }
@@ -198,20 +221,36 @@ func (nc *NodeClient) handleTask(payload json.RawMessage) {
 		return
 	}
 
-	log.Printf("[Task] Received task: %s", task.SessionID)
+	log.Printf("[Task] Received task: %s (agent: %s)", task.SessionID, task.AgentCommand)
 
-	// Start Claude Code in PTY
+	// Check concurrent session limit
+	active := atomic.LoadInt32(&nc.activeSessions)
+	if active >= nc.maxSessions {
+		log.Printf("[Task] Session limit reached (%d/%d), rejecting %s", active, nc.maxSessions, task.SessionID)
+		nc.send("task_result", taskResultPayload{
+			SessionID: task.SessionID,
+			Success:   false,
+			Error:     fmt.Sprintf("node session limit reached (%d)", nc.maxSessions),
+		})
+		return
+	}
+
 	go nc.executeTask(task)
 }
 
 func (nc *NodeClient) executeTask(task taskPayload) {
-	// Start Claude Code interactively in the workspace directory
-	claudeCmd := "claude"
+	atomic.AddInt32(&nc.activeSessions, 1)
+	defer atomic.AddInt32(&nc.activeSessions, -1)
+
+	agentCmd := task.AgentCommand
+	if agentCmd == "" {
+		agentCmd = "claude"
+	}
 	workspace := task.Workspace
 
-	// Platform-specific: on Windows, run claude via WSL
+	// Platform-specific: on Windows, run via WSL
 	if nc.Platform == "windows" {
-		claudeCmd = "wsl"
+		agentCmd = "wsl"
 		workspace = platform.WSLPath(task.Workspace)
 	}
 
@@ -219,17 +258,25 @@ func (nc *NodeClient) executeTask(task taskPayload) {
 	p := platform.NewPTY()
 
 	procCtrl := platform.NewProcessController(p)
-	if err := procCtrl.Start(claudeCmd, nil, workspace, p); err != nil {
-		nc.sendTaskResult(task.SessionID, false, fmt.Sprintf("failed to start claude: %v", err))
+	if err := procCtrl.Start(agentCmd, nil, workspace, p); err != nil {
+		nc.sendTaskResult(task.SessionID, false, fmt.Sprintf("failed to start %s: %v", agentCmd, err))
 		return
 	}
 
 	sp := &sessionPTY{pty: p, procCtrl: procCtrl}
+	nc.sessionMu.Lock()
 	nc.sessionPTYs[task.SessionID] = sp
+	nc.sessionMu.Unlock()
 
-	log.Printf("[Task] Claude started for session %s (pid %d)", task.SessionID, procCtrl.PID())
+	log.Printf("[Task] %s started for session %s (pid %d)", agentCmd, task.SessionID, procCtrl.PID())
 
-	// Read output continuously and send to backend; keep reading until process exits
+	// Set terminal size for proper TUI rendering
+	p.Resize(140, 40)
+
+	// Send initial newline to trigger TUI output (most CLI tools wait for input before rendering)
+	p.Write([]byte("\n"))
+
+	// Read output continuously and send to backend
 	buf := make([]byte, 4096)
 	for {
 		n, err := p.Read(buf)
@@ -239,10 +286,13 @@ func (nc *NodeClient) executeTask(task taskPayload) {
 		nc.sendOutput(task.SessionID, string(buf[:n]))
 	}
 
-	// Claude exited — send result and clean up
-	log.Printf("[Task] Claude exited for session %s", task.SessionID)
+	// Process exited — send result and clean up
+	log.Printf("[Task] %s exited for session %s", agentCmd, task.SessionID)
 	nc.sendTaskResult(task.SessionID, true, "")
+
+	nc.sessionMu.Lock()
 	delete(nc.sessionPTYs, task.SessionID)
+	nc.sessionMu.Unlock()
 }
 
 func (nc *NodeClient) handleInput(payload json.RawMessage) {
@@ -254,7 +304,10 @@ func (nc *NodeClient) handleInput(payload json.RawMessage) {
 		return
 	}
 
-	if sp, ok := nc.sessionPTYs[input.SessionID]; ok {
+	nc.sessionMu.Lock()
+	sp, ok := nc.sessionPTYs[input.SessionID]
+	nc.sessionMu.Unlock()
+	if ok {
 		sp.pty.Write([]byte(input.Data))
 	}
 }
@@ -267,9 +320,14 @@ func (nc *NodeClient) handleStop(payload json.RawMessage) {
 		return
 	}
 
-	if sp, ok := nc.sessionPTYs[req.SessionID]; ok {
-		sp.procCtrl.Stop()
+	nc.sessionMu.Lock()
+	sp, ok := nc.sessionPTYs[req.SessionID]
+	if ok {
 		delete(nc.sessionPTYs, req.SessionID)
+	}
+	nc.sessionMu.Unlock()
+	if ok {
+		sp.procCtrl.Stop()
 	}
 }
 
@@ -281,7 +339,10 @@ func (nc *NodeClient) handlePause(payload json.RawMessage) {
 		return
 	}
 
-	if sp, ok := nc.sessionPTYs[req.SessionID]; ok {
+	nc.sessionMu.Lock()
+	sp, ok := nc.sessionPTYs[req.SessionID]
+	nc.sessionMu.Unlock()
+	if ok {
 		sp.procCtrl.Pause()
 	}
 }
@@ -294,7 +355,10 @@ func (nc *NodeClient) handleResume(payload json.RawMessage) {
 		return
 	}
 
-	if sp, ok := nc.sessionPTYs[req.SessionID]; ok {
+	nc.sessionMu.Lock()
+	sp, ok := nc.sessionPTYs[req.SessionID]
+	nc.sessionMu.Unlock()
+	if ok {
 		sp.procCtrl.Resume()
 	}
 }
@@ -333,9 +397,11 @@ func (nc *NodeClient) Close() {
 	if nc.conn != nil {
 		nc.conn.Close()
 	}
+	nc.sessionMu.Lock()
 	for _, sp := range nc.sessionPTYs {
 		sp.procCtrl.Stop()
 	}
+	nc.sessionMu.Unlock()
 }
 
 func mustJSON(v interface{}) json.RawMessage {

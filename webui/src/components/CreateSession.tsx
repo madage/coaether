@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { nodes as nodesApi, sessions as sessionsApi } from '../api/client';
+import { nodes as nodesApi, agents as agentsApi, sessions as sessionsApi } from '../api/client';
 import { useLang } from '../i18n/context';
-import type { Node } from '../types';
+import type { Node, Agent } from '../types';
 
 interface CreateSessionProps {
   nodes?: Node[];
@@ -14,6 +14,9 @@ export function CreateSession({ nodes: propNodes, onCreated }: CreateSessionProp
   const [workspace, setWorkspace] = useState('');
   const [fetchedNodes, setFetchedNodes] = useState<Node[]>([]);
   const [nodeID, setNodeID] = useState('');
+  const [agentID, setAgentID] = useState('');
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [loadingAgents, setLoadingAgents] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -30,6 +33,26 @@ export function CreateSession({ nodes: propNodes, onCreated }: CreateSessionProp
     }
   }, [propNodes]);
 
+  // Load agents when node changes
+  useEffect(() => {
+    if (!nodeID) {
+      setAgents([]);
+      setAgentID('');
+      return;
+    }
+    setLoadingAgents(true);
+    setAgentID('');
+    agentsApi.list(nodeID).then((data) => {
+      setAgents(data.agents);
+      // Auto-select first enabled agent
+      const first = data.agents.find((a) => a.enabled);
+      if (first) setAgentID(first.id);
+      setLoadingAgents(false);
+    }).catch(() => {
+      setLoadingAgents(false);
+    });
+  }, [nodeID]);
+
   const statusLabel: Record<string, string> = {
     online: t('nodeOnline'),
     offline: t('nodeOffline'),
@@ -39,7 +62,7 @@ export function CreateSession({ nodes: propNodes, onCreated }: CreateSessionProp
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
 
-    if (!prompt.trim() || !workspace.trim() || !nodeID) {
+    if (!workspace.trim() || !nodeID || !agentID) {
       setError(t('allFieldsRequired'));
       return;
     }
@@ -48,9 +71,10 @@ export function CreateSession({ nodes: propNodes, onCreated }: CreateSessionProp
       setSubmitting(true);
       setError(null);
       const session = await sessionsApi.create({
-        prompt: prompt.trim(),
+        prompt: prompt.trim() || undefined,
         workspace: workspace.trim(),
         node_id: nodeID,
+        agent_id: agentID,
       });
       onCreated(session.id);
       setPrompt('');
@@ -90,6 +114,34 @@ export function CreateSession({ nodes: propNodes, onCreated }: CreateSessionProp
         )}
       </div>
 
+      {/* Agent selector */}
+      {nodeID && (
+        <div style={{ marginBottom: '12px' }}>
+          <label style={{ display: 'block', marginBottom: '4px', fontWeight: 500 }}>{t('agent')}</label>
+          {loadingAgents ? (
+            <div style={{ fontSize: '0.85em', color: '#999' }}>{t('loading')}...</div>
+          ) : agents.length === 0 ? (
+            <div style={{ fontSize: '0.85em', color: '#f44336' }}>
+              {t('noAgentsOnNode')}
+            </div>
+          ) : (
+            <select
+              value={agentID}
+              onChange={(e) => setAgentID(e.target.value)}
+              style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}
+              required
+            >
+              <option value="">{t('selectAgent')}</option>
+              {agents.filter((a) => a.enabled).map((agent) => (
+                <option key={agent.id} value={agent.id}>
+                  {agent.name} {agent.version ? `(${agent.version})` : ''}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+      )}
+
       <div style={{ marginBottom: '12px' }}>
         <label style={{ display: 'block', marginBottom: '4px', fontWeight: 500 }}>{t('workspacePath')}</label>
         <input
@@ -103,14 +155,15 @@ export function CreateSession({ nodes: propNodes, onCreated }: CreateSessionProp
       </div>
 
       <div style={{ marginBottom: '12px' }}>
-        <label style={{ display: 'block', marginBottom: '4px', fontWeight: 500 }}>{t('prompt')}</label>
+        <label style={{ display: 'block', marginBottom: '4px', fontWeight: 500 }}>
+          {t('prompt')} <span style={{ color: '#999', fontSize: '0.85em' }}>({t('optional')})</span>
+        </label>
         <textarea
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           placeholder={t('promptPlaceholder')}
           rows={4}
           style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc', resize: 'vertical' }}
-          required
         />
       </div>
 
@@ -120,7 +173,7 @@ export function CreateSession({ nodes: propNodes, onCreated }: CreateSessionProp
 
       <button
         type="submit"
-        disabled={submitting || onlineNodes.length === 0}
+        disabled={submitting || onlineNodes.length === 0 || !agentID || agents.length === 0}
         style={{
           padding: '10px 24px',
           background: submitting ? '#ccc' : '#1976d2',

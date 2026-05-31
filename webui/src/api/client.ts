@@ -1,4 +1,4 @@
-import type { Node, Session, CreateSessionReq } from '../types';
+import type { Node, Session, CreateSessionReq, Agent } from '../types';
 
 const BASE = '/api';
 
@@ -60,6 +60,20 @@ export const nodes = {
     request<{ status: string }>('/nodes/heartbeat', {
       method: 'POST',
       body: JSON.stringify({ node_id: nodeID, status }),
+    }),
+
+  scan: (nodeID: string) =>
+    request<{ status: string }>(`/nodes/${nodeID}/scan`, { method: 'POST' }),
+};
+
+// Agents
+export const agents = {
+  list: (nodeID: string) => request<{ agents: Agent[] }>(`/nodes/${nodeID}/agents`),
+
+  toggle: (agentID: string, enabled: boolean) =>
+    request<{ status: string }>(`/agents/${agentID}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ enabled }),
     }),
 };
 

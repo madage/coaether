@@ -11,16 +11,18 @@ const (
 )
 
 type Node struct {
-	ID        string     `json:"id"`
-	UserID    string     `json:"user_id"`
-	Name      string     `json:"name"`
-	OS        string     `json:"os"`
-	Arch      string     `json:"arch"`
-	Status    NodeStatus `json:"status"`
-	Version   string     `json:"version"`
-	IP        string     `json:"ip"`
-	LastSeen  time.Time  `json:"last_seen"`
-	CreatedAt time.Time  `json:"created_at"`
+	ID          string     `json:"id"`
+	UserID      string     `json:"user_id"`
+	Name        string     `json:"name"`
+	OS          string     `json:"os"`
+	Arch        string     `json:"arch"`
+	Status      NodeStatus `json:"status"`
+	Version     string     `json:"version"`
+	IP          string     `json:"ip"`
+	MaxSessions int        `json:"max_sessions"`
+	LastSeen    time.Time  `json:"last_seen"`
+	CreatedAt   time.Time  `json:"created_at"`
+	Agents      []Agent    `json:"agents,omitempty"`
 }
 
 type NodeRegisterReq struct {

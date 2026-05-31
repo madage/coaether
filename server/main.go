@@ -79,6 +79,10 @@ func main() {
 		api.GET("/nodes/:id", nodeH.GetByID)
 		api.POST("/nodes/register", nodeH.Register)
 		api.POST("/nodes/heartbeat", nodeH.Heartbeat)
+		api.GET("/nodes/:id/agents", nodeH.ListAgents)
+		api.POST("/nodes/:id/scan", nodeH.TriggerScan)
+
+		api.PATCH("/agents/:id", nodeH.UpdateAgent)
 
 		api.POST("/sessions", sessionH.Create)
 		api.GET("/sessions", sessionH.List)

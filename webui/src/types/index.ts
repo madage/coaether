@@ -1,3 +1,14 @@
+// === Agent Types ===
+export interface Agent {
+  id: string;
+  node_id: string;
+  name: string;
+  command: string;
+  version: string;
+  enabled: boolean;
+  auto_detected: boolean;
+}
+
 // === Node Types ===
 export type NodeStatus = 'online' | 'offline' | 'busy';
 
@@ -10,8 +21,10 @@ export interface Node {
   status: NodeStatus;
   version: string;
   ip: string;
+  max_sessions: number;
   last_seen: string;
   created_at: string;
+  agents?: Agent[];
 }
 
 // === Session Types ===
@@ -21,6 +34,7 @@ export interface Session {
   id: string;
   user_id: string;
   node_id: string;
+  agent_id?: string;
   status: SessionStatus;
   prompt: string;
   workspace: string;
@@ -33,9 +47,10 @@ export interface Session {
 }
 
 export interface CreateSessionReq {
-  prompt: string;
+  prompt?: string;
   workspace: string;
   node_id: string;
+  agent_id: string;
 }
 
 // === WebSocket Types ===

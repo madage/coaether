@@ -68,7 +68,7 @@ func (h *NodeHandler) List(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 
 	rows, err := h.DB.Query(
-		`SELECT id, user_id, name, os, arch, status, version, ip, last_seen, created_at
+		`SELECT id, user_id, name, os, arch, status, version, ip, max_sessions, last_seen, created_at
 		 FROM nodes WHERE user_id = $1 ORDER BY last_seen DESC`, userID,
 	)
 	if err != nil {
@@ -80,7 +80,7 @@ func (h *NodeHandler) List(c *gin.Context) {
 	var nodes []models.Node
 	for rows.Next() {
 		var n models.Node
-		if err := rows.Scan(&n.ID, &n.UserID, &n.Name, &n.OS, &n.Arch, &n.Status, &n.Version, &n.IP, &n.LastSeen, &n.CreatedAt); err != nil {
+		if err := rows.Scan(&n.ID, &n.UserID, &n.Name, &n.OS, &n.Arch, &n.Status, &n.Version, &n.IP, &n.MaxSessions, &n.LastSeen, &n.CreatedAt); err != nil {
 			continue
 		}
 		nodes = append(nodes, n)
@@ -117,9 +117,9 @@ func (h *NodeHandler) GetByID(c *gin.Context) {
 
 	var n models.Node
 	err := h.DB.QueryRow(
-		`SELECT id, user_id, name, os, arch, status, version, ip, last_seen, created_at
+		`SELECT id, user_id, name, os, arch, status, version, ip, max_sessions, last_seen, created_at
 		 FROM nodes WHERE id = $1`, nodeID,
-	).Scan(&n.ID, &n.UserID, &n.Name, &n.OS, &n.Arch, &n.Status, &n.Version, &n.IP, &n.LastSeen, &n.CreatedAt)
+	).Scan(&n.ID, &n.UserID, &n.Name, &n.OS, &n.Arch, &n.Status, &n.Version, &n.IP, &n.MaxSessions, &n.LastSeen, &n.CreatedAt)
 
 	if err == sql.ErrNoRows {
 		c.JSON(http.StatusNotFound, gin.H{"error": "node not found"})
@@ -131,4 +131,59 @@ func (h *NodeHandler) GetByID(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, n)
+}
+
+func (h *NodeHandler) ListAgents(c *gin.Context) {
+	nodeID := c.Param("id")
+
+	rows, err := h.DB.Query(
+		`SELECT id, node_id, name, command, version, enabled, auto_detected, created_at, updated_at
+		 FROM agents WHERE node_id = $1 ORDER BY name`, nodeID,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query agents"})
+		return
+	}
+	defer rows.Close()
+
+	var agents []models.Agent
+	for rows.Next() {
+		var a models.Agent
+		if err := rows.Scan(&a.ID, &a.NodeID, &a.Name, &a.Command, &a.Version, &a.Enabled, &a.AutoDetected, &a.CreatedAt, &a.UpdatedAt); err != nil {
+			continue
+		}
+		agents = append(agents, a)
+	}
+	if agents == nil {
+		agents = []models.Agent{}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"agents": agents})
+}
+
+func (h *NodeHandler) TriggerScan(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"status": "scanning"})
+}
+
+func (h *NodeHandler) UpdateAgent(c *gin.Context) {
+	agentID := c.Param("id")
+
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	_, err := h.DB.Exec(
+		"UPDATE agents SET enabled = $1, updated_at = NOW() WHERE id = $2",
+		req.Enabled, agentID,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update agent"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }

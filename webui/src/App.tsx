@@ -92,10 +92,9 @@ function App() {
     setActiveSessionID(session.id);
     setPage('terminal');
 
-    // Defer to let React mount the Terminal component first
+    // Defer to let UI update
     setTimeout(async () => {
       if (session.status === 'completed' || session.status === 'failed') {
-        // Fetch historical output log
         Terminal.writeln('Loading...');
         try {
           const detail = await sessionsApi.getByID(session.id);
@@ -125,7 +124,6 @@ function App() {
     setActiveSessionID(sessionID);
     setPage('terminal');
 
-    // Defer to let React mount the Terminal component first
     setTimeout(() => {
       Terminal.writeln(t('waitingForSession'));
     }, 0);
@@ -273,60 +271,60 @@ function App() {
         </div>
       </div>
 
-      {/* Main content */}
-      <div style={{ flex: 1, overflow: 'auto' }}>
-        {page === 'nodes' && (
-          <div style={{ padding: '24px', maxWidth: '800px' }}>
-            <h2>{t('agentNodes')}</h2>
-            <NodeList nodes={nodes} onSelect={handleNodeSelect} />
-            <div style={{ fontSize: '0.85em', color: '#999', marginTop: '8px' }}>
-              {sessions.length} {t('sessions').toLowerCase()} | {t('navNodes').toLowerCase()}: {nodes.length}
-            </div>
+      {/* Main content area with overlay approach for terminal persistence */}
+      <div style={{ flex: 1, overflow: 'auto', position: 'relative' }}>
+        {/* Nodes page */}
+        <div style={{ display: page === 'nodes' ? 'block' : 'none', padding: '24px', maxWidth: '800px' }}>
+          <h2>{t('agentNodes')}</h2>
+          <NodeList nodes={nodes} onSelect={handleNodeSelect} />
+          <div style={{ fontSize: '0.85em', color: '#999', marginTop: '8px' }}>
+            {sessions.length} {t('sessions').toLowerCase()} | {t('navNodes').toLowerCase()}: {nodes.length}
           </div>
-        )}
+        </div>
 
-        {page === 'sessions' && (
-          <div style={{ display: 'flex', maxWidth: '1200px', height: '100%' }}>
-            <div style={{ flex: 1, padding: '24px', overflow: 'auto' }}>
-              <SessionList sessions={sessions} onSelect={handleSessionSelect} />
-            </div>
-            <div style={{ width: '400px', borderLeft: '1px solid #e0e0e0', overflow: 'auto' }}>
-              <CreateSession nodes={nodes} onCreated={handleSessionCreated} />
-            </div>
+        {/* Sessions page */}
+        <div style={{ display: page === 'sessions' ? 'flex' : 'none', maxWidth: '1200px', height: '100%' }}>
+          <div style={{ flex: 1, padding: '24px', overflow: 'auto' }}>
+            <SessionList sessions={sessions} onSelect={handleSessionSelect} />
           </div>
-        )}
+          <div style={{ width: '400px', borderLeft: '1px solid #e0e0e0', overflow: 'auto' }}>
+            <CreateSession nodes={nodes} onCreated={handleSessionCreated} />
+          </div>
+        </div>
 
-        {page === 'terminal' && (
-          <div style={{ padding: '24px', height: '100%', display: 'flex', flexDirection: 'column' }}>
-            <div style={{ marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <h3 style={{ margin: 0 }}>
-                {t('session')}: {activeSessionID ? activeSessionID.substring(0, 8) + '...' : t('none')}
-              </h3>
-              <button
-                onClick={() => setActiveSessionID(null)}
-                style={{
-                  padding: '6px 12px',
-                  background: '#f44336',
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
-                  fontSize: '0.85em',
-                }}
-              >
-                {t('disconnect')}
-              </button>
-            </div>
-            <div style={{ flex: 1 }}>
-              <Terminal onInput={sendInput} />
-            </div>
-            {!activeSessionID && (
-              <div style={{ marginTop: '12px', padding: '16px', background: '#fff3e0', borderRadius: '6px', color: '#e65100' }}>
-                {t('noActiveSession')}
-              </div>
-            )}
+        {/* Terminal page — always rendered but hidden when not active */}
+        <div style={{ display: page === 'terminal' ? 'flex' : 'none', padding: '24px', height: '100%', flexDirection: 'column' }}>
+          <div style={{ marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <h3 style={{ margin: 0 }}>
+              {t('session')}: {activeSessionID ? activeSessionID.substring(0, 8) + '...' : t('none')}
+            </h3>
+            <button
+              onClick={() => {
+                setActiveSessionID(null);
+                setPage('nodes');
+              }}
+              style={{
+                padding: '6px 12px',
+                background: '#f44336',
+                color: '#fff',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontSize: '0.85em',
+              }}
+            >
+              {t('disconnect')}
+            </button>
           </div>
-        )}
+          <div style={{ flex: 1 }}>
+            <Terminal onInput={sendInput} />
+          </div>
+          {!activeSessionID && (
+            <div style={{ marginTop: '12px', padding: '16px', background: '#fff3e0', borderRadius: '6px', color: '#e65100' }}>
+              {t('noActiveSession')}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

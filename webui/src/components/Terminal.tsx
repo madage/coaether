@@ -14,6 +14,8 @@ export function Terminal({ onInput, className = '' }: TerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const onInputRef = useRef(onInput);
+  onInputRef.current = onInput;
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -55,7 +57,7 @@ export function Terminal({ onInput, className = '' }: TerminalProps) {
     fitAddon.fit();
 
     term.onData((data) => {
-      onInput?.(data);
+      onInputRef.current?.(data);
     });
 
     term.write('Superco AI Agent Terminal\r\n');
