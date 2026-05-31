@@ -24,10 +24,10 @@ export function MessageStream({ messages, className = '' }: MessageStreamProps) 
   return (
     <div className={className} style={{ overflow: 'auto', padding: '16px' }}>
       {messages.map((env, i) => {
-        const isFromMe = env.from?.startsWith('ui://');
         const isSystem = env.from === 'system://bus' || env.type === 'session.created' || env.type === 'session.joined';
         const isError = env.type === 'error';
-        const isMessage = env.type === 'message';
+        const hasContent = env.payload?.content && env.payload.content.length > 0;
+        const showContent = hasContent && (env.type === 'message' || env.type === 'event' || env.type === 'tool.use');
 
         // System messages (session events)
         if (isSystem) {
@@ -39,12 +39,12 @@ export function MessageStream({ messages, className = '' }: MessageStreamProps) 
           return <ErrorMessage key={i} env={env} />;
         }
 
-        // Regular messages with content blocks
-        if (isMessage && env.payload?.content) {
+        // Messages / events with content blocks
+        if (showContent && env.payload?.content) {
           return (
             <div key={i} style={{ marginBottom: '16px' }}>
               <div style={{ fontSize: '0.75em', color: '#999', marginBottom: '4px' }}>
-                {env.from?.startsWith('ui://') ? 'You' : env.from}
+                {displayName(env)}
               </div>
               {env.payload.content.map((block, j) => (
                 <ContentBlockRenderer key={j} block={block} />
@@ -66,6 +66,13 @@ export function MessageStream({ messages, className = '' }: MessageStreamProps) 
       <div ref={bottomRef} />
     </div>
   );
+}
+
+function displayName(env: Envelope): string {
+  if (env.from?.startsWith('ui://')) return 'You';
+  if (env.from?.includes('runtime://') || env.from?.includes('agent://')) return 'Claude';
+  if (env.type === 'event' || env.type === 'tool.use') return 'Claude';
+  return env.from || env.type;
 }
 
 function SystemMessage({ env }: { env: Envelope }) {

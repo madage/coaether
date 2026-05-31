@@ -1,12 +1,13 @@
 package backends
 
 import (
-	"bytes"
+	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os/exec"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -14,21 +15,27 @@ import (
 	"github.com/superco/server/protocol"
 )
 
-var ansiRegexp = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]|\x1b\].*?(\x07|\x1b\\)`)
-
-// ClaudeCLIBackend launches "claude --print" for each message.
-// This works with any provider (DeepSeek, etc.) configured for the claude CLI.
+// ClaudeCLIBackend manages persistent claude subprocesses via stream-json protocol.
 type ClaudeCLIBackend struct {
 	command  string
+	timeout  time.Duration
+	sessions map[string]*claudeSession
+	sendFunc func(*protocol.Envelope)
 	mu       sync.Mutex
-	sessions map[string]*cliSession
 }
 
-type cliSession struct {
-	history []string // message history (for future use)
+type claudeSession struct {
+	cmd    *exec.Cmd
+	stdin  io.WriteCloser
+	stdout io.ReadCloser
+	cancel context.CancelFunc
+
+	mu           sync.Mutex
+	model        string
+	sessionID    string
+	lastActivity time.Time
 }
 
-// NewClaudeCLIBackend creates a CLI backend using the given command path.
 func NewClaudeCLIBackend(cmdPath string) *ClaudeCLIBackend {
 	if cmdPath == "" {
 		cmdPath = "claude"
@@ -39,15 +46,24 @@ func NewClaudeCLIBackend(cmdPath string) *ClaudeCLIBackend {
 	}
 	return &ClaudeCLIBackend{
 		command:  cmdPath,
-		sessions: make(map[string]*cliSession),
+		timeout:  5 * time.Minute,
+		sessions: make(map[string]*claudeSession),
 	}
 }
 
+func (b *ClaudeCLIBackend) SetSendFunc(fn func(*protocol.Envelope)) {
+	b.sendFunc = fn
+}
+
 func (b *ClaudeCLIBackend) Name() string    { return "Claude Code" }
-func (b *ClaudeCLIBackend) Version() string { return "CLI" }
+func (b *ClaudeCLIBackend) Version() string { return "stream-json" }
 
 func (b *ClaudeCLIBackend) HandleMessage(env *protocol.Envelope) (*protocol.Envelope, error) {
 	if env.Payload == nil {
+		return nil, nil
+	}
+	userText := extractText(env.Payload.Content)
+	if userText == "" {
 		return nil, nil
 	}
 	sessionID := env.SessionID
@@ -55,82 +71,446 @@ func (b *ClaudeCLIBackend) HandleMessage(env *protocol.Envelope) (*protocol.Enve
 		return nil, nil
 	}
 
-	// Extract user text
-	userText := extractText(env.Payload.Content)
-	if userText == "" {
-		return nil, nil
-	}
-
-	// Track session for potential future use
 	b.mu.Lock()
-	if _, ok := b.sessions[sessionID]; !ok {
-		b.sessions[sessionID] = &cliSession{}
+	sess, exists := b.sessions[sessionID]
+	if !exists {
+		sess = b.startSession(sessionID)
+		if sess == nil {
+			b.mu.Unlock()
+			return protocol.NewEnvelope("", "", protocol.MsgError,
+				&protocol.Payload{Code: "SESSION_ERROR", Message: "failed to start claude process"},
+			), nil
+		}
+		b.sessions[sessionID] = sess
 	}
 	b.mu.Unlock()
 
-	// Run claude --print
-	log.Printf("[ClaudeCLI] Running: %s --print %q", b.command, userText)
-	output, err := b.runClaude(userText)
+	go b.processMessage(sess, env, userText)
+	return nil, nil
+}
+
+// ---- JSON stream event types ----
+
+type streamJSONEvent struct {
+	Type    string           `json:"type"`
+	Subtype string           `json:"subtype"`
+	Message *json.RawMessage `json:"message,omitempty"`
+	Result  string           `json:"result,omitempty"`
+	IsError bool             `json:"is_error,omitempty"`
+
+	DurationMs   int            `json:"duration_ms,omitempty"`
+	TotalCostUSD float64        `json:"total_cost_usd,omitempty"`
+	Usage        map[string]any `json:"usage,omitempty"`
+	StopReason   string         `json:"stop_reason,omitempty"`
+	SessionID    string         `json:"session_id,omitempty"`
+
+	// Permission event fields
+	ApprovalID string           `json:"approval_id,omitempty"`
+	ToolName   string           `json:"tool_name,omitempty"`
+	Tool       *json.RawMessage `json:"tool,omitempty"`
+	PromptText string           `json:"prompt_text,omitempty"`
+	Input      *json.RawMessage `json:"input,omitempty"`
+}
+
+type assistantMessage struct {
+	ID      string                   `json:"id,omitempty"`
+	Role    string                   `json:"role,omitempty"`
+	Model   string                   `json:"model,omitempty"`
+	Content []assistantContentBlock  `json:"content"`
+}
+
+type assistantContentBlock struct {
+	Type     string `json:"type"`
+	Text     string `json:"text,omitempty"`
+	Thinking string `json:"thinking,omitempty"`
+	ID       string `json:"id,omitempty"`
+	Name     string `json:"name,omitempty"`
+	Input    any    `json:"input,omitempty"`
+}
+
+// ---- session lifecycle ----
+
+func (b *ClaudeCLIBackend) startSession(sessionID string) *claudeSession {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	args := []string{
+		"--output-format", "stream-json",
+		"--input-format", "stream-json",
+		"--permission-prompt-tool", "stdio",
+		"--verbose",
+	}
+
+	cmd := exec.CommandContext(ctx, b.command, args...)
+
+	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		log.Printf("[ClaudeCLI] Error: %v", err)
-		return protocol.NewEnvelope("", "", protocol.MsgError,
-			&protocol.Payload{Code: "CLI_ERROR", Message: err.Error()},
-		), nil
+		log.Printf("[ClaudeCLI] StdinPipe: %v", err)
+		cancel()
+		return nil
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		log.Printf("[ClaudeCLI] StdoutPipe: %v", err)
+		cancel()
+		return nil
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		log.Printf("[ClaudeCLI] StderrPipe: %v", err)
+		cancel()
+		return nil
 	}
 
-	if output == "" {
-		return nil, nil
+	if err := cmd.Start(); err != nil {
+		log.Printf("[ClaudeCLI] Start: %v", err)
+		cancel()
+		return nil
 	}
 
-	// Clean up output
-	cleanOutput := stripANSI(output)
-	if cleanOutput == "" {
-		return nil, nil
+	sid := sessionID
+	if len(sid) > 8 {
+		sid = sid[:8]
+	}
+	log.Printf("[ClaudeCLI] Started pid=%d for session %s", cmd.Process.Pid, sid)
+
+	sess := &claudeSession{
+		cmd:          cmd,
+		stdin:        stdin,
+		stdout:       stdout,
+		cancel:       cancel,
+		sessionID:    sessionID,
+		lastActivity: time.Now(),
 	}
 
-	blocks := []protocol.ContentBlock{
-		protocol.StatusBlock("claude", "green"),
-		protocol.MarkdownBlock(cleanOutput),
-	}
+	// Stderr logging
+	go func() {
+		scanner := bufio.NewScanner(stderr)
+		for scanner.Scan() {
+			line := scanner.Text()
+			if strings.Contains(line, "error") || strings.Contains(line, "Error") {
+				log.Printf("[ClaudeCLI][%s] %s", sid, line)
+			}
+		}
+	}()
 
-	return protocol.NewEnvelope("", "", protocol.MsgMessage, &protocol.Payload{
-		Content: blocks,
-	}), nil
+	// JSON stream parser
+	go b.readStdout(sess, stdout)
+
+	// Process monitor
+	go func() {
+		cmd.Wait()
+		log.Printf("[ClaudeCLI] Process exited for session %s (pid=%d)", sid, cmd.Process.Pid)
+	}()
+
+	return sess
 }
 
-func (b *ClaudeCLIBackend) runClaude(prompt string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, b.command, "--print", prompt)
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return "", fmt.Errorf("claude timed out (120s)")
-		}
-		if stderr.Len() > 0 {
-			return "", fmt.Errorf("claude error: %s", strings.TrimSpace(stderr.String()))
-		}
-		return "", fmt.Errorf("claude: %w", err)
+func (b *ClaudeCLIBackend) readStdout(sess *claudeSession, stdout io.Reader) {
+	sid := sess.sessionID
+	if len(sid) > 8 {
+		sid = sid[:8]
 	}
 
-	return stdout.String(), nil
+	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+
+		var evt streamJSONEvent
+		if err := json.Unmarshal([]byte(line), &evt); err != nil {
+			log.Printf("[ClaudeCLI][%s] Parse error: %v", sid, err)
+			continue
+		}
+
+		sess.updateActivity()
+
+		switch evt.Type {
+		case "system":
+			b.handleSystemEvent(sess, line)
+		case "assistant":
+			b.handleAssistantEvent(sess, &evt)
+		case "result":
+			b.handleResultEvent(sess, &evt)
+		case "permission":
+			b.handlePermissionEvent(sess, &evt)
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		log.Printf("[ClaudeCLI][%s] Scan error: %v", sid, err)
+	}
 }
 
-// stripANSI removes ANSI escape sequences and terminal control characters.
-func stripANSI(s string) string {
-	s = ansiRegexp.ReplaceAllString(s, "")
-	s = strings.ReplaceAll(s, "\r", "")
-	return s
+// ---- event handlers ----
+
+func (b *ClaudeCLIBackend) handleSystemEvent(sess *claudeSession, rawJSON string) {
+	var raw struct {
+		SessionID string `json:"session_id"`
+		Model     string `json:"model"`
+	}
+	if json.Unmarshal([]byte(rawJSON), &raw) != nil {
+		return
+	}
+	sess.mu.Lock()
+	sess.model = raw.Model
+	sess.mu.Unlock()
+
+	sid := sess.sessionID
+	if len(sid) > 8 {
+		sid = sid[:8]
+	}
+	log.Printf("[ClaudeCLI][%s] Init: model=%s", sid, raw.Model)
+}
+
+func sessionTo(to string) string {
+	return "session://" + to
+}
+
+func (b *ClaudeCLIBackend) handleAssistantEvent(sess *claudeSession, evt *streamJSONEvent) {
+	if evt.Message == nil {
+		return
+	}
+
+	var msg assistantMessage
+	if err := json.Unmarshal(*evt.Message, &msg); err != nil {
+		sid := sess.sessionID
+		if len(sid) > 8 {
+			sid = sid[:8]
+		}
+		log.Printf("[ClaudeCLI][%s] Assistant parse: %v", sid, err)
+		return
+	}
+
+	for _, block := range msg.Content {
+		switch block.Type {
+		case "thinking":
+			b.sendToBus(protocol.NewEnvelope("", sessionTo(sess.sessionID), protocol.MsgEvent,
+				&protocol.Payload{
+					Content: []protocol.ContentBlock{
+						protocol.ProgressBlock("thinking", block.Thinking),
+					},
+				}).WithSession(sess.sessionID))
+
+		case "text":
+			b.sendToBus(protocol.NewEnvelope("", sessionTo(sess.sessionID), protocol.MsgEvent,
+				&protocol.Payload{
+					Content: []protocol.ContentBlock{
+						protocol.StatusBlock("claude", "green"),
+						protocol.MarkdownBlock(block.Text),
+					},
+				}).WithSession(sess.sessionID))
+
+		case "tool_use":
+			inputJSON, _ := json.Marshal(block.Input)
+			b.sendToBus(protocol.NewEnvelope("", sessionTo(sess.sessionID), protocol.MsgToolUse,
+				&protocol.Payload{
+					ToolUseID: block.ID,
+					Tool:      block.Name,
+					Input:     string(inputJSON),
+				}).WithSession(sess.sessionID))
+		}
+	}
+}
+
+func (b *ClaudeCLIBackend) handleResultEvent(sess *claudeSession, evt *streamJSONEvent) {
+	metadata := map[string]any{
+		"duration_ms": evt.DurationMs,
+		"total_cost":  evt.TotalCostUSD,
+		"is_error":    evt.IsError,
+		"stop_reason": evt.StopReason,
+	}
+	b.sendToBus(protocol.NewEnvelope("", sessionTo(sess.sessionID), protocol.MsgEvent,
+		&protocol.Payload{
+			Content: []protocol.ContentBlock{
+				protocol.StatusBlock("done", "green"),
+			},
+			Metadata: metadata,
+		}).WithSession(sess.sessionID))
+}
+
+func (b *ClaudeCLIBackend) handlePermissionEvent(sess *claudeSession, evt *streamJSONEvent) {
+	var inputStr string
+	if evt.Tool != nil {
+		inputBytes, _ := json.Marshal(evt.Tool)
+		inputStr = string(inputBytes)
+	} else if evt.Input != nil {
+		inputBytes, _ := json.Marshal(evt.Input)
+		inputStr = string(inputBytes)
+	}
+
+	toolName := evt.ToolName
+	if toolName == "" && evt.Tool != nil {
+		var tool struct {
+			Name string `json:"name"`
+		}
+		if json.Unmarshal(*evt.Tool, &tool) == nil {
+			toolName = tool.Name
+		}
+	}
+
+	promptText := evt.PromptText
+	if promptText == "" {
+		promptText = "Allow this tool call?"
+	}
+
+	sid := sess.sessionID
+	if len(sid) > 8 {
+		sid = sid[:8]
+	}
+	log.Printf("[ClaudeCLI][%s] Permission request: %s (id=%s)", sid, toolName, evt.ApprovalID)
+
+	b.sendToBus(protocol.NewEnvelope("", sessionTo(sess.sessionID), protocol.MsgPermissionRequest,
+		&protocol.Payload{
+			ToolUseID: evt.ApprovalID,
+			Tool:      toolName,
+			Input:     inputStr,
+			Message:   promptText,
+		}).WithSession(sess.sessionID))
+}
+
+func (b *ClaudeCLIBackend) HandlePermissionResponse(env *protocol.Envelope) {
+	if env.Payload == nil {
+		return
+	}
+	b.mu.Lock()
+	sess, ok := b.sessions[env.SessionID]
+	b.mu.Unlock()
+	if !ok {
+		return
+	}
+	approvalID := env.Payload.ToolUseID
+	if approvalID == "" {
+		return
+	}
+	approved := env.Payload.Approved
+	jsonMsg := fmt.Sprintf(`{"type":"approval","approval_id":%s,"approved":%t}`,
+		jsonEscape(approvalID), approved)
+
+	sid := sess.sessionID
+	if len(sid) > 8 {
+		sid = sid[:8]
+	}
+	log.Printf("[ClaudeCLI][%s] Permission response: %s -> %v", sid, approvalID, approved)
+
+	_, err := io.WriteString(sess.stdin, jsonMsg+"\n")
+	if err != nil {
+		log.Printf("[ClaudeCLI][%s] Permission write error: %v", sid, err)
+	}
+}
+
+func (b *ClaudeCLIBackend) processMessage(sess *claudeSession, env *protocol.Envelope, text string) {
+	sess.updateActivity()
+
+	sid := sess.sessionID
+	if len(sid) > 8 {
+		sid = sid[:8]
+	}
+	log.Printf("[ClaudeCLI][%s] Sending: %s", sid, text[:min(len(text), 100)])
+
+	// Send JSON formatted message
+	jsonMsg := fmt.Sprintf(`{"type":"user","message":{"role":"user","content":%s}}`, jsonEscape(text))
+	_, err := io.WriteString(sess.stdin, jsonMsg+"\n")
+	if err != nil {
+		log.Printf("[ClaudeCLI][%s] Write error: %v", sid, err)
+		b.sendToBus(protocol.NewEnvelope("", sessionTo(sess.sessionID), protocol.MsgError,
+			&protocol.Payload{Code: "STDIN_ERROR", Message: err.Error()},
+		).WithSession(sess.sessionID))
+	}
+}
+
+// jsonEscape produces a proper JSON string value from an arbitrary string.
+func jsonEscape(s string) string {
+	var buf strings.Builder
+	buf.WriteByte('"')
+	for _, r := range s {
+		switch r {
+		case '"':
+			buf.WriteString(`\"`)
+		case '\\':
+			buf.WriteString(`\\`)
+		case '\n':
+			buf.WriteString(`\n`)
+		case '\r':
+			buf.WriteString(`\r`)
+		case '\t':
+			buf.WriteString(`\t`)
+		default:
+			if r < 0x20 {
+				fmt.Fprintf(&buf, `\u%04x`, r)
+			} else {
+				buf.WriteRune(r)
+			}
+		}
+	}
+	buf.WriteByte('"')
+	return buf.String()
+}
+
+// ---- plumbing ----
+
+func (b *ClaudeCLIBackend) sendToBus(env *protocol.Envelope) {
+	if b.sendFunc != nil {
+		b.sendFunc(env)
+	}
 }
 
 func (b *ClaudeCLIBackend) CloseSession(sessionID string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
+	sess, ok := b.sessions[sessionID]
+	if !ok {
+		return
+	}
 	delete(b.sessions, sessionID)
-	log.Printf("[ClaudeCLI] Closed session %s", sessionID)
+
+	if sess.cancel != nil {
+		sess.cancel()
+	}
+	sid := sessionID
+	if len(sid) > 8 {
+		sid = sid[:8]
+	}
+	log.Printf("[ClaudeCLI] Closed session %s", sid)
+}
+
+func (b *ClaudeCLIBackend) CleanIdleSessions() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	now := time.Now()
+	for id, sess := range b.sessions {
+		sess.mu.Lock()
+		idle := now.Sub(sess.lastActivity)
+		sess.mu.Unlock()
+
+		if idle > b.timeout {
+			sid := id
+			if len(sid) > 8 {
+				sid = sid[:8]
+			}
+			log.Printf("[ClaudeCLI] Idle timeout: session %s (idle %v)", sid, idle)
+			if sess.cancel != nil {
+				sess.cancel()
+			}
+			delete(b.sessions, id)
+		}
+	}
+}
+
+func (s *claudeSession) updateActivity() {
+	s.mu.Lock()
+	s.lastActivity = time.Now()
+	s.mu.Unlock()
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

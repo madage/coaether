@@ -27,6 +27,12 @@ export interface Envelope {
     agents?: Array<{ id: string; name?: string; backend?: string }>;
     members?: Array<{ endpoint: string; role: string }>;
     metadata?: Record<string, unknown>;
+
+    // Permission fields
+    tool_use_id?: string;
+    tool?: string;
+    input?: string;
+    approved?: boolean;
   };
   timestamp?: number;
   reply_to?: string;

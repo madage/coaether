@@ -30,6 +30,10 @@ const (
 	MsgEvent   = "event"
 	MsgToolUse   = "tool.use"
 	MsgToolResult = "tool.result"
+
+	// Permission messages
+	MsgPermissionRequest  = "permission.request"
+	MsgPermissionResponse = "permission.response"
 )
 
 // Envelope is the universal message wrapper for all bus communication.
@@ -88,6 +92,8 @@ type Payload struct {
 	Input     any    `json:"input,omitempty"`
 	Output    string `json:"output,omitempty"`
 	ExitCode  int    `json:"exit_code,omitempty"`
+
+	Approved bool `json:"approved,omitempty"`
 
 	// Used by command messages
 	Command   string `json:"command,omitempty"`

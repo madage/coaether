@@ -68,12 +68,16 @@ func (r *Runtime) Run() error {
 	done := make(chan struct{})
 	defer close(done)
 	go func() {
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
+		pingTicker := time.NewTicker(30 * time.Second)
+		cleanTicker := time.NewTicker(60 * time.Second)
+		defer pingTicker.Stop()
+		defer cleanTicker.Stop()
 		for {
 			select {
-			case <-ticker.C:
+			case <-pingTicker.C:
 				r.sendPing()
+			case <-cleanTicker.C:
+				r.cleanIdleSessions()
 			case <-done:
 				return
 			}
@@ -143,6 +147,15 @@ func (r *Runtime) handleMessage(env *protocol.Envelope) {
 		log.Printf("[Runtime] Message received for session %s from %s", env.SessionID, env.From)
 		r.handleAgentMessage(env)
 
+	case protocol.MsgEvent, protocol.MsgToolUse, protocol.MsgToolResult:
+		// Session-scoped events consumed by UI clients
+
+	case protocol.MsgPermissionResponse:
+		log.Printf("[Runtime] Permission response for session %s", env.SessionID)
+		if cli, ok := r.backends["claude"].(*backends.ClaudeCLIBackend); ok {
+			cli.HandlePermissionResponse(env)
+		}
+
 	default:
 		log.Printf("[Runtime] Unhandled type: %s", env.Type)
 	}
@@ -182,6 +195,12 @@ func (r *Runtime) send(env *protocol.Envelope) {
 	}
 }
 
+func (r *Runtime) cleanIdleSessions() {
+	if cli, ok := r.backends["claude"].(*backends.ClaudeCLIBackend); ok {
+		cli.CleanIdleSessions()
+	}
+}
+
 // Backend handles messages for a specific AI agent.
 type Backend interface {
 	Name() string
@@ -213,10 +232,11 @@ func main() {
 	rt := NewRuntime(serverURL, nodeID, name)
 
 	// Register backends
-	// 1. Try Claude CLI (PTY) — works with any provider (DeepSeek, etc.)
+	// 1. Try Claude CLI (stream-json) — persistent, full tool support
 	if cli := backends.NewClaudeCLIBackend(""); cli != nil {
+		cli.SetSendFunc(rt.send)
 		rt.RegisterBackend("claude", cli)
-		log.Println("[Runtime] Claude CLI backend enabled (PTY)")
+		log.Println("[Runtime] Claude CLI backend enabled (stream-json)")
 	} else if api := backends.NewClaudeBackend(); api != nil {
 		// 2. Fallback to Claude API (direct Anthropic API call)
 		rt.RegisterBackend("claude", api)

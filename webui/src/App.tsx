@@ -6,6 +6,7 @@ import { NodeList } from './components/NodeList';
 import { SessionList } from './components/SessionList';
 import { CreateSession } from './components/CreateSession';
 import { LangSwitcher } from './components/LangSwitcher';
+import { PermissionDialog } from './components/PermissionDialog';
 import { useDashboardWS } from './hooks/useDashboardWS';
 import { useLang } from './i18n/context';
 import { auth as authApi } from './api/client';
@@ -23,14 +24,33 @@ function App() {
   const [authError, setAuthError] = useState<string | null>(null);
   const { nodes, sessions, connected: dashboardConnected } = useDashboardWS();
 
+  // Pending permission request from claude
+  const [pendingPermission, setPendingPermission] = useState<Envelope | null>(null);
+
   // Message Bus — only connect when authenticated
   const bus = useMessageBus({
     userID: auth.user?.id || 'anonymous',
     onMessage: useCallback((env: Envelope) => {
-      // Could handle specific message types here if needed
-      console.log('[App] Bus message:', env.type);
+      if (env.type === 'permission.request') {
+        setPendingPermission(env);
+      }
     }, []),
   });
+
+  const sendPermissionResponse = useCallback((approved: boolean) => {
+    const req = pendingPermission;
+    if (!req || !bus.sessionID) return;
+    bus.send({
+      type: 'permission.response',
+      to: `session://${bus.sessionID}`,
+      session_id: bus.sessionID,
+      payload: {
+        tool_use_id: req.payload?.tool_use_id,
+        approved,
+      },
+    });
+    setPendingPermission(null);
+  }, [pendingPermission, bus]);
 
   const handleNodeSelect = useCallback((node: Node) => {
     void node;
@@ -48,14 +68,44 @@ function App() {
     setPage('chat');
   }, []);
 
+  const pendingRef = useRef('');
+
+  // Handle slash commands that need client-side effects
+  const handleCommand = useCallback((text: string): 'handled' | 'passthrough' | 'intercept' => {
+    const cmd = text.split(' ')[0].toLowerCase();
+    switch (cmd) {
+      case '/clear':
+        bus.clearMessages();
+        return 'passthrough'; // also send to claude
+      default:
+        return 'passthrough'; // all other commands go to claude directly
+    }
+  }, [bus]);
+
   const handleSendMessage = useCallback((text: string): boolean => {
+    const isCommand = text.startsWith('/');
+    if (isCommand) {
+      const action = handleCommand(text);
+      if (action === 'intercept') return true; // handled locally, don't send
+      if (action === 'handled') return true;
+      // passthrough: send to claude
+    }
+
     if (!bus.sessionID) {
-      // No active session — create one with the available agent
+      pendingRef.current = text;
       bus.createSession([{ id: 'claude', backend: 'api' }]);
       return false;
     }
     return bus.sendMessage(text);
-  }, [bus]);
+  }, [bus, handleCommand]);
+
+  // Send pending message once session is created
+  useEffect(() => {
+    if (bus.sessionID && pendingRef.current) {
+      bus.sendMessage(pendingRef.current);
+      pendingRef.current = '';
+    }
+  }, [bus.sessionID, bus.sendMessage]);
 
   // Login screen
   if (!auth.token) {
@@ -154,6 +204,7 @@ function App() {
   const hasSession = bus.sessionID !== null;
 
   return (
+    <>
     <div style={{ display: 'flex', height: '100vh', background: '#f5f5f5' }}>
       {/* Sidebar */}
       <div
@@ -301,6 +352,17 @@ function App() {
         </div>
       </div>
     </div>
+
+      {pendingPermission && (
+        <PermissionDialog
+          toolName={pendingPermission.payload?.tool || ''}
+          toolInput={pendingPermission.payload?.input || ''}
+          promptText={pendingPermission.payload?.message || 'Allow this tool call?'}
+          onAllow={() => sendPermissionResponse(true)}
+          onDeny={() => sendPermissionResponse(false)}
+        />
+      )}
+    </>
   );
 }
 
@@ -326,3 +388,5 @@ const buttonStyle: React.CSSProperties = {
 };
 
 export default App;
+
+
