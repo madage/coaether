@@ -1,0 +1,44 @@
+# === Go ===
+server/bin/
+server/tmp/
+agent-node/builds/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+vendor/
+
+# === Node ===
+node_modules/
+webui/dist/
+webui/build/
+*.tsbuildinfo
+
+# === Claude Code ===
+.claude/
+.sessions/
+
+# === IDE & Editor ===
+.obsidian/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# === Environment & Secrets ===
+.env
+.env.*
+*.pem
+*.key
+*.cert
+credentials.json
+service-account.json
+
+# === Logs ===
+*.log
