@@ -39,8 +39,8 @@ func main() {
 	// Handlers
 	authH := handlers.NewAuthHandler(database.DB, cfg.JWTSecret)
 	nodeH := handlers.NewNodeHandler(database.DB)
-	sessionH := handlers.NewSessionHandler(database.DB)
-	wsHub := handlers.NewWSHub(database.DB)
+	wsHub := handlers.NewWSHub(database.DB, cfg.JWTSecret)
+	sessionH := handlers.NewSessionHandler(database.DB, wsHub)
 
 	// Router
 	r := gin.Default()
@@ -69,6 +69,7 @@ func main() {
 	// WebSocket routes (auth handled by token/node_id in query)
 	r.GET("/ws/node", wsHub.HandleNodeWS)
 	r.GET("/ws/ui", wsHub.HandleUIWS)
+	r.GET("/ws/dashboard", wsHub.HandleDashboardWS)
 
 	// Auth required
 	api := r.Group("/api")

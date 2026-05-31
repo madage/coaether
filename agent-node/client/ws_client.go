@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
+	"runtime"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -109,8 +111,13 @@ func (nc *NodeClient) connectAndRun() error {
 	// For now, generate a node ID and connect
 	nc.NodeID = uuid.New().String()
 
-	url := fmt.Sprintf("%s?node_id=%s", nc.ServerURL, nc.NodeID)
-	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
+	q := url.Values{}
+	q.Set("node_id", nc.NodeID)
+	q.Set("name", nc.Name)
+	q.Set("os", runtime.GOOS)
+	q.Set("arch", runtime.GOARCH)
+	wsURL := fmt.Sprintf("%s?%s", nc.ServerURL, q.Encode())
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
 		return fmt.Errorf("failed to connect: %w", err)
 	}
@@ -201,23 +208,17 @@ func (nc *NodeClient) executeTask(task taskPayload) {
 	claudeCmd := "claude"
 	workspace := task.Workspace
 
-	// Platform-specific adjustments
+	// Platform-specific: on Windows, run claude via WSL
 	if nc.Platform == "windows" {
-		// Use WSL for Windows
 		claudeCmd = "wsl"
 		workspace = platform.WSLPath(task.Workspace)
 	}
 
 	// Create PTY
-	var p platform.PTY
-	if nc.Platform == "windows" {
-		p = platform.NewWindowsPTY()
-	} else {
-		p = platform.NewUnixPTY()
-	}
+	p := platform.NewPTY()
 
 	procCtrl := platform.NewProcessController(p)
-	if err := procCtrl.Start(claudeCmd, []string{"--prompt", task.Prompt, "--cwd", workspace}, p); err != nil {
+	if err := procCtrl.Start(claudeCmd, []string{"-p", task.Prompt}, workspace, p); err != nil {
 		nc.sendTaskResult(task.SessionID, false, fmt.Sprintf("failed to start: %v", err))
 		return
 	}
@@ -225,7 +226,7 @@ func (nc *NodeClient) executeTask(task taskPayload) {
 	sp := &sessionPTY{pty: p, procCtrl: procCtrl}
 	nc.sessionPTYs[task.SessionID] = sp
 
-	// Read output and send to backend
+	// Read output and send to backend; keep reading until process exits
 	buf := make([]byte, 4096)
 	for {
 		n, err := p.Read(buf)
@@ -235,7 +236,7 @@ func (nc *NodeClient) executeTask(task taskPayload) {
 		nc.sendOutput(task.SessionID, string(buf[:n]))
 	}
 
-	// Task completed
+	// Process exited — send result and clean up
 	nc.sendTaskResult(task.SessionID, true, "")
 	delete(nc.sessionPTYs, task.SessionID)
 }

@@ -1,20 +1,34 @@
-import { useState } from 'react';
-import { sessions as sessionsApi } from '../api/client';
+import { useEffect, useState } from 'react';
+import { nodes as nodesApi, sessions as sessionsApi } from '../api/client';
 import { useLang } from '../i18n/context';
 import type { Node } from '../types';
 
 interface CreateSessionProps {
-  nodes: Node[];
+  nodes?: Node[];
   onCreated: (sessionID: string) => void;
 }
 
-export function CreateSession({ nodes, onCreated }: CreateSessionProps) {
+export function CreateSession({ nodes: propNodes, onCreated }: CreateSessionProps) {
   const { t } = useLang();
   const [prompt, setPrompt] = useState('');
   const [workspace, setWorkspace] = useState('');
-  const [nodeID, setNodeID] = useState(nodes[0]?.id || '');
+  const [fetchedNodes, setFetchedNodes] = useState<Node[]>([]);
+  const [nodeID, setNodeID] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const nodes = propNodes && propNodes.length > 0 ? propNodes : fetchedNodes;
+
+  useEffect(() => {
+    if (!propNodes || propNodes.length === 0) {
+      nodesApi.list().then((data) => {
+        setFetchedNodes(data.nodes);
+        if (data.nodes.length > 0) setNodeID(data.nodes[0].id);
+      }).catch(() => {});
+    } else {
+      if (propNodes.length > 0) setNodeID(propNodes[0].id);
+    }
+  }, [propNodes]);
 
   const statusLabel: Record<string, string> = {
     online: t('nodeOnline'),

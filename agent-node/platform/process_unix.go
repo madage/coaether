@@ -12,9 +12,9 @@ func NewProcessController(pty PTY) ProcessController {
 	return &UnixProcessController{pty: pty.(*UnixPTY)}
 }
 
-func (c *UnixProcessController) Start(cmd string, args []string, pty PTY) error {
+func (c *UnixProcessController) Start(cmd string, args []string, dir string, pty PTY) error {
 	upty := pty.(*UnixPTY)
-	return upty.Open(cmd, args, nil)
+	return upty.Open(cmd, args, dir, nil)
 }
 
 func (c *UnixProcessController) Stop() error {

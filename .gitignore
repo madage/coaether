@@ -47,3 +47,6 @@ service-account.json
 
 # === Logs ===
 *.log
+
+# === Data ===
+*.rdb

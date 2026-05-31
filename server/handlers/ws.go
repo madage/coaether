@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/superco/server/models"
 )
@@ -35,18 +37,22 @@ type NodeConnection struct {
 
 type WSHub struct {
 	DB          *sql.DB
+	JWTSecret   string
 	Nodes       map[string]*NodeConnection
 	NodesBySess map[string]string // session_id -> node_id
 	Sessions    map[string]*NodeConnection // session_id -> ui conn
+	Dashboards  map[string]*NodeConnection // dashboard ws connections
 	Mu          sync.RWMutex
 }
 
-func NewWSHub(db *sql.DB) *WSHub {
+func NewWSHub(db *sql.DB, jwtSecret string) *WSHub {
 	return &WSHub{
 		DB:          db,
+		JWTSecret:   jwtSecret,
 		Nodes:       make(map[string]*NodeConnection),
 		NodesBySess: make(map[string]string),
 		Sessions:    make(map[string]*NodeConnection),
+		Dashboards:  make(map[string]*NodeConnection),
 	}
 }
 
@@ -68,14 +74,37 @@ func (h *WSHub) HandleNodeWS(c *gin.Context) {
 	h.Nodes[nodeID] = nc
 	h.Mu.Unlock()
 
-	log.Printf("[WS] Node connected: %s", nodeID)
+	// Register or update node in database
+	nodeName := c.Query("name")
+	if nodeName == "" {
+		nodeName = "agent-node-" + nodeID[:8]
+	}
+	h.upsertNode(nodeID, nodeName, c.Query("os"), c.Query("arch"), c.ClientIP())
+
+	log.Printf("[WS] Node connected: %s (%s)", nodeID, nodeName)
+
+	// Broadcast node status to dashboards
+	h.broadcastToDashboards("node_status", map[string]interface{}{
+		"node_id": nodeID,
+		"name":    nodeName,
+		"status":  "online",
+	})
 
 	defer func() {
 		h.Mu.Lock()
 		delete(h.Nodes, nodeID)
 		h.Mu.Unlock()
+		h.DB.Exec("UPDATE nodes SET status = $1, last_seen = NOW() WHERE id = $2",
+			models.NodeStatusOffline, nodeID)
 		conn.Close()
 		log.Printf("[WS] Node disconnected: %s", nodeID)
+
+		// Broadcast node offline to dashboards
+		h.broadcastToDashboards("node_status", map[string]interface{}{
+			"node_id": nodeID,
+			"name":    nodeName,
+			"status":  "offline",
+		})
 	}()
 
 	// heartbeat ping
@@ -152,6 +181,151 @@ func (h *WSHub) HandleUIWS(c *gin.Context) {
 	}
 }
 
+// HandleDashboardWS handles WebSocket connections from the UI dashboard
+// for real-time node/session list updates.
+func (h *WSHub) HandleDashboardWS(c *gin.Context) {
+	token := c.Query("token")
+	if token == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing token"})
+		return
+	}
+
+	// Verify JWT
+	parsedToken, err := jwt.Parse(token, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, jwt.ErrSignatureInvalid
+		}
+		return []byte(h.JWTSecret), nil
+	})
+	if err != nil || !parsedToken.Valid {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+		return
+	}
+
+	claims, ok := parsedToken.Claims.(jwt.MapClaims)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token claims"})
+		return
+	}
+	userID, _ := claims["user_id"].(string)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user"})
+		return
+	}
+
+	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+	if err != nil {
+		log.Printf("[WS] Dashboard upgrade error: %v", err)
+		return
+	}
+
+	nc := &NodeConnection{Conn: conn}
+	connID := uuid.New().String()
+
+	h.Mu.Lock()
+	h.Dashboards[connID] = nc
+	h.Mu.Unlock()
+
+	log.Printf("[WS] Dashboard connected: %s (user: %s)", connID, userID)
+
+	// Send initial state
+	h.sendDashboardInit(nc, userID)
+
+	// Heartbeat
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	go func() {
+		for range ticker.C {
+			nc.Mu.Lock()
+			if err := nc.Conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				nc.Mu.Unlock()
+				return
+			}
+			nc.Mu.Unlock()
+		}
+	}()
+
+	defer func() {
+		h.Mu.Lock()
+		delete(h.Dashboards, connID)
+		h.Mu.Unlock()
+		conn.Close()
+		log.Printf("[WS] Dashboard disconnected: %s", connID)
+	}()
+
+	for {
+		_, _, err := conn.ReadMessage()
+		if err != nil {
+			break
+		}
+	}
+}
+
+func (h *WSHub) sendDashboardInit(nc *NodeConnection, userID string) {
+	// Fetch nodes for this user
+	nodes := make([]models.Node, 0)
+	rows, err := h.DB.Query(
+		`SELECT id, user_id, name, os, arch, status, version, ip, last_seen, created_at
+		 FROM nodes WHERE user_id = $1 ORDER BY created_at DESC`, userID,
+	)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var n models.Node
+			if err := rows.Scan(&n.ID, &n.UserID, &n.Name, &n.OS, &n.Arch, &n.Status, &n.Version, &n.IP, &n.LastSeen, &n.CreatedAt); err == nil {
+				nodes = append(nodes, n)
+			}
+		}
+	} else {
+		log.Printf("[WS] Failed to query nodes for init: %v", err)
+	}
+
+	// Fetch sessions for this user
+	sessions := make([]models.SessionResp, 0)
+	srows, err := h.DB.Query(
+		`SELECT id, status, prompt, workspace, node_id, created_at
+		 FROM sessions WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50`, userID,
+	)
+	if err == nil {
+		defer srows.Close()
+		for srows.Next() {
+			var s models.SessionResp
+			if err := srows.Scan(&s.ID, &s.Status, &s.Prompt, &s.Workspace, &s.NodeID, &s.CreatedAt); err == nil {
+				sessions = append(sessions, s)
+			}
+		}
+	} else {
+		log.Printf("[WS] Failed to query sessions for init: %v", err)
+	}
+
+	payload := map[string]interface{}{
+		"nodes":    nodes,
+		"sessions": sessions,
+	}
+	data, _ := json.Marshal(WSMessage{Type: "init", Payload: mustJSON(payload)})
+	nc.Mu.Lock()
+	nc.Conn.WriteMessage(websocket.TextMessage, data)
+	nc.Mu.Unlock()
+}
+
+func (h *WSHub) broadcastToDashboards(msgType string, payload interface{}) {
+	data, err := json.Marshal(WSMessage{Type: msgType, Payload: mustJSON(payload)})
+	if err != nil {
+		return
+	}
+
+	h.Mu.RLock()
+	defer h.Mu.RUnlock()
+
+	for id, dc := range h.Dashboards {
+		dc.Mu.Lock()
+		if err := dc.Conn.WriteMessage(websocket.TextMessage, data); err != nil {
+			log.Printf("[WS] Dashboard write error (%s): %v", id, err)
+		}
+		dc.Mu.Unlock()
+	}
+}
+
 func (h *WSHub) handleNodeMessage(nc *NodeConnection, msg WSMessage) {
 	switch msg.Type {
 	case "output":
@@ -181,6 +355,12 @@ func (h *WSHub) handleNodeMessage(nc *NodeConnection, msg WSMessage) {
 			status, payload.SessionID)
 		h.forwardToUI(payload.SessionID, msgBytesReconstruct(msg.Type, msg.Payload))
 		h.cleanupSessionBinding(payload.SessionID)
+
+		// Broadcast session update to dashboards
+		h.broadcastToDashboards("session_update", map[string]interface{}{
+			"id":     payload.SessionID,
+			"status": status,
+		})
 
 	case "claim_task":
 		h.assignTask(nc)
@@ -233,8 +413,91 @@ func (h *WSHub) cleanupSessionBinding(sessionID string) {
 	h.Mu.Unlock()
 }
 
+func (h *WSHub) upsertNode(nodeID, name, os, arch, ip string) {
+	var count int
+	h.DB.QueryRow("SELECT COUNT(*) FROM nodes WHERE id = $1", nodeID).Scan(&count)
+
+	if count == 0 {
+		// Get first user as owner (single-user MVP assumption)
+		var userID string
+		err := h.DB.QueryRow("SELECT id FROM users ORDER BY created_at ASC LIMIT 1").Scan(&userID)
+		if err != nil {
+			log.Printf("[WS] No user found to associate node '%s': %v", nodeID, err)
+			return
+		}
+		_, err = h.DB.Exec(
+			`INSERT INTO nodes (id, user_id, name, os, arch, status, version, ip, last_seen, created_at)
+			 VALUES ($1, $2, $3, $4, $5, 'online', '', $6, NOW(), NOW())`,
+			nodeID, userID, name, os, arch, ip,
+		)
+		if err != nil {
+			log.Printf("[WS] Failed to insert node '%s': %v", nodeID, err)
+		}
+	} else {
+		h.DB.Exec(
+			"UPDATE nodes SET status = 'online', name = $1, ip = $2, last_seen = NOW() WHERE id = $3",
+			name, ip, nodeID,
+		)
+	}
+}
+
+// SendTaskToNode sends a "task" WebSocket message to a connected node
+// and records the session-to-node mapping for input forwarding.
+func (h *WSHub) SendTaskToNode(nodeID, sessionID string, task interface{}) bool {
+	h.Mu.RLock()
+	nc, ok := h.Nodes[nodeID]
+	h.Mu.RUnlock()
+	if !ok {
+		log.Printf("[WS] Cannot send task to node '%s': not connected", nodeID)
+		return false
+	}
+
+	payload, err := json.Marshal(map[string]interface{}{
+		"type":    "task",
+		"payload": task,
+	})
+	if err != nil {
+		log.Printf("[WS] Failed to marshal task: %v", err)
+		return false
+	}
+
+	nc.Mu.Lock()
+	defer nc.Mu.Unlock()
+	if err := nc.Conn.WriteMessage(websocket.TextMessage, payload); err != nil {
+		log.Printf("[WS] Failed to send task to node '%s': %v", nodeID, err)
+		return false
+	}
+
+	// Record session→node mapping so input can be forwarded
+	h.Mu.Lock()
+	h.NodesBySess[sessionID] = nodeID
+	h.Mu.Unlock()
+
+	// Update node status to busy
+	h.DB.Exec("UPDATE nodes SET status = 'busy' WHERE id = $1", nodeID)
+
+	log.Printf("[WS] Task sent to node '%s' for session '%s'", nodeID, sessionID)
+	return true
+}
+
+// BroadcastSessionUpdate sends a session status update to all dashboard clients.
+func (h *WSHub) BroadcastSessionUpdate(sessionID string, status interface{}, prompt, workspace, nodeID string) {
+	h.broadcastToDashboards("session_update", map[string]interface{}{
+		"id":        sessionID,
+		"status":    status,
+		"prompt":    prompt,
+		"workspace": workspace,
+		"node_id":   nodeID,
+	})
+}
+
 func msgBytesReconstruct(msgType string, payload json.RawMessage) []byte {
 	msg := WSMessage{Type: msgType, Payload: payload}
 	b, _ := json.Marshal(msg)
 	return b
+}
+
+func mustJSON(v interface{}) json.RawMessage {
+	data, _ := json.Marshal(v)
+	return data
 }

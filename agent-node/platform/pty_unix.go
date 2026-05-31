@@ -3,6 +3,7 @@
 package platform
 
 import (
+	"os"
 	"os/exec"
 	"syscall"
 
@@ -18,8 +19,11 @@ func NewUnixPTY() *UnixPTY {
 	return &UnixPTY{}
 }
 
-func (u *UnixPTY) Open(cmdPath string, args []string, env []string) error {
+func (u *UnixPTY) Open(cmdPath string, args []string, dir string, env []string) error {
 	u.cmd = exec.Command(cmdPath, args...)
+	if dir != "" {
+		u.cmd.Dir = dir
+	}
 	if env != nil {
 		u.cmd.Env = env
 	}

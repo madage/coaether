@@ -1,30 +1,13 @@
-import { useEffect, useState } from 'react';
-import { sessions as sessionsApi } from '../api/client';
 import { useLang } from '../i18n/context';
 import type { Session } from '../types';
 
-export function SessionList({ onSelect }: { onSelect?: (session: Session) => void }) {
+interface SessionListProps {
+  sessions: Session[];
+  onSelect?: (session: Session) => void;
+}
+
+export function SessionList({ sessions, onSelect }: SessionListProps) {
   const { t } = useLang();
-  const [sessionList, setSessionList] = useState<Session[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    loadSessions();
-  }, []);
-
-  async function loadSessions() {
-    try {
-      setLoading(true);
-      const data = await sessionsApi.list();
-      setSessionList(data.sessions);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t('authFailed'));
-    } finally {
-      setLoading(false);
-    }
-  }
 
   const statusColors: Record<string, string> = {
     pending: '#ff9800',
@@ -42,22 +25,14 @@ export function SessionList({ onSelect }: { onSelect?: (session: Session) => voi
     failed: t('sessionStatusFailed'),
   };
 
-  if (loading) {
-    return <div className="loading">{t('loadingSessions')}</div>;
-  }
-
-  if (error) {
-    return <div className="error">{t('authFailed')}: {error}</div>;
-  }
-
-  if (sessionList.length === 0) {
+  if (sessions.length === 0) {
     return <div className="empty">{t('noSessions')}</div>;
   }
 
   return (
     <div className="session-list">
-      <h3>{t('sessions')} ({sessionList.length})</h3>
-      {sessionList.map((session) => (
+      <h3>{t('sessions')} ({sessions.length})</h3>
+      {sessions.map((session) => (
         <div
           key={session.id}
           className="session-card"

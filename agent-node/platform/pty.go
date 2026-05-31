@@ -11,7 +11,7 @@ type PTY interface {
 
 // ProcessController controls the lifecycle of a child process.
 type ProcessController interface {
-	Start(cmd string, args []string, pty PTY) error
+	Start(cmd string, args []string, dir string, pty PTY) error
 	Stop() error
 	Pause() error
 	Resume() error

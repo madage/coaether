@@ -1,30 +1,13 @@
-import { useEffect, useState } from 'react';
-import { nodes as nodesApi } from '../api/client';
 import { useLang } from '../i18n/context';
 import type { Node } from '../types';
 
-export function NodeList({ onSelect }: { onSelect?: (node: Node) => void }) {
+interface NodeListProps {
+  nodes: Node[];
+  onSelect?: (node: Node) => void;
+}
+
+export function NodeList({ nodes, onSelect }: NodeListProps) {
   const { t } = useLang();
-  const [nodeList, setNodeList] = useState<Node[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    loadNodes();
-  }, []);
-
-  async function loadNodes() {
-    try {
-      setLoading(true);
-      const data = await nodesApi.list();
-      setNodeList(data.nodes);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t('authFailed'));
-    } finally {
-      setLoading(false);
-    }
-  }
 
   const statusLabel: Record<string, string> = {
     online: t('nodeOnline'),
@@ -32,22 +15,14 @@ export function NodeList({ onSelect }: { onSelect?: (node: Node) => void }) {
     busy: t('nodeBusy'),
   };
 
-  if (loading) {
-    return <div className="loading">{t('loadingNodes')}</div>;
-  }
-
-  if (error) {
-    return <div className="error">{t('authFailed')}: {error}</div>;
-  }
-
-  if (nodeList.length === 0) {
+  if (nodes.length === 0) {
     return <div className="empty">{t('noNodes')}</div>;
   }
 
   return (
     <div className="node-list">
-      <h3>{t('agentNodes')} ({nodeList.length})</h3>
-      {nodeList.map((node) => (
+      <h3>{t('agentNodes')} ({nodes.length})</h3>
+      {nodes.map((node) => (
         <div
           key={node.id}
           className={`node-card ${node.status}`}

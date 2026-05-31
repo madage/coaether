@@ -1,12 +1,13 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { Terminal } from './components/Terminal';
 import { NodeList } from './components/NodeList';
 import { SessionList } from './components/SessionList';
 import { CreateSession } from './components/CreateSession';
 import { LangSwitcher } from './components/LangSwitcher';
 import { useWebSocket } from './hooks/useWebSocket';
+import { useDashboardWS } from './hooks/useDashboardWS';
 import { useLang } from './i18n/context';
-import { auth as authApi } from './api/client';
+import { auth as authApi, sessions as sessionsApi } from './api/client';
 import type { Node, Session, AuthState } from './types';
 
 type Page = 'nodes' | 'sessions' | 'terminal';
@@ -16,12 +17,14 @@ function App() {
   const [auth, setAuth] = useState<AuthState>({ token: null, user: null });
   const [page, setPage] = useState<Page>('nodes');
   const [activeSessionID, setActiveSessionID] = useState<string | null>(null);
-  const [nodes, setNodes] = useState<Node[]>([]);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [isRegister, setIsRegister] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
-  const [terminalOutput, setTerminalOutput] = useState('');
+  // Real-time dashboard data (nodes + sessions)
+  const { nodes, sessions } = useDashboardWS();
+  // Track whether we've received WS data for the current session
+  const receivedData = useRef(false);
 
   // Check for existing token
   useEffect(() => {
@@ -37,20 +40,27 @@ function App() {
     }
   }, []);
 
-  // WebSocket hook for terminal
+  // WebSocket hook for terminal — clear "waiting" on first data
+  const onOutput = useCallback((data: string) => {
+    if (!receivedData.current) {
+      receivedData.current = true;
+      Terminal.clear();
+    }
+    Terminal.write(data);
+  }, []);
+
+  const onTaskResult = useCallback((success: boolean, error?: string) => {
+    if (success) {
+      Terminal.writeln(`\r\n\x1b[32m${t('sessionCompleted')}\x1b[0m`);
+    } else {
+      Terminal.writeln(`\r\n\x1b[31m${t('sessionFailed')}${error || t('unknownError')}]\x1b[0m`);
+    }
+  }, [t]);
+
   const { sendInput } = useWebSocket({
     sessionID: activeSessionID || '',
-    onOutput: useCallback((data: string) => {
-      Terminal.write(data);
-      setTerminalOutput((prev) => prev + data);
-    }, []),
-    onTaskResult: useCallback((success: boolean, error?: string) => {
-      if (success) {
-        Terminal.write(`\r\n\x1b[32m${t('sessionCompleted')}\x1b[0m\r\n`);
-      } else {
-        Terminal.write(`\r\n\x1b[31m${t('sessionFailed')}${error || t('unknownError')}]\x1b[0m\r\n`);
-      }
-    }, [t]),
+    onOutput,
+    onTaskResult,
   });
 
   async function handleAuth(e: React.FormEvent) {
@@ -77,16 +87,48 @@ function App() {
     void node;
   }
 
-  function handleSessionSelect(session: Session) {
+  async function handleSessionSelect(session: Session) {
+    receivedData.current = false;
     setActiveSessionID(session.id);
     setPage('terminal');
-    Terminal.clear();
+
+    // Defer to let React mount the Terminal component first
+    setTimeout(async () => {
+      if (session.status === 'completed' || session.status === 'failed') {
+        // Fetch historical output log
+        Terminal.writeln('Loading...');
+        try {
+          const detail = await sessionsApi.getByID(session.id);
+          if (detail.output_log) {
+            Terminal.clear();
+            Terminal.write(detail.output_log);
+          } else {
+            Terminal.clear();
+            Terminal.writeln(t('sessionCompleted'));
+          }
+          if (detail.error_log) {
+            Terminal.writeln(`\r\n\x1b[31mError: ${detail.error_log}\x1b[0m`);
+          }
+        } catch {
+          Terminal.clear();
+          Terminal.writeln(t('sessionCompleted'));
+        }
+      } else {
+        // For pending/running sessions, show waiting message
+        Terminal.writeln(t('waitingForSession'));
+      }
+    }, 0);
   }
 
   function handleSessionCreated(sessionID: string) {
+    receivedData.current = false;
     setActiveSessionID(sessionID);
     setPage('terminal');
-    Terminal.clear();
+
+    // Defer to let React mount the Terminal component first
+    setTimeout(() => {
+      Terminal.writeln(t('waitingForSession'));
+    }, 0);
   }
 
   // Login screen
@@ -236,28 +278,17 @@ function App() {
         {page === 'nodes' && (
           <div style={{ padding: '24px', maxWidth: '800px' }}>
             <h2>{t('agentNodes')}</h2>
-            <NodeList onSelect={handleNodeSelect} />
-            <button
-              onClick={() => { window.location.reload(); }}
-              style={{
-                marginTop: '12px',
-                padding: '8px 16px',
-                background: '#1976d2',
-                color: '#fff',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: 'pointer',
-              }}
-            >
-              {t('refresh')}
-            </button>
+            <NodeList nodes={nodes} onSelect={handleNodeSelect} />
+            <div style={{ fontSize: '0.85em', color: '#999', marginTop: '8px' }}>
+              {sessions.length} {t('sessions').toLowerCase()} | {t('navNodes').toLowerCase()}: {nodes.length}
+            </div>
           </div>
         )}
 
         {page === 'sessions' && (
           <div style={{ display: 'flex', maxWidth: '1200px', height: '100%' }}>
             <div style={{ flex: 1, padding: '24px', overflow: 'auto' }}>
-              <SessionList onSelect={handleSessionSelect} />
+              <SessionList sessions={sessions} onSelect={handleSessionSelect} />
             </div>
             <div style={{ width: '400px', borderLeft: '1px solid #e0e0e0', overflow: 'auto' }}>
               <CreateSession nodes={nodes} onCreated={handleSessionCreated} />

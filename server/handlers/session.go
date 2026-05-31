@@ -12,11 +12,12 @@ import (
 )
 
 type SessionHandler struct {
-	DB *sql.DB
+	DB  *sql.DB
+	Hub *WSHub
 }
 
-func NewSessionHandler(db *sql.DB) *SessionHandler {
-	return &SessionHandler{DB: db}
+func NewSessionHandler(db *sql.DB, hub *WSHub) *SessionHandler {
+	return &SessionHandler{DB: db, Hub: hub}
 }
 
 func (h *SessionHandler) Create(c *gin.Context) {
@@ -49,6 +50,33 @@ func (h *SessionHandler) Create(c *gin.Context) {
 	redis.SetSessionStatus(sessionID, string(models.SessionPending))
 	redis.SetSessionNode(sessionID, req.NodeID)
 
+	// Send task to node via WebSocket
+	taskPayload := map[string]string{
+		"session_id": sessionID,
+		"prompt":     req.Prompt,
+		"workspace":  req.Workspace,
+	}
+	sent := h.Hub.SendTaskToNode(req.NodeID, sessionID, taskPayload)
+	if !sent {
+		// Node offline — don't block creation, but mark as failed
+		h.DB.Exec("UPDATE sessions SET status = $1, error_log = $2, updated_at = NOW() WHERE id = $3",
+			models.SessionFailed, "target node is not connected", sessionID)
+		redis.SetSessionStatus(sessionID, string(models.SessionFailed))
+		h.Hub.BroadcastSessionUpdate(sessionID, models.SessionFailed, req.Prompt, req.Workspace, req.NodeID)
+		c.JSON(http.StatusOK, models.SessionResp{
+			ID:        sessionID,
+			Status:    models.SessionFailed,
+			Prompt:    req.Prompt,
+			Workspace: req.Workspace,
+			NodeID:    req.NodeID,
+			CreatedAt: now,
+		})
+		return
+	}
+
+	// Broadcast new session to dashboard clients
+	h.Hub.BroadcastSessionUpdate(sessionID, models.SessionPending, req.Prompt, req.Workspace, req.NodeID)
+
 	c.JSON(http.StatusCreated, models.SessionResp{
 		ID:        sessionID,
 		Status:    models.SessionPending,
@@ -75,10 +103,9 @@ func (h *SessionHandler) List(c *gin.Context) {
 	var sessions []models.SessionResp
 	for rows.Next() {
 		var s models.SessionResp
-		if err := rows.Scan(&s.ID, &s.NodeID, &s.Status, &s.Prompt, &s.Workspace, &s.CreatedAt); err != nil {
+		var uid string; if err := rows.Scan(&s.ID, &uid, &s.NodeID, &s.Status, &s.Prompt, &s.Workspace, &s.CreatedAt); err != nil {
 			continue
 		}
-		// note: user_id is scanned into the wrong position above, fix:
 		sessions = append(sessions, s)
 	}
 

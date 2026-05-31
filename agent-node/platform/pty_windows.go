@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"syscall"
-	"unsafe"
 )
 
 var (
@@ -31,7 +30,7 @@ func NewWindowsPTY() *WindowsPTY {
 	return &WindowsPTY{}
 }
 
-func (w *WindowsPTY) Open(cmdPath string, args []string, env []string) error {
+func (w *WindowsPTY) Open(cmdPath string, args []string, dir string, env []string) error {
 	// Create pipes for input/output
 	var err error
 	w.outputR, w.outputW, err = os.Pipe()
@@ -44,20 +43,21 @@ func (w *WindowsPTY) Open(cmdPath string, args []string, env []string) error {
 		return fmt.Errorf("failed to create input pipe: %w", err)
 	}
 
-	// In MVP: use ConPTY via HPC, fallback to simple exec for Claude Code via WSL
-	if isWSLCommand(cmdPath) {
-		w.cmd = exec.Command("wsl", append([]string{"-e", cmdPath}, args...)...)
-		if env != nil {
-			w.cmd.Env = env
-		}
-		w.cmd.Stdin = w.inputR
-		w.cmd.Stdout = w.outputW
-		w.cmd.Stderr = w.outputW
-		if err := w.cmd.Start(); err != nil {
-			return fmt.Errorf("failed to start WSL command: %w", err)
-		}
-		w.pid = w.cmd.Process.Pid
+	// Start command directly on Windows
+	w.cmd = exec.Command(cmdPath, args...)
+	if dir != "" {
+		w.cmd.Dir = dir
 	}
+	if env != nil {
+		w.cmd.Env = env
+	}
+	w.cmd.Stdin = w.inputR
+	w.cmd.Stdout = w.outputW
+	w.cmd.Stderr = w.outputW
+	if err := w.cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start command: %w", err)
+	}
+	w.pid = w.cmd.Process.Pid
 
 	return nil
 }
@@ -118,11 +118,8 @@ var (
 	procResumeThread  = kernel32.MustFindProc("ResumeThread")
 )
 
-func isWSLCommand(path string) bool {
-	return path == "claude" || path == "wsl"
-}
-
-func toWSLPath(windowsPath string) string {
+// WSLPath converts a Windows path (e.g. "D:/halo") to a WSL path ("/mnt/d/halo").
+func WSLPath(windowsPath string) string {
 	if len(windowsPath) < 2 || windowsPath[1] != ':' {
 		return windowsPath
 	}
@@ -130,3 +127,4 @@ func toWSLPath(windowsPath string) string {
 	rest := windowsPath[2:]
 	return "/mnt/" + drive + "/" + rest
 }
+

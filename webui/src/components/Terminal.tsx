@@ -60,7 +60,6 @@ export function Terminal({ onInput, className = '' }: TerminalProps) {
 
     term.write('Superco AI Agent Terminal\r\n');
     term.write('========================\r\n\r\n');
-    term.write(`${t('waitingForSession')}\r\n`);
 
     xtermRef.current = term;
 
@@ -73,21 +72,20 @@ export function Terminal({ onInput, className = '' }: TerminalProps) {
     };
   }, [t]);
 
-  const write = (data: string) => {
-    xtermRef.current?.write(data);
-  };
-
-  const clear = () => {
-    xtermRef.current?.clear();
-  };
-
   const focus = () => {
     xtermRef.current?.focus();
   };
 
-  // Expose methods via ref or return
-  (Terminal as unknown as Record<string, unknown>)._write = write;
-  (Terminal as unknown as Record<string, unknown>)._clear = clear;
+  // Expose static methods so App.tsx can write/clear from WebSocket callbacks
+  (Terminal as unknown as Record<string, unknown>)._write = (data: string) => {
+    xtermRef.current?.write(data);
+  };
+  (Terminal as unknown as Record<string, unknown>)._clear = () => {
+    xtermRef.current?.clear();
+  };
+  (Terminal as unknown as Record<string, unknown>)._writeln = (data: string) => {
+    xtermRef.current?.writeln(data);
+  };
 
   return (
     <div
@@ -106,11 +104,15 @@ export function Terminal({ onInput, className = '' }: TerminalProps) {
   );
 }
 
-// Static methods for external access
+// Static methods for external access from non-React code (WebSocket callbacks)
 Terminal.write = (data: string) => {
   (Terminal as unknown as { _write: (d: string) => void })._write?.(data);
 };
 
 Terminal.clear = () => {
   (Terminal as unknown as { _clear: () => void })._clear?.();
+};
+
+Terminal.writeln = (data: string) => {
+  (Terminal as unknown as { _writeln: (d: string) => void })._writeln?.(data);
 };

@@ -10,9 +10,9 @@ func NewProcessController(pty PTY) ProcessController {
 	return &WindowsProcessController{pty: pty.(*WindowsPTY)}
 }
 
-func (c *WindowsProcessController) Start(cmd string, args []string, pty PTY) error {
+func (c *WindowsProcessController) Start(cmd string, args []string, dir string, pty PTY) error {
 	wpty := pty.(*WindowsPTY)
-	return wpty.Open(cmd, args, nil)
+	return wpty.Open(cmd, args, dir, nil)
 }
 
 func (c *WindowsProcessController) Stop() error {
@@ -36,6 +36,3 @@ func (c *WindowsProcessController) PID() int {
 	return c.pty.PID()
 }
 
-func WSLPath(windowsPath string) string {
-	return toWSLPath(windowsPath)
-}
