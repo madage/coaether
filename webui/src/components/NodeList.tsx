@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { nodes as nodesApi } from '../api/client';
+import { useLang } from '../i18n/context';
 import type { Node } from '../types';
 
 export function NodeList({ onSelect }: { onSelect?: (node: Node) => void }) {
+  const { t } = useLang();
   const [nodeList, setNodeList] = useState<Node[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -18,27 +20,33 @@ export function NodeList({ onSelect }: { onSelect?: (node: Node) => void }) {
       setNodeList(data.nodes);
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load nodes');
+      setError(err instanceof Error ? err.message : t('authFailed'));
     } finally {
       setLoading(false);
     }
   }
 
+  const statusLabel: Record<string, string> = {
+    online: t('nodeOnline'),
+    offline: t('nodeOffline'),
+    busy: t('nodeBusy'),
+  };
+
   if (loading) {
-    return <div className="loading">Loading nodes...</div>;
+    return <div className="loading">{t('loadingNodes')}</div>;
   }
 
   if (error) {
-    return <div className="error">Error: {error}</div>;
+    return <div className="error">{t('authFailed')}: {error}</div>;
   }
 
   if (nodeList.length === 0) {
-    return <div className="empty">No nodes registered. Start an Agent Node to begin.</div>;
+    return <div className="empty">{t('noNodes')}</div>;
   }
 
   return (
     <div className="node-list">
-      <h3>Nodes ({nodeList.length})</h3>
+      <h3>{t('agentNodes')} ({nodeList.length})</h3>
       {nodeList.map((node) => (
         <div
           key={node.id}
@@ -57,10 +65,10 @@ export function NodeList({ onSelect }: { onSelect?: (node: Node) => void }) {
         >
           <div style={{ fontWeight: 600 }}>{node.name}</div>
           <div style={{ fontSize: '0.85em', color: '#666' }}>
-            {node.os} / {node.arch} - {node.status}
+            {node.os} / {node.arch} - {statusLabel[node.status] || node.status}
           </div>
           <div style={{ fontSize: '0.8em', color: '#999' }}>
-            Last seen: {new Date(node.last_seen).toLocaleString()}
+            {t('lastSeen')}: {new Date(node.last_seen).toLocaleString()}
           </div>
         </div>
       ))}

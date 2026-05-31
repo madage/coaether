@@ -3,13 +3,16 @@ import { Terminal } from './components/Terminal';
 import { NodeList } from './components/NodeList';
 import { SessionList } from './components/SessionList';
 import { CreateSession } from './components/CreateSession';
+import { LangSwitcher } from './components/LangSwitcher';
 import { useWebSocket } from './hooks/useWebSocket';
+import { useLang } from './i18n/context';
 import { auth as authApi } from './api/client';
 import type { Node, Session, AuthState } from './types';
 
 type Page = 'nodes' | 'sessions' | 'terminal';
 
 function App() {
+  const { t, lang } = useLang();
   const [auth, setAuth] = useState<AuthState>({ token: null, user: null });
   const [page, setPage] = useState<Page>('nodes');
   const [activeSessionID, setActiveSessionID] = useState<string | null>(null);
@@ -43,11 +46,11 @@ function App() {
     }, []),
     onTaskResult: useCallback((success: boolean, error?: string) => {
       if (success) {
-        Terminal.write('\r\n\x1b[32m[Session completed successfully]\x1b[0m\r\n');
+        Terminal.write(`\r\n\x1b[32m${t('sessionCompleted')}\x1b[0m\r\n`);
       } else {
-        Terminal.write(`\r\n\x1b[31m[Session failed: ${error || 'unknown error'}]\x1b[0m\r\n`);
+        Terminal.write(`\r\n\x1b[31m${t('sessionFailed')}${error || t('unknownError')}]\x1b[0m\r\n`);
       }
-    }, []),
+    }, [t]),
   });
 
   async function handleAuth(e: React.FormEvent) {
@@ -60,7 +63,7 @@ function App() {
       localStorage.setItem('user', JSON.stringify(data.user));
       setAuth({ token: data.token, user: data.user });
     } catch (err) {
-      setAuthError(err instanceof Error ? err.message : 'Authentication failed');
+      setAuthError(err instanceof Error ? err.message : t('authFailed'));
     }
   }
 
@@ -72,7 +75,6 @@ function App() {
 
   function handleNodeSelect(node: Node) {
     void node;
-    // Select node - in MVP we just navigate to sessions
   }
 
   function handleSessionSelect(session: Session) {
@@ -97,8 +99,12 @@ function App() {
           alignItems: 'center',
           height: '100vh',
           background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
+          position: 'relative',
         }}
       >
+        <div style={{ position: 'absolute', top: 16, right: 16 }}>
+          <LangSwitcher />
+        </div>
         <div
           style={{
             background: '#fff',
@@ -108,16 +114,16 @@ function App() {
             width: '360px',
           }}
         >
-          <h1 style={{ margin: '0 0 24px', textAlign: 'center', color: '#1a1a2e' }}>Superco</h1>
+          <h1 style={{ margin: '0 0 24px', textAlign: 'center', color: '#1a1a2e' }}>{t('appTitle')}</h1>
           <p style={{ textAlign: 'center', color: '#666', marginBottom: '24px' }}>
-            AI Agent Distributed Platform
+            {t('appSubtitle')}
           </p>
 
           <form onSubmit={handleAuth}>
             <div style={{ marginBottom: '16px' }}>
               <input
                 type="text"
-                placeholder="Username"
+                placeholder={t('username')}
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 style={inputStyle}
@@ -127,7 +133,7 @@ function App() {
             <div style={{ marginBottom: '16px' }}>
               <input
                 type="password"
-                placeholder="Password"
+                placeholder={t('password')}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 style={inputStyle}
@@ -140,7 +146,7 @@ function App() {
             )}
 
             <button type="submit" style={buttonStyle}>
-              {isRegister ? 'Register' : 'Login'}
+              {isRegister ? t('register') : t('login')}
             </button>
 
             <div style={{ textAlign: 'center', marginTop: '16px' }}>
@@ -155,7 +161,7 @@ function App() {
                   fontSize: '0.9em',
                 }}
               >
-                {isRegister ? 'Already have an account? Login' : "Don't have an account? Register"}
+                {isRegister ? t('alreadyHasAccount') : t('noAccount')}
               </button>
             </div>
           </form>
@@ -178,7 +184,7 @@ function App() {
         }}
       >
         <div style={{ padding: '20px', borderBottom: '1px solid #333' }}>
-          <h2 style={{ margin: 0, fontSize: '1.3em' }}>Superco</h2>
+          <h2 style={{ margin: 0, fontSize: '1.3em' }}>{t('appTitle')}</h2>
           <div style={{ fontSize: '0.85em', color: '#999', marginTop: '4px' }}>
             {auth.user?.username}
           </div>
@@ -199,15 +205,15 @@ function App() {
                 cursor: 'pointer',
                 fontSize: '0.95em',
                 marginBottom: '2px',
-                textTransform: 'capitalize',
               }}
             >
-              {p === 'nodes' ? '📡 Nodes' : p === 'sessions' ? '📋 Sessions' : '💻 Terminal'}
+              {p === 'nodes' ? `📡 ${t('navNodes')}` : p === 'sessions' ? `📋 ${t('navSessions')}` : `💻 ${t('navTerminal')}`}
             </button>
           ))}
         </nav>
 
-        <div style={{ marginTop: 'auto', padding: '16px' }}>
+        <div style={{ marginTop: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <LangSwitcher />
           <button
             onClick={handleLogout}
             style={{
@@ -220,7 +226,7 @@ function App() {
               cursor: 'pointer',
             }}
           >
-            Logout
+            {t('logout')}
           </button>
         </div>
       </div>
@@ -229,13 +235,10 @@ function App() {
       <div style={{ flex: 1, overflow: 'auto' }}>
         {page === 'nodes' && (
           <div style={{ padding: '24px', maxWidth: '800px' }}>
-            <h2>Agent Nodes</h2>
+            <h2>{t('agentNodes')}</h2>
             <NodeList onSelect={handleNodeSelect} />
             <button
-              onClick={() => {
-                /* Refresh nodes */
-                window.location.reload();
-              }}
+              onClick={() => { window.location.reload(); }}
               style={{
                 marginTop: '12px',
                 padding: '8px 16px',
@@ -246,7 +249,7 @@ function App() {
                 cursor: 'pointer',
               }}
             >
-              Refresh
+              {t('refresh')}
             </button>
           </div>
         )}
@@ -266,7 +269,7 @@ function App() {
           <div style={{ padding: '24px', height: '100%', display: 'flex', flexDirection: 'column' }}>
             <div style={{ marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '12px' }}>
               <h3 style={{ margin: 0 }}>
-                Session: {activeSessionID ? activeSessionID.substring(0, 8) + '...' : 'None'}
+                {t('session')}: {activeSessionID ? activeSessionID.substring(0, 8) + '...' : t('none')}
               </h3>
               <button
                 onClick={() => setActiveSessionID(null)}
@@ -280,7 +283,7 @@ function App() {
                   fontSize: '0.85em',
                 }}
               >
-                Disconnect
+                {t('disconnect')}
               </button>
             </div>
             <div style={{ flex: 1 }}>
@@ -288,7 +291,7 @@ function App() {
             </div>
             {!activeSessionID && (
               <div style={{ marginTop: '12px', padding: '16px', background: '#fff3e0', borderRadius: '6px', color: '#e65100' }}>
-                No active session. Create a session from the Sessions tab first.
+                {t('noActiveSession')}
               </div>
             )}
           </div>

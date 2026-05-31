@@ -33,12 +33,17 @@ Thumbs.db
 
 # === Environment & Secrets ===
 .env
-.env.*
+.env.local
+.env.production
+.env.development
 *.pem
 *.key
 *.cert
 credentials.json
 service-account.json
+
+# === Docs ===
+产品说明/
 
 # === Logs ===
 *.log

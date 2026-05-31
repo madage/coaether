@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Terminal as XTerm } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
+import { useLang } from '../i18n/context';
 import 'xterm/css/xterm.css';
 
 interface TerminalProps {
@@ -9,6 +10,7 @@ interface TerminalProps {
 }
 
 export function Terminal({ onInput, className = '' }: TerminalProps) {
+  const { t } = useLang();
   const containerRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -58,7 +60,7 @@ export function Terminal({ onInput, className = '' }: TerminalProps) {
 
     term.write('Superco AI Agent Terminal\r\n');
     term.write('========================\r\n\r\n');
-    term.write('Waiting for session...\r\n');
+    term.write(`${t('waitingForSession')}\r\n`);
 
     xtermRef.current = term;
 
@@ -69,7 +71,7 @@ export function Terminal({ onInput, className = '' }: TerminalProps) {
       window.removeEventListener('resize', handleResize);
       term.dispose();
     };
-  }, []);
+  }, [t]);
 
   const write = (data: string) => {
     xtermRef.current?.write(data);

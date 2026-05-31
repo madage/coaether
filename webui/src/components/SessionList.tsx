@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { sessions as sessionsApi } from '../api/client';
+import { useLang } from '../i18n/context';
 import type { Session } from '../types';
 
 export function SessionList({ onSelect }: { onSelect?: (session: Session) => void }) {
+  const { t } = useLang();
   const [sessionList, setSessionList] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -18,7 +20,7 @@ export function SessionList({ onSelect }: { onSelect?: (session: Session) => voi
       setSessionList(data.sessions);
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load sessions');
+      setError(err instanceof Error ? err.message : t('authFailed'));
     } finally {
       setLoading(false);
     }
@@ -32,21 +34,29 @@ export function SessionList({ onSelect }: { onSelect?: (session: Session) => voi
     failed: '#f44336',
   };
 
+  const statusLabels: Record<string, string> = {
+    pending: t('sessionPending'),
+    running: t('sessionRunning'),
+    paused: t('sessionPaused'),
+    completed: t('sessionStatusCompleted'),
+    failed: t('sessionStatusFailed'),
+  };
+
   if (loading) {
-    return <div className="loading">Loading sessions...</div>;
+    return <div className="loading">{t('loadingSessions')}</div>;
   }
 
   if (error) {
-    return <div className="error">Error: {error}</div>;
+    return <div className="error">{t('authFailed')}: {error}</div>;
   }
 
   if (sessionList.length === 0) {
-    return <div className="empty">No sessions yet. Create one to get started.</div>;
+    return <div className="empty">{t('noSessions')}</div>;
   }
 
   return (
     <div className="session-list">
-      <h3>Sessions ({sessionList.length})</h3>
+      <h3>{t('sessions')} ({sessionList.length})</h3>
       {sessionList.map((session) => (
         <div
           key={session.id}
@@ -76,11 +86,11 @@ export function SessionList({ onSelect }: { onSelect?: (session: Session) => voi
                 whiteSpace: 'nowrap',
               }}
             >
-              {session.status}
+              {statusLabels[session.status] || session.status}
             </span>
           </div>
           <div style={{ fontSize: '0.85em', color: '#666', marginTop: '4px' }}>
-            Workspace: {session.workspace} | Created: {new Date(session.created_at).toLocaleString()}
+            {t('workspace')}: {session.workspace} | {t('created')}: {new Date(session.created_at).toLocaleString()}
           </div>
         </div>
       ))}
