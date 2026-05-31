@@ -2,7 +2,11 @@
 
 package platform
 
-import "golang.org/x/term"
+import (
+	"syscall"
+
+	"golang.org/x/term"
+)
 
 type UnixProcessController struct {
 	pty *UnixPTY

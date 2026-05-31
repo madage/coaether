@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	serverAddr = flag.String("server", "ws://localhost:8080/ws/node", "Backend WebSocket address")
+	serverAddr = flag.String("server", "ws://localhost:8088/ws/node", "Backend WebSocket address")
 	nodeToken  = flag.String("token", "", "Node authentication token")
 	nodeName   = flag.String("name", "", "Node display name (defaults to hostname)")
 	platform   = flag.String("os", "", "Override OS detection")

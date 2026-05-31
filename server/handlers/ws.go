@@ -36,23 +36,25 @@ type NodeConnection struct {
 }
 
 type WSHub struct {
-	DB          *sql.DB
-	JWTSecret   string
-	Nodes       map[string]*NodeConnection
-	NodesBySess map[string]string // session_id -> node_id
-	Sessions    map[string]*NodeConnection // session_id -> ui conn
-	Dashboards  map[string]*NodeConnection // dashboard ws connections
-	Mu          sync.RWMutex
+	DB           *sql.DB
+	JWTSecret    string
+	Nodes        map[string]*NodeConnection
+	NodesBySess  map[string]string // session_id -> node_id
+	Sessions     map[string]*NodeConnection // session_id -> ui conn
+	Dashboards   map[string]*NodeConnection // dashboard ws connections
+	PendingOut   map[string][][]byte // buffered output before UI connects
+	Mu           sync.RWMutex
 }
 
 func NewWSHub(db *sql.DB, jwtSecret string) *WSHub {
 	return &WSHub{
-		DB:          db,
-		JWTSecret:   jwtSecret,
-		Nodes:       make(map[string]*NodeConnection),
-		NodesBySess: make(map[string]string),
-		Sessions:    make(map[string]*NodeConnection),
-		Dashboards:  make(map[string]*NodeConnection),
+		DB:           db,
+		JWTSecret:    jwtSecret,
+		Nodes:        make(map[string]*NodeConnection),
+		NodesBySess:  make(map[string]string),
+		Sessions:     make(map[string]*NodeConnection),
+		Dashboards:   make(map[string]*NodeConnection),
+		PendingOut:   make(map[string][][]byte),
 	}
 }
 
@@ -152,14 +154,38 @@ func (h *WSHub) HandleUIWS(c *gin.Context) {
 
 	h.Mu.Lock()
 	h.Sessions[sessionID] = &NodeConnection{Conn: conn}
+	// Flush any buffered output to the newly connected UI
+	if buf, ok := h.PendingOut[sessionID]; ok {
+		for _, msgBytes := range buf {
+			conn.WriteMessage(websocket.TextMessage, msgBytes)
+		}
+		delete(h.PendingOut, sessionID)
+	}
 	h.Mu.Unlock()
 
 	log.Printf("[WS] UI connected to session: %s", sessionID)
 
 	defer func() {
+		// Notify node to stop the shell when UI disconnects
+		stopPayload, _ := json.Marshal(WSMessage{
+			Type:    "stop",
+			Payload: mustJSON(map[string]string{"session_id": sessionID}),
+		})
+		h.forwardToNode(sessionID, stopPayload)
+
 		h.Mu.Lock()
 		delete(h.Sessions, sessionID)
+		delete(h.PendingOut, sessionID)
 		h.Mu.Unlock()
+
+		// Reset node status
+		h.Mu.RLock()
+		nodeID := h.NodesBySess[sessionID]
+		h.Mu.RUnlock()
+		if nodeID != "" {
+			h.DB.Exec("UPDATE nodes SET status = 'online' WHERE id = $1", nodeID)
+		}
+
 		conn.Close()
 	}()
 	defer h.cleanupSessionBinding(sessionID)
@@ -336,7 +362,23 @@ func (h *WSHub) handleNodeMessage(nc *NodeConnection, msg WSMessage) {
 		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
 			return
 		}
-		h.forwardToUI(payload.SessionID, msgBytesReconstruct(msg.Type, msg.Payload))
+		// Update session status to running on first output
+		h.DB.Exec("UPDATE sessions SET status = 'running', updated_at = NOW() WHERE id = $1 AND status = 'pending'",
+			payload.SessionID)
+		// Forward to UI if connected, otherwise buffer
+		h.Mu.RLock()
+		_, uiConnected := h.Sessions[payload.SessionID]
+		h.Mu.RUnlock()
+		msgBytes := msgBytesReconstruct(msg.Type, msg.Payload)
+		if uiConnected {
+			h.forwardToUI(payload.SessionID, msgBytes)
+		} else {
+			h.Mu.Lock()
+			if buf, ok := h.PendingOut[payload.SessionID]; ok {
+				h.PendingOut[payload.SessionID] = append(buf, msgBytes)
+			}
+			h.Mu.Unlock()
+		}
 
 	case "task_result":
 		var payload struct {
@@ -354,6 +396,15 @@ func (h *WSHub) handleNodeMessage(nc *NodeConnection, msg WSMessage) {
 		h.DB.Exec("UPDATE sessions SET status = $1, updated_at = NOW(), completed_at = NOW() WHERE id = $2",
 			status, payload.SessionID)
 		h.forwardToUI(payload.SessionID, msgBytesReconstruct(msg.Type, msg.Payload))
+
+		// Reset node status back to online
+		h.Mu.RLock()
+		nodeID := h.NodesBySess[payload.SessionID]
+		h.Mu.RUnlock()
+		if nodeID != "" {
+			h.DB.Exec("UPDATE nodes SET status = 'online' WHERE id = $1", nodeID)
+		}
+
 		h.cleanupSessionBinding(payload.SessionID)
 
 		// Broadcast session update to dashboards
@@ -410,6 +461,7 @@ func (h *WSHub) cleanupSessionBinding(sessionID string) {
 	h.Mu.Lock()
 	delete(h.NodesBySess, sessionID)
 	delete(h.Sessions, sessionID)
+	delete(h.PendingOut, sessionID)
 	h.Mu.Unlock()
 }
 
@@ -468,9 +520,10 @@ func (h *WSHub) SendTaskToNode(nodeID, sessionID string, task interface{}) bool 
 		return false
 	}
 
-	// Record session→node mapping so input can be forwarded
+	// Initialize pending output buffer for this session
 	h.Mu.Lock()
 	h.NodesBySess[sessionID] = nodeID
+	h.PendingOut[sessionID] = make([][]byte, 0)
 	h.Mu.Unlock()
 
 	// Update node status to busy

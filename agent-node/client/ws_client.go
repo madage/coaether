@@ -205,6 +205,7 @@ func (nc *NodeClient) handleTask(payload json.RawMessage) {
 }
 
 func (nc *NodeClient) executeTask(task taskPayload) {
+	// Start Claude Code interactively in the workspace directory
 	claudeCmd := "claude"
 	workspace := task.Workspace
 
@@ -218,15 +219,17 @@ func (nc *NodeClient) executeTask(task taskPayload) {
 	p := platform.NewPTY()
 
 	procCtrl := platform.NewProcessController(p)
-	if err := procCtrl.Start(claudeCmd, []string{"-p", task.Prompt}, workspace, p); err != nil {
-		nc.sendTaskResult(task.SessionID, false, fmt.Sprintf("failed to start: %v", err))
+	if err := procCtrl.Start(claudeCmd, nil, workspace, p); err != nil {
+		nc.sendTaskResult(task.SessionID, false, fmt.Sprintf("failed to start claude: %v", err))
 		return
 	}
 
 	sp := &sessionPTY{pty: p, procCtrl: procCtrl}
 	nc.sessionPTYs[task.SessionID] = sp
 
-	// Read output and send to backend; keep reading until process exits
+	log.Printf("[Task] Claude started for session %s (pid %d)", task.SessionID, procCtrl.PID())
+
+	// Read output continuously and send to backend; keep reading until process exits
 	buf := make([]byte, 4096)
 	for {
 		n, err := p.Read(buf)
@@ -236,7 +239,8 @@ func (nc *NodeClient) executeTask(task taskPayload) {
 		nc.sendOutput(task.SessionID, string(buf[:n]))
 	}
 
-	// Process exited — send result and clean up
+	// Claude exited — send result and clean up
+	log.Printf("[Task] Claude exited for session %s", task.SessionID)
 	nc.sendTaskResult(task.SessionID, true, "")
 	delete(nc.sessionPTYs, task.SessionID)
 }
