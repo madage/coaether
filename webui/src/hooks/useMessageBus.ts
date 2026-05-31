@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { sessions as sessionsAPI } from '../api/client';
 
 // Mirror of server protocol types for the frontend
 export interface ContentBlock {
@@ -48,13 +49,21 @@ interface UseMessageBusOptions {
   onMessage?: (env: Envelope) => void;
 }
 
+const LS_ACTIVE_SESSION = 'activeSessionID';
+
 export function useMessageBus({ userID, onMessage }: UseMessageBusOptions) {
   const wsRef = useRef<WebSocket | null>(null);
   const connIDRef = useRef<string>('');
   const endpointRef = useRef<string>('');
   const [connected, setConnected] = useState(false);
-  const [sessionID, setSessionID] = useState<string | null>(null);
+  const [sessionID, setSessionID] = useState<string | null>(() => {
+    // Restore session from localStorage on mount
+    return localStorage.getItem(LS_ACTIVE_SESSION);
+  });
   const [messages, setMessages] = useState<Envelope[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [sessionEnded, setSessionEnded] = useState(false);
+  const [sessionActive, setSessionActive] = useState(false); // confirmed active on bus
   const pendingRef = useRef<Array<{ resolve: (id: string) => void }>>([]);
 
   // Get or create a unique connection ID
@@ -87,6 +96,32 @@ export function useMessageBus({ userID, onMessage }: UseMessageBusOptions) {
         type: 'hello',
         payload: { endpoint_type: 'ui' },
       }));
+
+      // Auto-restore session from localStorage after reconnect
+      const savedID = localStorage.getItem(LS_ACTIVE_SESSION);
+      if (savedID) {
+        console.log('[Bus] Auto-restoring session:', savedID);
+        setSessionID(savedID);
+        setSessionEnded(false);
+        setLoadingHistory(true);
+        // Join the session on the bus
+        ws.send(JSON.stringify({
+          id: crypto.randomUUID ? crypto.randomUUID() : `msg-${Date.now()}`,
+          from: endpointRef.current,
+          to: 'system://bus',
+          type: 'session.join',
+          session_id: savedID,
+        }));
+        // Load history from REST API
+        sessionsAPI.getMessages(savedID).then((res) => {
+          const history = (res.messages || []) as unknown as Envelope[];
+          setMessages(history);
+        }).catch(() => {
+          // best-effort
+        }).finally(() => {
+          setLoadingHistory(false);
+        });
+      }
     };
 
     ws.onmessage = (event) => {
@@ -94,12 +129,50 @@ export function useMessageBus({ userID, onMessage }: UseMessageBusOptions) {
         const env: Envelope = JSON.parse(event.data);
         console.log('[Bus] RECV:', env.type, env.from, '→', env.to);
 
-        // Handle session.created — resolve pending promise
+        // Handle session.created — persist and resolve pending promise
         if (env.type === 'session.created' && env.session_id) {
           setSessionID(env.session_id);
+          setSessionEnded(false);
+          setSessionActive(true);
+          localStorage.setItem(LS_ACTIVE_SESSION, env.session_id);
+          // Load history from server
+          setLoadingHistory(true);
+          sessionsAPI.getMessages(env.session_id).then((res) => {
+            const history = (res.messages || []) as unknown as Envelope[];
+            setMessages((prev) => {
+              // Filter out any messages from history that are already in state
+              // (prevents duplicates from race conditions)
+              const existingIDs = new Set(prev.map((m) => m.id));
+              const newHistory = history.filter((m) => m.id && !existingIDs.has(m.id));
+              return [...newHistory, ...prev];
+            });
+          }).catch(() => {
+            // History fetch is best-effort
+          }).finally(() => {
+            setLoadingHistory(false);
+          });
           // Resolve pending create session promises
           pendingRef.current.forEach((p) => p.resolve(env.session_id!));
           pendingRef.current = [];
+        }
+
+        // Handle session.joined — session is active on the bus
+        if (env.type === 'session.joined') {
+          setSessionActive(true);
+          setSessionEnded(false);
+        }
+
+        // Handle error — e.g. SESSION_NOT_FOUND from joining a stale session
+        if (env.type === 'error' && env.payload?.code === 'SESSION_NOT_FOUND') {
+          setSessionEnded(true);
+          setSessionActive(false);
+        }
+
+        // Handle session.end — clean up persisted state
+        if (env.type === 'session.end') {
+          localStorage.removeItem(LS_ACTIVE_SESSION);
+          setSessionEnded(true);
+          setSessionActive(false);
         }
 
         // Add to messages (skip internal system messages)
@@ -159,6 +232,33 @@ export function useMessageBus({ userID, onMessage }: UseMessageBusOptions) {
     });
   }, [send]);
 
+  const joinSession = useCallback((sessionID: string) => {
+    setSessionID(sessionID);
+    setMessages([]);
+    setSessionEnded(false);
+    setSessionActive(false); // awaiting session.joined confirmation
+    setLoadingHistory(true);
+    localStorage.setItem(LS_ACTIVE_SESSION, sessionID);
+
+    // Load historical messages from REST API
+    sessionsAPI.getMessages(sessionID).then((res) => {
+      const history = (res.messages || []) as unknown as Envelope[];
+      setMessages(history);
+    }).catch(() => {
+      // best-effort
+    }).finally(() => {
+      setLoadingHistory(false);
+    });
+
+    // Join the session on the bus for real-time message routing
+    send({
+      from: endpointRef.current,
+      to: 'system://bus',
+      type: 'session.join',
+      session_id: sessionID,
+    });
+  }, [send]);
+
   const sendMessage = useCallback((text: string) => {
     if (!sessionID) return false;
     return send({
@@ -176,8 +276,12 @@ export function useMessageBus({ userID, onMessage }: UseMessageBusOptions) {
     connected,
     sessionID,
     messages,
+    loadingHistory,
+    sessionEnded,
+    sessionActive,
     send,
     createSession,
+    joinSession,
     sendMessage,
     clearMessages: useCallback(() => setMessages([]), []),
   };

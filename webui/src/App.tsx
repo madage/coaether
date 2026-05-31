@@ -98,16 +98,16 @@ function App() {
   }, []);
 
   const handleSessionSelect = useCallback((session: Session) => {
+    // Join existing session on the bus and load historical messages
+    bus.joinSession(session.id);
     setPage('chat');
-    // For existing sessions, we'd need to join via bus
-    // For now, this just navigates to the chat page
-  }, []);
+  }, [bus]);
 
   const handleSessionCreated = useCallback(async (sessionID: string) => {
-    // Session was created via REST API
-    // Now create the bus session for real-time messaging
+    // Session was created via REST API — join the bus session for real-time messaging
+    bus.joinSession(sessionID);
     setPage('chat');
-  }, []);
+  }, [bus]);
 
   const pendingRef = useRef('');
 
@@ -132,7 +132,8 @@ function App() {
       // passthrough: send to claude
     }
 
-    if (!bus.sessionID) {
+    // No active session on bus — create a new one
+    if (!bus.sessionID || !bus.sessionActive || bus.sessionEnded) {
       pendingRef.current = text;
       bus.createSession([{ id: 'claude', backend: 'api' }]);
       return false;
@@ -243,6 +244,10 @@ function App() {
 
   const busConnected = bus.connected;
   const hasSession = bus.sessionID !== null;
+  // Only disable input when disconnected from bus
+  // Restored/ended sessions auto-create a new session on send
+  const chatDisabled = !busConnected;
+  const showLoadingHistory = hasSession && bus.loadingHistory;
 
   return (
     <>
@@ -310,6 +315,7 @@ function App() {
             onClick={() => {
               localStorage.removeItem('token');
               localStorage.removeItem('user');
+              localStorage.removeItem('activeSessionID');
               setAuth({ token: null, user: null });
             }}
             style={{
@@ -352,8 +358,14 @@ function App() {
         <div style={{ display: page === 'chat' ? 'flex' : 'none', height: '100%', flexDirection: 'column' }}>
           {/* Session header */}
           <div style={{ padding: '12px 16px', borderBottom: '1px solid #e0e0e0', background: '#fff', display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <h3 style={{ margin: 0, fontSize: '1em' }}>
+            <h3 style={{ margin: 0, fontSize: '1em', display: 'flex', alignItems: 'center', gap: '8px' }}>
               {hasSession ? `Session: ${bus.sessionID!.slice(0, 8)}...` : 'No active session'}
+              {showLoadingHistory && (
+                <span style={{ fontSize: '0.75em', color: '#1976d2', fontWeight: 400 }}>Loading history...</span>
+              )}
+              {bus.sessionEnded && (
+                <span style={{ fontSize: '0.75em', color: '#9e9e9e', fontWeight: 400 }}>Session ended (read-only)</span>
+              )}
             </h3>
             {!busConnected && (
               <span style={{ fontSize: '0.8em', color: '#f44336' }}>Disconnected</span>
@@ -417,8 +429,8 @@ function App() {
           {/* Input area */}
           <InputArea
             onSend={handleSendMessage}
-            disabled={!busConnected}
-            placeholder={busConnected ? 'Type a message and press Enter...' : 'Connecting...'}
+            disabled={chatDisabled}
+            placeholder={bus.sessionEnded ? 'Session ended — browsing history' : (busConnected ? 'Type a message and press Enter...' : 'Connecting...')}
             pendingPermissions={pendingPermissions.length}
             onPermissionResponse={(approved) => sendPermissionResponse(approved)}
           />

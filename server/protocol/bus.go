@@ -78,6 +78,9 @@ func NewMessageBus() *MessageBus {
 // SetStore sets a persistent message store.
 func (b *MessageBus) SetStore(s MessageStore) { b.store = s }
 
+// GetStore returns the current message store.
+func (b *MessageBus) GetStore() MessageStore { return b.store }
+
 // SetEndpointDeliver sets a custom delivery function for an endpoint's connection.
 func (b *MessageBus) SetEndpointDeliver(conn *websocket.Conn, fn func(env *Envelope) error) {
 	b.mu.Lock()
@@ -236,9 +239,26 @@ func (b *MessageBus) EndSession(sessionID string) {
 
 // ==================== Message Delivery ====================
 
+// shouldPersist checks whether a message type should be saved to the store.
+func shouldPersist(msgType string) bool {
+	switch msgType {
+	case MsgPing, MsgPong, MsgHello, MsgBye, MsgAck:
+		return false
+	default:
+		return true
+	}
+}
+
 // Deliver sends an envelope to its target(s).
 // Returns the number of endpoints the message was delivered to.
 func (b *MessageBus) Deliver(env *Envelope) int {
+	// Persist to store if applicable
+	if b.store != nil && env.SessionID != "" && shouldPersist(env.Type) {
+		if err := b.store.Save(env); err != nil {
+			b.logger.Printf("[Bus] Store save error: %v", err)
+		}
+	}
+
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 

@@ -62,3 +62,7 @@ service-account.json
 
 # === Data ===
 *.rdb
+
+# === Build & Store ===
+build/
+server/store/

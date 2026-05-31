@@ -84,6 +84,16 @@ func Migrate() error {
 	CREATE INDEX IF NOT EXISTS idx_sessions_node_id ON sessions(node_id);
 	CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
 	CREATE INDEX IF NOT EXISTS idx_agents_node_id ON agents(node_id);
+
+	CREATE TABLE IF NOT EXISTS messages (
+		id          VARCHAR(36) PRIMARY KEY,
+		session_id  VARCHAR(36) NOT NULL,
+		envelope    JSONB NOT NULL,
+		created_at  TIMESTAMP DEFAULT NOW()
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);
+	CREATE INDEX IF NOT EXISTS idx_messages_session_time ON messages(session_id, created_at);
 	`
 
 	_, err := DB.Exec(schema)
@@ -104,6 +114,21 @@ func Migrate() error {
 	}
 
 	log.Println("[DB] Migrations completed")
+
+	// Clean up stale sessions from previous server run
+	// Mark running/pending sessions as failed since the server restarted
+	staleResult, err := DB.Exec(
+		`UPDATE sessions SET status = 'failed', error_log = 'server restarted', updated_at = NOW(), completed_at = NOW()
+		 WHERE status IN ('running', 'pending')`,
+	)
+	if err != nil {
+		log.Printf("[DB] Stale session cleanup warning: %v", err)
+	} else {
+		if n, _ := staleResult.RowsAffected(); n > 0 {
+			log.Printf("[DB] Marked %d stale session(s) as failed (server restart)", n)
+		}
+	}
+
 	return nil
 }
 

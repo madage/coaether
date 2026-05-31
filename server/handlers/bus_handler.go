@@ -286,7 +286,20 @@ func (h *BusHandler) handleSessionJoin(env *protocol.Envelope) {
 	if env.SessionID == "" {
 		return
 	}
-	h.Bus.JoinSession(env.SessionID, env.From, protocol.RoleMember)
+	ok := h.Bus.JoinSession(env.SessionID, env.From, protocol.RoleMember)
+	if !ok {
+		// Session doesn't exist on the bus — likely a stale session from a previous server run
+		log.Printf("[Bus] Join failed: session %s not found for %s", env.SessionID, env.From)
+		errEnv := protocol.NewEnvelope("system://bus", env.From,
+			protocol.MsgError, &protocol.Payload{
+				Code:    "SESSION_NOT_FOUND",
+				Message: "Session not found on bus (may have ended)",
+			})
+		errEnv.SessionID = env.SessionID
+		errEnv.ReplyTo = env.ID
+		h.Bus.Deliver(errEnv)
+		return
+	}
 
 	joined := protocol.NewEnvelope("system://bus", "session://"+env.SessionID,
 		protocol.MsgSessionJoined, &protocol.Payload{

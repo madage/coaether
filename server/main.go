@@ -11,6 +11,7 @@ import (
 	"github.com/superco/server/redis"
 	"github.com/superco/server/protocol"
 	"github.com/superco/server/services"
+	"github.com/superco/server/store"
 )
 
 func main() {
@@ -39,6 +40,10 @@ func main() {
 
 	// Message Bus (new architecture)
 	messageBus := protocol.NewMessageBus()
+	// Wire up persistent message store
+	msgStore := store.NewPostgresStore(database.DB)
+	messageBus.SetStore(msgStore)
+	log.Println("[Server] Message store initialized")
 	busH := handlers.NewBusHandler(messageBus)
 
 	// Handlers
@@ -94,6 +99,20 @@ func main() {
 		api.POST("/sessions", sessionH.Create)
 		api.GET("/sessions", sessionH.List)
 		api.GET("/sessions/:id", sessionH.GetByID)
+		api.GET("/sessions/:id/messages", func(c *gin.Context) {
+			sessionID := c.Param("id")
+			store := messageBus.GetStore()
+			if store == nil {
+				c.JSON(500, gin.H{"error": "message store not available"})
+				return
+			}
+			envelopes, err := store.GetBySession(sessionID, 200)
+			if err != nil {
+				c.JSON(500, gin.H{"error": "failed to fetch messages"})
+				return
+			}
+			c.JSON(200, gin.H{"messages": envelopes})
+		})
 	}
 
 	log.Printf("[Server] Starting on :%s", cfg.ServerPort)

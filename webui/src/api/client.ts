@@ -88,4 +88,7 @@ export const sessions = {
       '/sessions',
       { method: 'POST', body: JSON.stringify(data) }
     ),
+
+  getMessages: (sessionID: string) =>
+    request<{ messages: Record<string, unknown>[] }>(`/sessions/${sessionID}/messages`),
 };
