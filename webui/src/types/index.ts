@@ -53,17 +53,6 @@ export interface CreateSessionReq {
   agent_id: string;
 }
 
-// === WebSocket Types ===
-export interface WSMessage {
-  type: string;
-  payload: Record<string, unknown>;
-}
-
-export interface OutputPayload {
-  session_id: string;
-  data: string;
-}
-
 // === Auth Types ===
 export interface AuthState {
   token: string | null;

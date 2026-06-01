@@ -10,7 +10,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/superco/server/models"
 	"github.com/superco/server/protocol"
-	"github.com/superco/server/redis"
 )
 
 type NodeHandler struct {
@@ -66,15 +65,8 @@ func (h *NodeHandler) Register(c *gin.Context) {
 		return
 	}
 
-	wsToken := uuid.New().String()
-	if err := redis.SetNodeOnline(nodeID, wsToken); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to set node online"})
-		return
-	}
-
 	c.JSON(http.StatusOK, models.NodeRegisterResp{
-		NodeID:  nodeID,
-		WSToken: wsToken,
+		NodeID: nodeID,
 	})
 }
 

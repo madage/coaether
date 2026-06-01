@@ -19,7 +19,7 @@ type BusHandler struct {
 	Bus       *protocol.MessageBus
 	mu        sync.Mutex
 	connMutex map[*websocket.Conn]*sync.Mutex
-	Hub       *WSHub // for broadcasting to dashboards
+	Hub       *DashboardHub // for broadcasting to dashboards
 }
 
 var busUpgrader = websocket.Upgrader{

@@ -11,16 +11,15 @@ import (
 	"github.com/google/uuid"
 	"github.com/superco/server/models"
 	"github.com/superco/server/protocol"
-	"github.com/superco/server/redis"
 )
 
 type SessionHandler struct {
 	DB  *sql.DB
-	Hub *WSHub
+	Bus *protocol.MessageBus
 }
 
-func NewSessionHandler(db *sql.DB, hub *WSHub) *SessionHandler {
-	return &SessionHandler{DB: db, Hub: hub}
+func NewSessionHandler(db *sql.DB, bus *protocol.MessageBus) *SessionHandler {
+	return &SessionHandler{DB: db, Bus: bus}
 }
 
 func (h *SessionHandler) Create(c *gin.Context) {
@@ -37,7 +36,7 @@ func (h *SessionHandler) Create(c *gin.Context) {
 	// For bus-connected runtimes, validate the runtime endpoint exists
 	if isBus {
 		epID := isBusNodeRaw(req.NodeID)
-		if h.Hub.Bus == nil || h.Hub.Bus.GetEndpoint(epID) == nil {
+		if h.Bus == nil || h.Bus.GetEndpoint(epID) == nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "bus runtime not connected"})
 			return
 		}
@@ -73,7 +72,7 @@ func (h *SessionHandler) Create(c *gin.Context) {
 		)
 
 		// Create session in MessageBus so runtime can join and messages route
-		h.Hub.Bus.CreateSession(sessionID, map[string]protocol.MemberRole{
+		h.Bus.CreateSession(sessionID, map[string]protocol.MemberRole{
 			"system://api": protocol.RoleOwner,
 		})
 	}
@@ -86,7 +85,7 @@ func (h *SessionHandler) Create(c *gin.Context) {
 	if err != nil {
 		// Clean up bus session on DB error
 		if isBus {
-			h.Hub.Bus.EndSession(sessionID)
+			h.Bus.EndSession(sessionID)
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create session"})
 		return
@@ -104,7 +103,7 @@ func (h *SessionHandler) Create(c *gin.Context) {
 			},
 		)
 		createEnv.SessionID = sessionID
-		h.Hub.Bus.Deliver(createEnv)
+		h.Bus.Deliver(createEnv)
 
 		log.Printf("[Session] Created bus session %s on %s", sessionID, req.NodeID)
 		c.JSON(http.StatusCreated, models.SessionResp{
@@ -119,60 +118,8 @@ func (h *SessionHandler) Create(c *gin.Context) {
 		return
 	}
 
-	// Legacy: Redis enqueue + WebSocket send for old-style nodes
-	if err := redis.EnqueueTask(sessionID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to enqueue task"})
-		return
-	}
-
-	redis.SetSessionStatus(sessionID, string(models.SessionPending))
-	redis.SetSessionNode(sessionID, req.NodeID)
-
-	// Get agent command for this agent
-	agentCmd := "claude"
-	if req.AgentID != "" {
-		h.DB.QueryRow("SELECT command FROM agents WHERE id = $1", req.AgentID).Scan(&agentCmd)
-	}
-
-	// Send task to node via WebSocket
-	taskPayload := map[string]string{
-		"session_id":    sessionID,
-		"agent_id":      req.AgentID,
-		"agent_command": agentCmd,
-		"prompt":        req.Prompt,
-		"workspace":     req.Workspace,
-	}
-	sent := h.Hub.SendTaskToNode(req.NodeID, sessionID, taskPayload)
-	if !sent {
-		// Node offline — don't block creation, but mark as failed
-		h.DB.Exec("UPDATE sessions SET status = $1, error_log = $2, updated_at = NOW() WHERE id = $3",
-			models.SessionFailed, "target node is not connected", sessionID)
-		redis.SetSessionStatus(sessionID, string(models.SessionFailed))
-		h.Hub.BroadcastSessionUpdate(sessionID, models.SessionFailed, req.Prompt, req.Workspace, req.NodeID)
-		c.JSON(http.StatusOK, models.SessionResp{
-			ID:        sessionID,
-			Status:    models.SessionFailed,
-			AgentID:   req.AgentID,
-			Prompt:    req.Prompt,
-			Workspace: req.Workspace,
-			NodeID:    req.NodeID,
-			CreatedAt: now,
-		})
-		return
-	}
-
-	// Broadcast new session to dashboard clients
-	h.Hub.BroadcastSessionUpdate(sessionID, models.SessionPending, req.Prompt, req.Workspace, req.NodeID)
-
-	c.JSON(http.StatusCreated, models.SessionResp{
-		ID:        sessionID,
-		Status:    models.SessionPending,
-		AgentID:   req.AgentID,
-		Prompt:    req.Prompt,
-		Workspace: req.Workspace,
-		NodeID:    req.NodeID,
-		CreatedAt: now,
-	})
+	// Non-bus nodes are no longer supported (old agent-node system removed)
+	c.JSON(http.StatusBadRequest, gin.H{"error": "only bus-connected runtimes are supported"})
 }
 
 func (h *SessionHandler) List(c *gin.Context) {

@@ -93,7 +93,6 @@ SuperCo 是一个 AI Agent 协作平台，核心能力是通过 **Message Bus（
 
 - **Web 框架**：Gin
 - **数据库**：PostgreSQL（用户、会话持久化）
-- **缓存**：Redis（会话状态、实时数据）
 - **认证**：JWT（登录/注册接口）
 
 ### 3.2 HTTP API 端点
@@ -113,7 +112,6 @@ SuperCo 是一个 AI Agent 协作平台，核心能力是通过 **Message Bus（
 |------|------|
 | `GET /ws/bus` | **Message Bus** 主连接（UI / Runtime 均通过此接入） |
 | `GET /ws/dashboard` | 仪表盘实时数据（节点/会话状态） |
-| `GET /ws/ui` | 旧版 UI WebSocket（兼容） |
 
 ### 3.4 Message Bus 核心逻辑
 
@@ -584,7 +582,7 @@ App: useEffect 检测到 sessionID 变更
 
 | 组件 | 依赖 |
 |------|------|
-| Server | PostgreSQL、Redis |
+| Server | PostgreSQL |
 | Agent Runtime | Claude CLI（已安装并可用） |
 | Web UI | Node.js 18+ |
 
@@ -607,7 +605,6 @@ cd agent-runtime && go run .  # 或：go build && ./agent-runtime
 |------|------|--------|
 | `SERVER_PORT` | Server 监听端口 | `8088` |
 | `POSTGRES_DSN` | PostgreSQL 连接串 | — |
-| `REDIS_ADDR` | Redis 地址 | `localhost:6379` |
 | `JWT_SECRET` | JWT 签名密钥 | — |
 | `SERVER_URL` | Runtime 连接的 Server 地址 | `localhost:8088` |
 
@@ -627,8 +624,6 @@ cd agent-runtime && go run .  # 或：go build && ./agent-runtime
 ```ini
 SERVER_PORT=8088
 POSTGRES_DSN=postgres://myai:myai123@localhost:5432/myai?sslmode=disable
-REDIS_ADDR=localhost:6379
-REDIS_PASS=
 JWT_SECRET=superco-secret-key
 ```
 

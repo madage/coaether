@@ -9,12 +9,12 @@
 
 SuperCo 是一个**分布式 AI Agent 调度平台**，核心能力是管理多台运行 AI 工具（如 Claude Code）的机器节点，通过统一的 Web 界面或消息总线协议来创建会话、调度任务、实时交互。
 
-项目采用 **Go + React** 技术栈，代码库包含两套并存的通信架构：
+项目采用 **Go + React** 技术栈，当前已全面使用新版 Message Bus 通信架构：
 
 | 架构 | 状态 | 说明 |
 |------|------|------|
-| 旧版 (agent-node) | 稳定运行 | 直连 WebSocket + PTY，每个会话一条独立连接 |
-| 新版 (agent-runtime + Message Bus) | 战略方向 | 信封协议 + 发布/订阅总线，支持多后端、结构化消息 |
+| 旧版 (agent-node) | 已移除 | 直连 WebSocket + PTY，已被 agent-runtime + Message Bus 替代 |
+| 新版 (agent-runtime + Message Bus) | 当前架构 | 信封协议 + 发布/订阅总线，支持多后端、结构化消息 |
 
 ### 系统总体架构图
 
@@ -27,20 +27,12 @@ graph TB
     subgraph 服务层["服务层 (Go Server)"]
         direction TB
         REST["REST API<br/>Gin"]
-        WSHub["旧版 WSHub<br/>handlers/ws.go"]
         MB["MessageBus<br/>protocol/bus.go"]
         BH["BusHandler<br/>handlers/bus_handler.go"]
         PG[("PostgreSQL<br/>数据库")]
-        RD[("Redis<br/>缓存/队列")]
     end
 
-    subgraph 旧版节点["旧版 Agent 节点层"]
-        AN["agent-node<br/>client/ws_client.go"]
-        PTY["PTY 虚拟终端<br/>platform/pty.go"]
-        AP["AI 子进程<br/>claude / codex / ..."]
-    end
-
-    subgraph 新版运行时["新版 Agent Runtime 层"]
+    subgraph 运行时层["Agent Runtime 层"]
         AR["agent-runtime<br/>runtime.go"]
         BE1["ClaudeCLI Backend<br/>claude 子进程"]
         BE2["ClaudeAPI Backend<br/>Anthropic HTTP API"]
@@ -48,19 +40,14 @@ graph TB
 
     UI -->|"HTTP REST"| REST
     UI -->|"WS /ws/bus<br/>信封协议"| BH
-    UI -->|"WS /ws/ui<br/>旧版直连"| WSHub
 
     BH --> MB
-
-    WSHub -->|"WS 消息"| AN
-    AN --> PTY --> AP
 
     MB -->|"WS /ws/bus<br/>信封协议"| AR
     AR --> BE1 & BE2
 
-    REST --> PG & RD
-    WSHub --> PG & RD
-    MB --> PG & RD
+    REST --> PG
+    MB --> PG
 ```
 
 ---
@@ -71,10 +58,8 @@ graph TB
 |------|------|
 | **前端** | React 18, TypeScript, Vite 5, xterm.js 5 |
 | **后端服务** | Go 1.21, Gin v1.10 (HTTP 路由), Gorilla WebSocket v1.5 |
-| **旧版 Agent 节点** | Go 1.21, Gorilla WebSocket, creack/pty |
-| **新版 Agent Runtime** | Go 1.23, Gorilla WebSocket, 与服务端共用协议层 |
+| **Agent Runtime** | Go 1.23, Gorilla WebSocket, 与服务端共用协议层 |
 | **数据库** | PostgreSQL (via lib/pq) |
-| **缓存/队列** | Redis (via go-redis v9) |
 | **认证** | JWT (via golang-jwt v5) + bcrypt |
 | **Agent CLI** | Claude Code (`stream-json` 协议), Anthropic Messages API |
 
@@ -88,36 +73,25 @@ superco/
 │   ├── main.go              # 入口，组装所有模块
 │   ├── config/config.go     # 环境变量加载
 │   ├── database/database.go # PostgreSQL 连接 + 自动建表
-│   ├── redis/redis.go       # Redis 客户端（节点追踪、任务队列、会话映射）
 │   ├── middleware/auth.go   # JWT Bearer 中间件
 │   ├── models/              # 数据模型
 │   ├── handlers/            # HTTP + WebSocket 处理器
 │   │   ├── auth.go          # 登录/注册
 │   │   ├── node.go          # 节点 CRUD、Agent 列表、心跳
 │   │   ├── session.go       # 会话 CRUD、任务分发
-│   │   ├── ws.go            # 旧版 WSHub（节点/UI/仪表盘连接）
-│   │   └── bus_handler.go   # 新版 Message Bus WebSocket 处理器
+│   │   ├── ws.go            # DashboardHub（仪表盘 WebSocket 广播）
+│   │   └── bus_handler.go   # Message Bus WebSocket 处理器
 │   └── protocol/            # 消息总线协议（与 agent-runtime 共享）
 │       ├── address.go       # 地址解析（ui://, runtime://, session://, system://）
 │       ├── message.go       # Envelope 定义与消息类型常量
 │       └── bus.go           # MessageBus 路由引擎
 │
-├── agent-node/              # 旧版 Agent 节点
-│   ├── main.go              # 入口，通过 WebSocket 连接服务端
-│   ├── client/ws_client.go  # WebSocket 客户端：连接、心跳、PTY 任务执行
-│   ├── client/scanner.go    # PATH 扫描（发现 claude, openclaw, codex, hermes）
-│   └── platform/            # 跨平台 PTY 抽象
-│       ├── pty.go           # PTY 接口
-│       ├── pty_unix.go      # Unix 实现（creack/pty）
-│       └── pty_windows.go   # Windows 实现（kernel32）
-│
-├── agent-runtime/           # 新版 Runtime —— 通过 Message Bus 连接
+├── agent-runtime/           # Agent Runtime —— 通过 Message Bus 连接
 │   ├── runtime.go           # Runtime 主结构，连接 /ws/bus，管理 Backend
 │   ├── backends/
 │   │   ├── echo.go          # 测试用 EchoBackend
 │   │   ├── claude.go        # ClaudeBackend —— Anthropic Messages API (HTTP)
 │   │   └── claude_cli.go    # ClaudeCLIBackend —— claude 子进程 (stream-json)
-│   └── cmd/pty_int/main.go  # PTY 集成测试
 │
 ├── webui/                   # React 前端
 │   ├── src/
@@ -126,8 +100,7 @@ superco/
 │   │   ├── types/index.ts   # TypeScript 接口定义
 │   │   ├── api/client.ts    # REST API 客户端
 │   │   ├── hooks/
-│   │   │   ├── useMessageBus.ts    # 新版：Message Bus 连接 (envelope 协议)
-│   │   │   ├── useWebSocket.ts     # 旧版：直接会话 WebSocket
+│   │   │   ├── useMessageBus.ts    # Message Bus 连接 (envelope 协议)
 │   │   │   └── useDashboardWS.ts   # 仪表盘实时更新 WebSocket
 │   │   ├── components/
 │   │   │   ├── MessageStream.tsx    # 富消息渲染（文本/代码/表格/进度/tool_use）
@@ -168,18 +141,7 @@ superco/
 
 ---
 
-## 五、Redis 用途
-
-| 用途 | 操作 |
-|------|------|
-| 在线节点追踪 | `HSet("nodes:online", nodeID, data)` / `HGetAll` |
-| 任务队列 | `LPush("queue:tasks", sessionID)` / `BRPop` |
-| 会话-节点映射 | `Set("session:<id>:node", nodeID)` |
-| 会话状态 | `Set("session:<id>:status", status)` |
-
----
-
-## 六、API 概览
+## 五、API 概览
 
 ### REST 接口
 
@@ -200,16 +162,16 @@ superco/
 
 | 路径 | 用途 |
 |------|------|
-| `/ws/node?node_id=xxx` | 旧版 Agent 节点连接 |
-| `/ws/ui?session_id=xxx` | 旧版终端 UI 连接 |
 | `/ws/dashboard?token=jwt` | 仪表盘实时更新 |
-| `/ws/bus?type=ui\|runtime` | 新版 Message Bus 协议连接 |
+| `/ws/bus?type=ui\|runtime` | Message Bus 协议连接（当前架构） |
 
 ---
 
-## 七、两套架构详解
+## 六、两套架构详解
 
-### 7.1 旧版架构（agent-node + WSHub）
+### 6.1 旧版架构（agent-node + WSHub）[已移除]
+
+> 旧版架构已移除，保留此节作为历史参考。
 
 ```mermaid
 sequenceDiagram
@@ -265,7 +227,7 @@ sequenceDiagram
 5. **用户交互** — 用户在 UI 输入 → 服务端转发 → 节点写入 PTY stdin
 6. **任务结束** — 进程退出 → 节点发送 `task_result` → 服务端更新会话状态
 
-### 7.2 新版架构（agent-runtime + Message Bus）
+### 6.2 新版架构（agent-runtime + Message Bus）
 
 这是战略方向，核心采用**统一的信封协议（Envelope Protocol）**。
 
@@ -407,7 +369,7 @@ stateDiagram-v2
 
 ---
 
-## 八、前端架构
+## 七、前端架构
 
 ### 组件树与数据流
 
@@ -420,7 +382,6 @@ graph TB
     subgraph Hooks["Hooks 数据层"]
         MBus["useMessageBus<br/>/ws/bus 信封协议"]
         DWS["useDashboardWS<br/>/ws/dashboard 实时状态"]
-        WSock["useWebSocket<br/>/ws/ui 旧版终端"]
         API["api/client.ts<br/>REST API 调用"]
     end
 
@@ -444,7 +405,6 @@ graph TB
     LP --> App
     MBus --> App
     DWS --> App
-    WSock --> App
     API --> App
 
     App --> S
@@ -476,13 +436,12 @@ graph LR
     CBR --> SP["SeparatorBlock<br/>分割线"]
 ```
 
-### 三个 WebSocket Hook
+### 两个 WebSocket Hook
 
 | Hook | 连接路径 | 用途 |
 |------|----------|------|
-| `useMessageBus.ts` | `/ws/bus?type=ui` | 新版聊天界面，完整信封协议 |
+| `useMessageBus.ts` | `/ws/bus?type=ui` | 聊天界面，完整信封协议 |
 | `useDashboardWS.ts` | `/ws/dashboard?token=jwt` | 侧边栏实时节点/会话状态 |
-| `useWebSocket.ts` | `/ws/ui?session_id=xxx` | 旧版终端直连 |
 
 ### 状态管理
 
@@ -494,7 +453,7 @@ graph LR
 
 ---
 
-## 九、权限系统
+## 八、权限系统
 
 使用 Claude Code 时，工具调用需要用户授权。权限请求以 `permission.request` 信封形式流动。
 
@@ -535,7 +494,7 @@ graph TD
 
 ---
 
-## 十、部署与基础设施
+## 九、部署与基础设施
 
 ```mermaid
 graph TB
@@ -547,12 +506,11 @@ graph TB
     subgraph Prod["生产环境"]
         SRV["SuperCo Server<br/>Go Binary :8088"]
         PG[("PostgreSQL<br/>:5432")]
-        RD[("Redis<br/>:6379")]
     end
 
     subgraph Nodes["Agent 节点集群"]
-        N1["agent-node / agent-runtime<br/>Node 1"]
-        N2["agent-node / agent-runtime<br/>Node 2"]
+        N1["agent-runtime<br/>Node 1"]
+        N2["agent-runtime<br/>Node 2"]
         N3["...更多节点"]
     end
 
@@ -564,7 +522,6 @@ graph TB
     end
 
     SRV --> PG
-    SRV --> RD
     SRV -->|"WS /ws/bus"| N1
     SRV -->|"WS /ws/bus"| N2
     SRV -->|"WS /ws/bus"| N3
@@ -574,7 +531,7 @@ graph TB
 
 - **无 Docker / CI/CD 配置**，项目为裸机部署设计
 - 编译 Go 二进制文件后在目标机器直接运行
-- 服务端依赖：**PostgreSQL** + **Redis**
+- 服务端依赖：**PostgreSQL**
 - 服务端默认端口 **8088**，Vite 开发服务器代理 `/api`、`/ws` 到 `localhost:8088`
 - 跨平台编译：Makefile 支持 darwin/linux/windows、amd64/arm64
 
@@ -584,15 +541,13 @@ graph TB
 |------|---------|------|
 | Go 服务端 | Go 1.21+ | 单二进制部署，无外部运行时 |
 | PostgreSQL | 12+ | 持久化用户/节点/会话/Agent 数据 |
-| Redis | 6+ | 节点在线状态、任务队列、会话映射 |
 | 前端构建 | Node 18+ | `npm run build` 产物由服务端托管 |
-| Agent 节点 | Go 1.21+ / 1.23+ | 旧版 agent-node 或新版 agent-runtime |
+| Agent 运行时 | Go 1.23+ | agent-runtime 连接 Message Bus |
 
 ---
 
-## 十一、架构演进方向
+## 十、架构演进方向
 
-1. **Message Bus 全面替代 WSHub**：旧版直连 WS 架构逐步下线，所有通信迁移到信封协议
-2. **更多 Backend 支持**：通过 Backend 接口扩展更多 AI 工具接入
-3. **会话持久化与恢复**：利用 Claude Code 持久会话特性支持长期运行任务
-4. **水平扩展**：Message Bus 的无状态设计便于横向扩展
+1. **更多 Backend 支持**：通过 Backend 接口扩展更多 AI 工具接入
+2. **会话持久化与恢复**：利用 Claude Code 持久会话特性支持长期运行任务
+3. **水平扩展**：Message Bus 的无状态设计便于横向扩展

@@ -34,8 +34,7 @@ type NodeRegisterReq struct {
 }
 
 type NodeRegisterResp struct {
-	NodeID   string `json:"node_id"`
-	WSToken  string `json:"ws_token"`
+	NodeID string `json:"node_id"`
 }
 
 type NodeHeartbeatReq struct {

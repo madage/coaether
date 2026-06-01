@@ -8,9 +8,7 @@ import (
 	"github.com/superco/server/database"
 	"github.com/superco/server/handlers"
 	"github.com/superco/server/middleware"
-	"github.com/superco/server/redis"
 	"github.com/superco/server/protocol"
-	"github.com/superco/server/services"
 	"github.com/superco/server/store"
 )
 
@@ -27,20 +25,8 @@ func main() {
 		log.Fatalf("[FATAL] %v", err)
 	}
 
-	// Redis
-	if err := redis.Connect(cfg.RedisAddr, cfg.RedisPass); err != nil {
-		log.Fatalf("[FATAL] %v", err)
-	}
-	defer redis.Close()
-
-	// Services
-	taskQueue := services.NewTaskQueueService()
-	taskQueue.Start()
-	defer taskQueue.Stop()
-
-	// Message Bus (new architecture)
+	// Message Bus
 	messageBus := protocol.NewMessageBus()
-	// Wire up persistent message store
 	msgStore := store.NewPostgresStore(database.DB)
 	messageBus.SetStore(msgStore)
 	log.Println("[Server] Message store initialized")
@@ -49,9 +35,9 @@ func main() {
 	// Handlers
 	authH := handlers.NewAuthHandler(database.DB, cfg.JWTSecret)
 	nodeH := handlers.NewNodeHandler(database.DB, messageBus)
-	wsHub := handlers.NewWSHub(database.DB, cfg.JWTSecret, messageBus)
-	sessionH := handlers.NewSessionHandler(database.DB, wsHub)
-	busH.Hub = wsHub // link for dashboard broadcasting
+	dashHub := handlers.NewDashboardHub(database.DB, cfg.JWTSecret, messageBus)
+	sessionH := handlers.NewSessionHandler(database.DB, messageBus)
+	busH.Hub = dashHub // link for dashboard broadcasting
 
 	// Router
 	r := gin.Default()
@@ -77,10 +63,8 @@ func main() {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
 
-	// WebSocket routes (auth handled by token/node_id in query)
-	r.GET("/ws/node", wsHub.HandleNodeWS)
-	r.GET("/ws/ui", wsHub.HandleUIWS)
-	r.GET("/ws/dashboard", wsHub.HandleDashboardWS)
+	// WebSocket routes
+	r.GET("/ws/dashboard", dashHub.HandleDashboardWS)
 	r.GET("/ws/bus", busH.HandleWS)
 
 	// Auth required

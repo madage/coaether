@@ -1,15 +1,15 @@
 # Superco - AI Agent Distributed Scheduling Platform / AI Agent 分布式调度平台
 
-[EN] Cross-platform AI Agent scheduling platform with Web UI terminal, Go backend, and cross-platform Agent Nodes.
-[CN] 跨平台 AI Agent 分布式调度平台，提供 Web 终端界面、Go 后端服务和跨平台 Agent Node。
+[EN] Cross-platform AI Agent scheduling platform with Web UI chat, Go backend, and Message Bus architecture.
+[CN] 跨平台 AI Agent 分布式调度平台，提供 Web 聊天界面、Go 后端服务和消息总线架构。
 
 ## Architecture
 
 ```
 superco/
 ├── server/         # Go + Gin + WebSocket backend server
-├── agent-node/     # Cross-platform Go binary (macOS/Linux/Windows)
-└── webui/          # React + TypeScript + Vite + xterm.js
+├── agent-runtime/  # Agent Runtime (connects via Message Bus)
+└── webui/          # React + TypeScript + Vite chat interface
 ```
 
 ## Quick Start / 快速开始
@@ -19,11 +19,10 @@ superco/
 ```bash
 cd server
 go run .
-# Starts on :8080 / 启动于 :8080
+# Starts on :8088
 ```
 
-> Requires PostgreSQL and Redis running locally.
-> 需要本地运行 PostgreSQL 和 Redis。
+> Requires PostgreSQL. / 需要本地运行 PostgreSQL。
 
 ### 2. Web UI / 启动前端
 
@@ -31,30 +30,27 @@ go run .
 cd webui
 npm install
 npm run dev
-# Opens on localhost:5173 / 启动于 localhost:5173
+# Opens on localhost:5173
 ```
 
-### 3. Agent Node / 启动节点
+### 3. Agent Runtime / 启动运行时
 
 ```bash
-cd agent-node
-go build -o agent-node .
-./agent-node --server ws://localhost:8080/ws/node
+cd agent-runtime
+go build -o agent-runtime .
+./agent-runtime
+# Connects to ws://localhost:8088/ws/bus
 ```
 
-## Cross-platform Build / 跨平台构建
-
-```bash
-make build-agent  # Builds for macOS (amd64+arm64), Linux, Windows
-```
+> Requires `claude` CLI in PATH. / 需要 `claude` 命令在 PATH 中。
 
 ## Project Structure / 项目结构
 
 ```
 superco/
-├── server/         # Go + Gin + WebSocket backend server / 后端服务
-├── agent-node/     # Cross-platform Go binary / 跨平台节点二进制
-└── webui/          # React + TypeScript + Vite + xterm.js / 前端界面
+├── server/         # Go + Gin + Message Bus backend / 后端服务
+├── agent-runtime/  # Agent Runtime (Message Bus client) / 运行时节点
+└── webui/          # React + TypeScript + Vite / 前端界面
 ```
 
 ## License / 许可证
