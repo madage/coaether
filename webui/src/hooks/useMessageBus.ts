@@ -138,17 +138,12 @@ export function useMessageBus({ userID, onMessage }: UseMessageBusOptions) {
           setSessionEnded(false);
           setSessionActive(true);
           localStorage.setItem(LS_ACTIVE_SESSION, env.session_id);
-          // Load history from server
+          // Clear old messages and load history for the new session
+          setMessages([]);
           setLoadingHistory(true);
           sessionsAPI.getMessages(env.session_id).then((res) => {
             const history = (res.messages || []) as unknown as Envelope[];
-            setMessages((prev) => {
-              // Filter out any messages from history that are already in state
-              // (prevents duplicates from race conditions)
-              const existingIDs = new Set(prev.map((m) => m.id));
-              const newHistory = history.filter((m) => m.id && !existingIDs.has(m.id));
-              return [...newHistory, ...prev];
-            });
+            setMessages(history);
           }).catch(() => {
             // History fetch is best-effort
           }).finally(() => {

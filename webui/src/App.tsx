@@ -1,18 +1,15 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
-import { useMessageBus, type Envelope } from './hooks/useMessageBus';
-import { MessageStream } from './components/MessageStream';
-import { InputArea } from './components/InputArea';
+import { useState, useCallback, useRef } from 'react';
+import { useMessageBus, type Envelope, type ContentBlock } from './hooks/useMessageBus';
 import { NodeList } from './components/NodeList';
 import { AgentList } from './components/AgentList';
-import { SessionList } from './components/SessionList';
-import { CreateSession } from './components/CreateSession';
+import { FloatingChat } from './components/FloatingChat';
 import { LangSwitcher } from './components/LangSwitcher';
 import { useDashboardWS } from './hooks/useDashboardWS';
 import { useLang } from './i18n/context';
 import { auth as authApi } from './api/client';
 import type { Node, Session, AuthState } from './types';
 
-type Page = 'nodes' | 'sessions' | 'agents' | 'chat';
+type Page = 'nodes' | 'agents';
 
 function App() {
   const { t, lang } = useLang();
@@ -101,54 +98,22 @@ function App() {
   const handleSessionSelect = useCallback((session: Session) => {
     // Join existing session on the bus and load historical messages
     bus.joinSession(session.id);
-    setPage('chat');
   }, [bus]);
 
   const handleSessionCreated = useCallback(async (sessionID: string) => {
     // Session was created via REST API — join the bus session for real-time messaging
     bus.joinSession(sessionID);
-    setPage('chat');
   }, [bus]);
 
-  const pendingRef = useRef('');
-
-  // Handle slash commands that need client-side effects
-  const handleCommand = useCallback((text: string): 'handled' | 'passthrough' | 'intercept' => {
-    const cmd = text.split(' ')[0].toLowerCase();
-    switch (cmd) {
-      case '/clear':
-        bus.clearMessages();
-        return 'passthrough'; // also send to claude
-      default:
-        return 'passthrough'; // all other commands go to claude directly
-    }
-  }, [bus]);
-
-  const handleSendMessage = useCallback((text: string): boolean => {
-    const isCommand = text.startsWith('/');
-    if (isCommand) {
-      const action = handleCommand(text);
-      if (action === 'intercept') return true; // handled locally, don't send
-      if (action === 'handled') return true;
-      // passthrough: send to claude
-    }
-
-    // No active session on bus — create a new one
-    if (!bus.sessionID || !bus.sessionActive || bus.sessionEnded) {
-      pendingRef.current = text;
-      bus.createSession([{ id: 'claude', backend: 'api' }]);
-      return false;
-    }
-    return bus.sendMessage(text);
-  }, [bus, handleCommand]);
-
-  // Send pending message once session is created
-  useEffect(() => {
-    if (bus.sessionID && pendingRef.current) {
-      bus.sendMessage(pendingRef.current);
-      pendingRef.current = '';
-    }
-  }, [bus.sessionID, bus.sendMessage]);
+  const handleSendBlocks = useCallback((blocks: ContentBlock[]) => {
+    if (!bus.sessionID) return false;
+    return bus.send({
+      type: 'message',
+      to: `session://${bus.sessionID}`,
+      session_id: bus.sessionID,
+      payload: { content: blocks },
+    });
+  }, [bus.sessionID, bus.send]);
 
   // Login screen
   if (!auth.token) {
@@ -245,10 +210,6 @@ function App() {
 
   const busConnected = bus.connected;
   const hasSession = bus.sessionID !== null;
-  // Only disable input when disconnected from bus
-  // Restored/ended sessions auto-create a new session on send
-  const chatDisabled = !busConnected;
-  const showLoadingHistory = hasSession && bus.loadingHistory;
 
   return (
     <>
@@ -271,7 +232,7 @@ function App() {
         </div>
 
         <nav style={{ display: 'flex', flexDirection: 'column', padding: '8px' }}>
-          {(['nodes', 'sessions', 'agents', 'chat'] as Page[]).map((p) => (
+          {(['nodes', 'agents'] as Page[]).map((p) => (
             <button
               key={p}
               onClick={() => setPage(p)}
@@ -287,7 +248,7 @@ function App() {
                 marginBottom: '2px',
               }}
             >
-              {p === 'nodes' ? `📡 ${t('navNodes')}` : p === 'sessions' ? `📋 ${t('navSessions')}` : p === 'agents' ? `🤖 ${t('agents')}` : `💬 Chat`}
+              {p === 'nodes' ? `📡 ${t('navNodes')}` : `🤖 ${t('agents')}`}
             </button>
           ))}
         </nav>
@@ -351,98 +312,24 @@ function App() {
           <AgentList />
         </div>
 
-        {/* Sessions page */}
-        <div style={{ display: page === 'sessions' ? 'flex' : 'none', height: '100%' }}>
-          <div style={{ flex: 1, padding: '24px', overflow: 'auto' }}>
-            <SessionList sessions={sessions} onSelect={handleSessionSelect} />
-          </div>
-          <div style={{ width: '400px', borderLeft: '1px solid #e0e0e0', overflow: 'auto' }}>
-            <CreateSession nodes={nodes} onCreated={handleSessionCreated} />
-          </div>
-        </div>
-
-        {/* Chat page — message bus UI */}
-        <div style={{ display: page === 'chat' ? 'flex' : 'none', height: '100%', flexDirection: 'column' }}>
-          {/* Session header */}
-          <div style={{ padding: '12px 16px', borderBottom: '1px solid #e0e0e0', background: '#fff', display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <h3 style={{ margin: 0, fontSize: '1em', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              {hasSession ? `Session: ${bus.sessionID!.slice(0, 8)}...` : 'No active session'}
-              {showLoadingHistory && (
-                <span style={{ fontSize: '0.75em', color: '#1976d2', fontWeight: 400 }}>Loading history...</span>
-              )}
-              {bus.sessionEnded && (
-                <span style={{ fontSize: '0.75em', color: '#9e9e9e', fontWeight: 400 }}>Session ended (read-only)</span>
-              )}
-            </h3>
-            {!busConnected && (
-              <span style={{ fontSize: '0.8em', color: '#f44336' }}>Disconnected</span>
-            )}
-            {/* Permission mode toggle */}
-            <button
-              onClick={() => setPermissionMode(prev => prev === 'auto' ? 'restricted' : 'auto')}
-              style={{
-                padding: '4px 10px',
-                background: permissionMode === 'auto' ? '#e8f5e9' : '#fff3e0',
-                color: permissionMode === 'auto' ? '#2e7d32' : '#e65100',
-                border: `1px solid ${permissionMode === 'auto' ? '#a5d6a7' : '#ffe0b2'}`,
-                borderRadius: '4px',
-                cursor: 'pointer',
-                fontSize: '0.8em',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px',
-                whiteSpace: 'nowrap',
-                transition: 'all 0.2s',
-              }}
-              title={permissionMode === 'auto' ? t('restrictedMode') : t('autoMode')}
-            >
-              <span style={{
-                display: 'inline-block',
-                width: '6px',
-                height: '6px',
-                borderRadius: '50%',
-                background: permissionMode === 'auto' ? '#4caf50' : '#ff9800',
-                transition: 'background 0.2s',
-              }} />
-              {t('permissionMode')}: {permissionMode === 'auto' ? t('autoMode') : t('restrictedMode')}
-            </button>
-
-            <div style={{ flex: 1 }} />
-            {hasSession && (
-              <button
-                onClick={() => {
-                  bus.sendMessage('/clear');
-                }}
-                style={{
-                  padding: '4px 10px',
-                  background: '#f5f5f5',
-                  color: '#666',
-                  border: '1px solid #ddd',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
-                  fontSize: '0.8em',
-                }}
-              >
-                Clear
-              </button>
-            )}
-          </div>
-
-          {/* Messages */}
-          <div style={{ flex: 1, overflow: 'auto' }}>
-            <MessageStream messages={bus.messages} />
-          </div>
-
-          {/* Input area */}
-          <InputArea
-            onSend={handleSendMessage}
-            disabled={chatDisabled}
-            placeholder={bus.sessionEnded ? 'Session ended — browsing history' : (busConnected ? 'Type a message and press Enter...' : 'Connecting...')}
-            pendingPermissions={pendingPermissions.length}
-            onPermissionResponse={(approved) => sendPermissionResponse(approved)}
-          />
-        </div>
-      </div>
+        <FloatingChat
+          messages={bus.messages}
+          sessionID={bus.sessionID}
+          sessionActive={bus.sessionActive}
+          sessionEnded={bus.sessionEnded}
+          connected={busConnected}
+          loadingHistory={bus.loadingHistory}
+          onCreateSession={bus.createSession}
+          onJoinSession={bus.joinSession}
+          onSendMessage={bus.sendMessage}
+          onSendBlocks={handleSendBlocks}
+          onClearMessages={() => bus.sendMessage('/clear')}
+          pendingPermissions={pendingPermissions.length}
+          onPermissionResponse={(approved) => sendPermissionResponse(approved)}
+          permissionMode={permissionMode}
+          onTogglePermissionMode={() => setPermissionMode(prev => prev === 'auto' ? 'restricted' : 'auto')}
+        />
+    </div>
     </div>
 
     </>

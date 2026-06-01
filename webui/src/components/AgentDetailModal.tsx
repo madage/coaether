@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
-import type { AgentProfile } from '../types';
+import React, { useState, useEffect } from 'react';
+import type { AgentProfile, RuntimeEntity } from '../types';
+import { agentProfiles } from '../api/client';
 import { useLang } from '../i18n/context';
 
 interface AgentDetailModalProps {
@@ -46,15 +47,26 @@ export function AgentDetailModal({ profile, runtimeName, onClose, onSave, onDele
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState(profile.name);
   const [editDesc, setEditDesc] = useState(profile.description);
+  const [editAgentId, setEditAgentId] = useState(profile.agent_id);
+  const [runtimes, setRuntimes] = useState<RuntimeEntity[]>([]);
+
+  useEffect(() => {
+    agentProfiles.listRuntimes().then((res) => {
+      setRuntimes(res.runtimes);
+    }).catch(() => {
+      // silently fail
+    });
+  }, []);
 
   const handleSave = () => {
-    onSave(profile.id, { name: editName, description: editDesc });
+    onSave(profile.id, { name: editName, description: editDesc, agent_id: editAgentId });
     setEditing(false);
   };
 
   const handleCancel = () => {
     setEditName(profile.name);
     setEditDesc(profile.description);
+    setEditAgentId(profile.agent_id);
     setEditing(false);
   };
 
@@ -116,6 +128,20 @@ export function AgentDetailModal({ profile, runtimeName, onClose, onSave, onDele
                 onChange={(e) => setEditName(e.target.value)}
                 style={inputStyle}
               />
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
+                {t('agentRuntime')}
+              </label>
+              <select
+                value={editAgentId}
+                onChange={(e) => setEditAgentId(e.target.value)}
+                style={{ ...inputStyle, background: '#fff' }}
+              >
+                {runtimes.map((r) => (
+                  <option key={r.id} value={r.id}>{r.name} - {r.description}</option>
+                ))}
+              </select>
             </div>
             <div>
               <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
