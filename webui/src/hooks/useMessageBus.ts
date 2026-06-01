@@ -14,10 +14,13 @@ export interface ContentBlock {
   collapsible?: boolean;
   collapsed?: boolean;
 
+  // Progress / thinking fields
+  status?: string;
+  message?: string;
+
   // Tool use fields
   tool?: string;
   tool_input?: string;
-  status?: string;
 }
 
 export interface Envelope {

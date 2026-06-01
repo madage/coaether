@@ -3,6 +3,7 @@ import { useMessageBus, type Envelope } from './hooks/useMessageBus';
 import { MessageStream } from './components/MessageStream';
 import { InputArea } from './components/InputArea';
 import { NodeList } from './components/NodeList';
+import { AgentList } from './components/AgentList';
 import { SessionList } from './components/SessionList';
 import { CreateSession } from './components/CreateSession';
 import { LangSwitcher } from './components/LangSwitcher';
@@ -11,7 +12,7 @@ import { useLang } from './i18n/context';
 import { auth as authApi } from './api/client';
 import type { Node, Session, AuthState } from './types';
 
-type Page = 'nodes' | 'sessions' | 'chat';
+type Page = 'nodes' | 'sessions' | 'agents' | 'chat';
 
 function App() {
   const { t, lang } = useLang();
@@ -270,7 +271,7 @@ function App() {
         </div>
 
         <nav style={{ display: 'flex', flexDirection: 'column', padding: '8px' }}>
-          {(['nodes', 'sessions', 'chat'] as Page[]).map((p) => (
+          {(['nodes', 'sessions', 'agents', 'chat'] as Page[]).map((p) => (
             <button
               key={p}
               onClick={() => setPage(p)}
@@ -286,7 +287,7 @@ function App() {
                 marginBottom: '2px',
               }}
             >
-              {p === 'nodes' ? `📡 ${t('navNodes')}` : p === 'sessions' ? `📋 ${t('navSessions')}` : `💬 Chat`}
+              {p === 'nodes' ? `📡 ${t('navNodes')}` : p === 'sessions' ? `📋 ${t('navSessions')}` : p === 'agents' ? `🤖 ${t('agents')}` : `💬 Chat`}
             </button>
           ))}
         </nav>
@@ -342,6 +343,12 @@ function App() {
           <div style={{ fontSize: '0.85em', color: '#999', marginTop: '8px' }}>
             {sessions.length} {t('sessions').toLowerCase()} | {t('navNodes').toLowerCase()}: {nodes.length}
           </div>
+        </div>
+
+        {/* Agents page */}
+        <div style={{ display: page === 'agents' ? 'block' : 'none', height: '100%', overflow: 'auto' }}>
+          <h2 style={{ padding: '24px 24px 0' }}>{t('agents')}</h2>
+          <AgentList nodes={nodes} />
         </div>
 
         {/* Sessions page */}

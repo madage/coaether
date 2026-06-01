@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useState } from 'react';
 import type { Envelope, ContentBlock } from '../hooks/useMessageBus';
 
 interface MessageStreamProps {
@@ -8,10 +8,16 @@ interface MessageStreamProps {
 
 export function MessageStream({ messages, className = '' }: MessageStreamProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const [showReasoning, setShowReasoning] = useState(false);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Filter out internal reasoning messages (thinking + tool_use) when hidden
+  const visibleMessages = showReasoning
+    ? messages
+    : messages.filter(env => !isInternalEnvelope(env));
 
   if (messages.length === 0) {
     return (
@@ -23,7 +29,23 @@ export function MessageStream({ messages, className = '' }: MessageStreamProps) 
 
   return (
     <div className={className} style={{ overflow: 'auto', padding: '16px' }}>
-      {messages.map((env, i) => {
+      <div style={{ marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <button
+          onClick={() => setShowReasoning(!showReasoning)}
+          style={{
+            padding: '3px 10px',
+            fontSize: '0.78em',
+            border: '1px solid #e0e0e0',
+            borderRadius: '4px',
+            background: showReasoning ? '#e3f2fd' : '#f5f5f5',
+            cursor: 'pointer',
+            color: '#666',
+          }}
+        >
+          {showReasoning ? 'Hide all reasoning' : 'Show all reasoning'}
+        </button>
+      </div>
+      {visibleMessages.map((env, i) => {
         const isSystem = env.from === 'system://bus' || env.type === 'session.created' || env.type === 'session.joined';
         const isError = env.type === 'error';
         const hasContent = env.payload?.content && env.payload.content.length > 0;
@@ -78,6 +100,17 @@ function displayName(env: Envelope): string {
   if (env.from?.includes('runtime://') || env.from?.includes('agent://')) return 'Claude';
   if (env.type === 'event' || env.type === 'tool.use') return 'Claude';
   return env.from || env.type;
+}
+
+// Helpers for grouping internal reasoning content (thinking + tool_use)
+function isInternalContent(block: ContentBlock): boolean {
+  return (block.type === 'progress' && block.status === 'thinking') || block.type === 'tool_use';
+}
+
+function isInternalEnvelope(env: Envelope): boolean {
+  if (env.type !== 'event') return false;
+  if (!env.payload?.content || env.payload.content.length === 0) return false;
+  return env.payload.content.every(b => isInternalContent(b));
 }
 
 function SystemMessage({ env }: { env: Envelope }) {
