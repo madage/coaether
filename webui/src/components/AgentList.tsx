@@ -1,104 +1,110 @@
-import { useState, useEffect } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useLang } from '../i18n/context';
-import { agents as agentsApi } from '../api/client';
-import type { Node, Agent } from '../types';
+import { agentProfiles } from '../api/client';
+import { AgentCard } from './AgentCard';
+import { AgentCreateCard } from './AgentCreateCard';
+import { AgentForm } from './AgentForm';
+import { AgentDetailModal } from './AgentDetailModal';
+import type { AgentProfile, RuntimeEntity } from '../types';
 
-interface AgentListProps {
-  nodes: Node[];
-}
-
-export function AgentList({ nodes }: AgentListProps) {
+export function AgentList() {
   const { t } = useLang();
-  const [agentMap, setAgentMap] = useState<Record<string, Agent[]>>({});
+  const [profiles, setProfiles] = useState<AgentProfile[]>([]);
+  const [runtimes, setRuntimes] = useState<Record<string, string>>({});
+  const [selectedProfile, setSelectedProfile] = useState<AgentProfile | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const onlineNodes = nodes.filter((n) => n.status === 'online' || n.status === 'busy');
-    if (onlineNodes.length === 0) {
+  const fetchProfiles = useCallback(async () => {
+    try {
+      const [profilesRes, runtimesRes] = await Promise.all([
+        agentProfiles.list(),
+        agentProfiles.listRuntimes(),
+      ]);
+      setProfiles(profilesRes.profiles);
+      const rtMap: Record<string, string> = {};
+      runtimesRes.runtimes.forEach((r: RuntimeEntity) => { rtMap[r.id] = r.name; });
+      setRuntimes(rtMap);
+    } catch {
+      // silently fail
+    } finally {
       setLoading(false);
-      return;
     }
+  }, []);
 
-    setLoading(true);
-    Promise.all(
-      onlineNodes.map((n) =>
-        agentsApi.list(n.id).then((data) => ({ nodeId: n.id, agents: data.agents })).catch(() => null),
-      ),
-    ).then((results) => {
-      const map: Record<string, Agent[]> = {};
-      for (const r of results) {
-        if (r && r.agents.length > 0) {
-          map[r.nodeId] = r.agents;
-        }
-      }
-      setAgentMap(map);
-    }).finally(() => setLoading(false));
-  }, [nodes]);
+  useEffect(() => {
+    fetchProfiles();
+  }, [fetchProfiles]);
 
-  // Flatten to [nodeId, agent][] for display
-  const allAgents: Array<{ nodeId: string; nodeName: string; agent: Agent }> = [];
-  for (const n of nodes) {
-    const agents = agentMap[n.id];
-    if (agents) {
-      for (const a of agents) {
-        allAgents.push({ nodeId: n.id, nodeName: n.name, agent: a });
-      }
+  const handleUpdate = useCallback(async (id: string, data: Partial<AgentProfile>) => {
+    try {
+      await agentProfiles.update(id, data);
+      setProfiles((prev) => prev.map((p) => p.id === id ? { ...p, ...data } : p));
+      setSelectedProfile(null);
+    } catch {
+      // silently fail
     }
-  }
+  }, []);
 
-  const onlineNodes = nodes.filter((n) => n.status === 'online' || n.status === 'busy');
+  const handleDelete = useCallback(async (id: string) => {
+    if (!window.confirm(t('confirmDelete'))) return;
+    try {
+      await agentProfiles.delete(id);
+      setProfiles((prev) => prev.filter((p) => p.id !== id));
+      setSelectedProfile(null);
+    } catch {
+      // silently fail
+    }
+  }, [t]);
 
   if (loading) {
-    return <div style={{ padding: '24px', color: '#999' }}>{t('loading')}...</div>;
-  }
-
-  if (onlineNodes.length === 0) {
-    return <div style={{ padding: '24px', color: '#999' }}>{t('noNodes')}</div>;
-  }
-
-  if (allAgents.length === 0) {
-    return <div style={{ padding: '24px', color: '#999' }}>{t('noAgents')}</div>;
+    return (
+      <div style={{ padding: '24px', color: '#999', textAlign: 'center' }}>
+        {t('loading')}...
+      </div>
+    );
   }
 
   return (
-    <div className="agent-list" style={{ padding: '24px' }}>
-      {allAgents.map(({ nodeId, nodeName, agent }) => (
-        <div
-          key={`${nodeId}-${agent.id}`}
-          style={{
-            padding: '12px 16px',
-            marginBottom: '8px',
-            background: '#fff',
-            borderRadius: '8px',
-            border: '1px solid #e0e0e0',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-          }}
-        >
-          <div>
-            <div style={{ fontWeight: 600, fontSize: '1em' }}>{agent.name}</div>
-            <div style={{ fontSize: '0.85em', color: '#666', marginTop: '2px' }}>
-              {agent.command}{agent.version ? ` (${agent.version})` : ''}
-            </div>
-            <div style={{ fontSize: '0.75em', color: '#999', marginTop: '2px' }}>
-              {nodeName}
-            </div>
-          </div>
-          <span
-            style={{
-              padding: '2px 8px',
-              borderRadius: '4px',
-              fontSize: '0.8em',
-              background: agent.enabled ? '#e8f5e9' : '#f5f5f5',
-              color: agent.enabled ? '#2e7d32' : '#999',
-              border: `1px solid ${agent.enabled ? '#a5d6a7' : '#e0e0e0'}`,
-            }}
-          >
-            {agent.enabled ? t('enabled') : t('disabled')}
-          </span>
+    <div style={{ padding: '24px', maxWidth: '1200px', margin: '0 auto' }}>
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
+        gap: '20px',
+      }}>
+        {profiles.map((profile) => (
+          <AgentCard
+            key={profile.id}
+            profile={profile}
+            runtimeName={runtimes[profile.agent_id] || profile.agent_id}
+            onClick={() => setSelectedProfile(profile)}
+          />
+        ))}
+        <AgentCreateCard onClick={() => setShowCreate(true)} />
+      </div>
+
+      {profiles.length === 0 && (
+        <div style={{ textAlign: 'center', color: '#999', marginTop: '48px', fontSize: '0.95em' }}>
+          {t('noProfiles')}
         </div>
-      ))}
+      )}
+
+      {showCreate && (
+        <AgentForm
+          onClose={() => setShowCreate(false)}
+          onCreated={fetchProfiles}
+        />
+      )}
+
+      {selectedProfile && (
+        <AgentDetailModal
+          profile={selectedProfile}
+          runtimeName={runtimes[selectedProfile.agent_id] || selectedProfile.agent_id}
+          onClose={() => setSelectedProfile(null)}
+          onSave={handleUpdate}
+          onDelete={handleDelete}
+        />
+      )}
     </div>
   );
 }

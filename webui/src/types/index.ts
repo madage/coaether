@@ -9,6 +9,28 @@ export interface Agent {
   auto_detected: boolean;
 }
 
+// === Agent Profile Types ===
+export interface AgentProfile {
+  id: string;
+  user_id: string;
+  name: string;
+  avatar: string;
+  description: string;
+  agent_id: string;
+  version: string;
+  model: string;
+  backend: string;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RuntimeEntity {
+  id: string;
+  name: string;
+  description: string;
+}
+
 // === Node Types ===
 export type NodeStatus = 'online' | 'offline' | 'busy';
 

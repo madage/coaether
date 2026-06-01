@@ -37,6 +37,7 @@ func main() {
 	nodeH := handlers.NewNodeHandler(database.DB, messageBus)
 	dashHub := handlers.NewDashboardHub(database.DB, cfg.JWTSecret, messageBus)
 	sessionH := handlers.NewSessionHandler(database.DB, messageBus)
+	profileH := handlers.NewAgentProfileHandler(database.DB)
 	busH.Hub = dashHub // link for dashboard broadcasting
 
 	// Router
@@ -79,6 +80,14 @@ func main() {
 		api.POST("/nodes/:id/scan", nodeH.TriggerScan)
 
 		api.PATCH("/agents/:id", nodeH.UpdateAgent)
+
+			// Agent profiles
+			api.GET("/agents/profiles", profileH.List)
+			api.POST("/agents/profiles", profileH.Create)
+			api.GET("/agents/profiles/:id", profileH.Get)
+			api.PUT("/agents/profiles/:id", profileH.Update)
+			api.DELETE("/agents/profiles/:id", profileH.Delete)
+			api.GET("/agents/runtimes", profileH.ListRuntimes)
 
 		api.POST("/sessions", sessionH.Create)
 		api.GET("/sessions", sessionH.List)

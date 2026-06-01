@@ -94,6 +94,23 @@ func Migrate() error {
 
 	CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);
 	CREATE INDEX IF NOT EXISTS idx_messages_session_time ON messages(session_id, created_at);
+
+	CREATE TABLE IF NOT EXISTS agent_profiles (
+		id            VARCHAR(36) PRIMARY KEY,
+		user_id       VARCHAR(36) NOT NULL REFERENCES users(id),
+		name          VARCHAR(64) NOT NULL,
+		avatar        VARCHAR(32) NOT NULL DEFAULT '🤖',
+		description   TEXT NOT NULL DEFAULT '',
+		agent_id      VARCHAR(64) NOT NULL,
+		version       VARCHAR(32) NOT NULL DEFAULT '',
+		model         VARCHAR(64) NOT NULL DEFAULT '',
+		backend       VARCHAR(16) NOT NULL DEFAULT 'cli',
+		enabled       BOOLEAN NOT NULL DEFAULT true,
+		created_at    TIMESTAMP NOT NULL DEFAULT NOW(),
+		updated_at    TIMESTAMP NOT NULL DEFAULT NOW()
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_agent_profiles_user_id ON agent_profiles(user_id);
 	`
 
 	_, err := DB.Exec(schema)

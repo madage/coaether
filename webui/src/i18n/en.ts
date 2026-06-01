@@ -80,6 +80,27 @@ export const en = {
   loading: 'Loading',
   optional: 'optional',
 
+  // Agent Profiles
+  agentProfiles: 'Agent Profiles',
+  createAgent: 'Create Agent',
+  editAgent: 'Edit Agent',
+  deleteAgent: 'Delete Agent',
+  agentName: 'Name',
+  agentNamePlaceholder: 'Give your agent a name...',
+  agentDescription: 'Description',
+  agentDescriptionPlaceholder: 'Describe what this agent does...',
+  agentRuntime: 'Runtime',
+  selectRuntime: 'Select a runtime...',
+  saveAgent: 'Save',
+  cancel: 'Cancel',
+  confirmDelete: 'Are you sure you want to delete this agent?',
+  createSuccess: 'Created',
+  updateSuccess: 'Updated',
+  deleteSuccess: 'Deleted',
+  noProfiles: 'No agents yet. Click "+" to add one.',
+  profileDetail: 'Detail',
+  profileEdit: 'Edit',
+
   // Permission Mode
   permissionMode: 'Permission Mode',
   autoMode: 'Auto',

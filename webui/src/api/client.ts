@@ -1,4 +1,4 @@
-import type { Node, Session, CreateSessionReq, Agent } from '../types';
+import type { Node, Session, CreateSessionReq, Agent, AgentProfile, RuntimeEntity } from '../types';
 
 const BASE = '/api';
 
@@ -75,6 +75,30 @@ export const agents = {
       method: 'PATCH',
       body: JSON.stringify({ enabled }),
     }),
+};
+
+// Agent Profiles
+export const agentProfiles = {
+  list: () => request<{ profiles: AgentProfile[] }>('/agents/profiles'),
+
+  get: (id: string) => request<AgentProfile>(`/agents/profiles/${id}`),
+
+  create: (data: { name: string; description?: string; agent_id: string }) =>
+    request<{ id: string; status: string }>('/agents/profiles', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  update: (id: string, data: Partial<{ name: string; description: string; avatar: string; agent_id: string; enabled: boolean }>) =>
+    request<{ status: string }>(`/agents/profiles/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
+  delete: (id: string) =>
+    request<{ status: string }>(`/agents/profiles/${id}`, { method: 'DELETE' }),
+
+  listRuntimes: () => request<{ runtimes: RuntimeEntity[] }>('/agents/runtimes'),
 };
 
 // Sessions

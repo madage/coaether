@@ -348,7 +348,7 @@ function App() {
         {/* Agents page */}
         <div style={{ display: page === 'agents' ? 'block' : 'none', height: '100%', overflow: 'auto' }}>
           <h2 style={{ padding: '24px 24px 0' }}>{t('agents')}</h2>
-          <AgentList nodes={nodes} />
+          <AgentList />
         </div>
 
         {/* Sessions page */}

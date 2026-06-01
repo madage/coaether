@@ -66,7 +66,7 @@ export const zh = {
   unknownError: '未知错误',
 
   // Agents
-  agents: 'Agent',
+  agents: '智能体',
   noAgents: '该节点没有 Agent',
   scanAgents: '扫描',
   scanning: '扫描中...',
@@ -79,6 +79,27 @@ export const zh = {
   agentHint: 'Agent 从 PATH 中自动检测。可切换启用/禁用。',
   loading: '加载中',
   optional: '可选',
+
+  // Agent Profiles
+  agentProfiles: '智能体配置',
+  createAgent: '添加智能体',
+  editAgent: '编辑智能体',
+  deleteAgent: '删除智能体',
+  agentName: '名称',
+  agentNamePlaceholder: '给智能体起个名字...',
+  agentDescription: '描述',
+  agentDescriptionPlaceholder: '描述这个智能体的用途...',
+  agentRuntime: '运行时能力',
+  selectRuntime: '选择一个运行时能力...',
+  saveAgent: '保存',
+  cancel: '取消',
+  confirmDelete: '确定删除该智能体？',
+  createSuccess: '创建成功',
+  updateSuccess: '更新成功',
+  deleteSuccess: '删除成功',
+  noProfiles: '还没有智能体，点击"+"添加一个吧',
+  profileDetail: '详情',
+  profileEdit: '编辑',
 
   // Permission Mode
   permissionMode: '权限模式',
