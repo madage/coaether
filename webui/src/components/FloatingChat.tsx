@@ -34,8 +34,13 @@ export function FloatingChat({
 }: FloatingChatProps) {
   const { t } = useLang();
   const [open, setOpen] = useState(false);
-  const [selectedAgent, setSelectedAgent] = useState<string>('');
-  const [agentSessions, setAgentSessions] = useState<Record<string, string>>({});
+  const [selectedAgent, setSelectedAgent] = useState<string>(() => {
+    return localStorage.getItem('fc_selectedAgent') || '';
+  });
+  const [agentSessions, setAgentSessions] = useState<Record<string, string>>(() => {
+    try { return JSON.parse(localStorage.getItem('fc_agentSessions') || '{}'); }
+    catch { return {}; }
+  });
   const [profiles, setProfiles] = useState<AgentProfile[]>([]);
   const profilesMap = useRef<Record<string, AgentProfile>>({});
 
@@ -90,6 +95,31 @@ export function FloatingChat({
     if (hasMoved.current) { hasMoved.current = false; return; }
     setOpen((prev) => !prev);
   };
+
+  // Persist agentSessions and selectedAgent to localStorage
+  useEffect(() => {
+    localStorage.setItem('fc_agentSessions', JSON.stringify(agentSessions));
+  }, [agentSessions]);
+  useEffect(() => {
+    if (selectedAgent) localStorage.setItem('fc_selectedAgent', selectedAgent);
+  }, [selectedAgent]);
+
+  // Restore session on mount: if sessionID (from bus) is already tracked, or
+  // if selectedAgent has a known session, rejoin it so we don't create a new one.
+  const restored = useRef(false);
+  useEffect(() => {
+    if (restored.current) return;
+    if (!selectedAgent) return;
+    const sid = agentSessions[selectedAgent];
+    if (sid && sid === sessionID) {
+      // Already active — no action needed
+      restored.current = true;
+    } else if (sid && sessionID !== sid) {
+      // Session exists but bus is on a different one — rejoin the right one
+      onJoinSession(sid);
+      restored.current = true;
+    }
+  }, [sessionID, selectedAgent, agentSessions, onJoinSession]);
 
   // Track sessionID changes → store agent-to-session mapping
   const prevSessionID = useRef(sessionID);
