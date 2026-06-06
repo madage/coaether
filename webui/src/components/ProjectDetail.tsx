@@ -34,20 +34,22 @@ export function ProjectDetail({ project, onClose, onDelete, onUpdate }: ProjectD
     tasksApi.list(project.id).then((res) => setTaskList(res.tasks)).catch(() => {});
   }, [project.id]);
 
-  const handleTaskUpdate = async (data: { title: string; description: string; status?: TaskStatus }) => {
+  const handleTaskUpdate = async (data: { title: string; description: string; status?: TaskStatus; project_id?: string | null }) => {
     if (!editingTask) return;
     try {
-      const updateData: { title?: string; description?: string; status?: TaskStatus } = {};
+      const updateData: Record<string, unknown> = {};
       if (data.title !== editingTask.title) updateData.title = data.title;
       if (data.description !== editingTask.description) updateData.description = data.description;
       if (data.status && data.status !== editingTask.status) updateData.status = data.status;
+      if (data.project_id !== editingTask.project_id) updateData.project_id = data.project_id ?? null;
       if (Object.keys(updateData).length > 0) {
         await tasksApi.update(editingTask.id, updateData);
       }
       setEditingTask(null);
       const res = await tasksApi.list(project.id);
       setTaskList(res.tasks);
-    } catch {
+    } catch (err) {
+      console.error('Failed to update task', err);
       alert('Failed to update task');
     }
   };

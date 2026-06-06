@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -30,9 +31,13 @@ func (h *TaskHandler) List(c *gin.Context) {
 	argIdx := 2
 
 	if projectID := c.Query("project_id"); projectID != "" {
-		query += fmt.Sprintf(" AND project_id = $%d", argIdx)
-		args = append(args, projectID)
-		argIdx++
+		if projectID == "none" {
+			query += fmt.Sprintf(" AND project_id IS NULL")
+		} else {
+			query += fmt.Sprintf(" AND project_id = $%d", argIdx)
+			args = append(args, projectID)
+			argIdx++
+		}
 	}
 
 	query += " ORDER BY updated_at DESC"
@@ -119,11 +124,21 @@ func (h *TaskHandler) Update(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 	taskID := c.Param("id")
 
+	bodyBytes, err := c.GetRawData()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+
 	var req models.UpdateTaskReq
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := json.Unmarshal(bodyBytes, &req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+
+	// Parse body into a map to detect which fields were explicitly provided
+	var fields map[string]interface{}
+	json.Unmarshal(bodyBytes, &fields)
 
 	// Build dynamic SET clause
 	var sets []string
@@ -144,12 +159,19 @@ func (h *TaskHandler) Update(c *gin.Context) {
 		sets = append(sets, fmt.Sprintf("status = $%d", argIdx))
 		args = append(args, *req.Status)
 		argIdx++
-		}
+	}
+
+	// project_id can be explicitly set to null (clear project), distinguish from "not provided"
+	if _, exists := fields["project_id"]; exists {
 		if req.ProjectID != nil {
-		sets = append(sets, fmt.Sprintf("project_id = $%d", argIdx))
-		args = append(args, *req.ProjectID)
-		argIdx++
+			sets = append(sets, fmt.Sprintf("project_id = $%d", argIdx))
+			args = append(args, *req.ProjectID)
+		} else {
+			sets = append(sets, fmt.Sprintf("project_id = $%d", argIdx))
+			args = append(args, nil)
 		}
+		argIdx++
+	}
 
 	if len(sets) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "no fields to update"})

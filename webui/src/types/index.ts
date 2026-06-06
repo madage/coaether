@@ -123,7 +123,7 @@ export interface UpdateTaskReq {
   title?: string;
   description?: string;
   status?: TaskStatus;
-  project_id?: string;
+  project_id?: string | null;
 }
 
 // === Auth Types ===
