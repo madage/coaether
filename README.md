@@ -1,6 +1,8 @@
-# Superco - AI Agent 分布式调度平台
+# Superco — AI Agent 分布式调度平台
 
 跨平台 AI Agent 分布式调度平台，通过 **Message Bus** 协议连接 AI Runtime 与 Web 前端，提供多用户工作区、任务/项目管理、实时聊天、Agent 配置等能力。
+
+---
 
 ## 架构
 
@@ -57,6 +59,8 @@
 
 1. **Dashboard WebSocket** (`/ws/dashboard`) — 用于 UI 实时更新（任务/项目变更通知、工作区信号、Toast 弹窗）。持有 JWT token 鉴权，连接到 `DashboardHub`。
 2. **Message Bus WebSocket** (`/ws/bus`) — 用于 AI Agent 消息路由。以 `type=ui` 参数标识前端连接，连接到 `MessageBus`，不依赖 JWT（连接后通过 `hello` 消息注册）。
+
+---
 
 ## 功能特性
 
@@ -133,6 +137,8 @@
 - 支持删除用户
 - JWT 认证（Access Token）
 
+---
+
 ## 技术栈
 
 ### 后端
@@ -155,6 +161,8 @@
 - **后端支持**: Claude API（api 模式）/ Claude CLI（cli 模式）
 - **协议**: Message Bus 协议（JSON Envelope over WebSocket）
 - **会话管理**: 运行时级别会话隔离
+
+---
 
 ## Message Bus 协议
 
@@ -205,6 +213,8 @@
 
 `ContentBlock` 支持多种内容格式：`text`、`code`、`markdown`、`table`、`card`、`image`、`file`、`progress`、`tool_use`、`status`、`separator`。
 
+---
+
 ## 数据库表
 
 | 表名 | 用途 | 关键字段 |
@@ -220,6 +230,8 @@
 | `agent_profiles` | 用户 Agent 配置 | user_id, name, avatar, model, backend |
 | `tasks` | 任务 | title, status, project_id, workspace_id |
 | `projects` | 项目 | name, color, workspace_id |
+
+---
 
 ## API 概览
 
@@ -290,6 +302,8 @@
 - `GET /api/users` — 用户列表（admin/owner）
 - `DELETE /api/users/:id` — 删除用户（admin/owner）
 
+---
+
 ## 快速开始
 
 ### 1. 依赖
@@ -342,6 +356,8 @@ go build -o agent-runtime .
 
 > Agent Runtime 需要配置 AI 后端。默认使用 Claude CLI（需要 `claude` 命令在 PATH 中），也可通过环境变量切换为 API 模式。
 
+---
+
 ## 环境变量
 
 ### 后端 (server/.env)
@@ -368,6 +384,8 @@ go build -o agent-runtime .
 | `AGENT_BACKEND` | AI 后端模式 (`cli` / `api`) | `cli` |
 | `API_KEY` | API 模式时的密钥 | - |
 | `API_MODEL` | API 模式时的模型名 | `claude-sonnet-4-6` |
+
+---
 
 ## 项目结构
 
@@ -435,6 +453,8 @@ superco/
 └── README.md
 ```
 
+---
+
 ## 开发指南
 
 ### 添加新 API 端点
@@ -459,19 +479,8 @@ superco/
 
 在 `webui/src/i18n/en.ts` 和 `webui/src/i18n/zh.ts` 中添加对应翻译 key，前端通过 `t('key')` 使用。
 
-## 常见问题
+---
 
-**Q: 启动后端提示数据库连接失败？**
-A: 确保 PostgreSQL 已启动，并在 `.env` 中正确配置 `POSTGRES_DSN`。
+## License
 
-**Q: 邀请邮件没有收到？**
-A: 检查 SMTP 配置。未配置 SMTP 时，邀请链接会输出在服务端日志中，可以直接复制链接使用。
-
-**Q: 浮动聊天窗口连接不上？**
-A: 确保后端已启动，Message Bus WebSocket 路径正确（默认 `/ws/bus`），检查浏览器控制台 WebSocket 连接状态。
-
-**Q: 工作区切换后数据没更新？**
-A: 系统通过 WebSocket 实时推送变更（`resource_change` 消息），如果出现不同步，刷新页面即可。
-
-**Q: Agent Runtime 频繁重连？**
-A: 检查 `BUS_URL` 配置是否正确，以及网络是否稳定。Runtime 会自动重连。
+[Apache-2.0](LICENSE)
