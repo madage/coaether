@@ -234,7 +234,7 @@ function App() {
         </div>
 
         <nav style={{ display: 'flex', flexDirection: 'column', padding: '8px' }}>
-          {(['nodes', 'tasks', 'agents'] as Page[]).map((p) => (
+          {(['nodes', 'tasks', 'agents', 'trash'] as Page[]).map((p) => (
             <button
               key={p}
               onClick={() => setPage(p)}
@@ -248,28 +248,15 @@ function App() {
                 cursor: 'pointer',
                 fontSize: '0.95em',
                 marginBottom: '2px',
+                ...(p === 'trash' ? { marginTop: 'auto', marginBottom: 0 } : {}),
               }}
             >
-              {p === 'nodes' ? `📡 ${t('navNodes')}` : p === 'tasks' ? `📋 ${t('navTasks')}` : `🤖 ${t('agents')}`}
+              <span style={{ display: 'inline-block', width: '24px', textAlign: 'center', marginRight: '4px' }}>
+                {p === 'nodes' ? '📡' : p === 'tasks' ? '📋' : p === 'agents' ? '🤖' : '🗑'}
+              </span>
+              {p === 'nodes' ? t('navNodes') : p === 'tasks' ? t('navTasks') : p === 'agents' ? t('agents') : t('navTrash')}
             </button>
           ))}
-          {/* Trash */}
-          <button
-            onClick={() => setPage('trash')}
-            style={{
-              padding: '12px 16px',
-              textAlign: 'left',
-              background: page === 'trash' ? 'rgba(255,255,255,0.1)' : 'transparent',
-              color: '#999',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: 'pointer',
-              fontSize: '0.85em',
-              marginTop: 'auto',
-            }}
-          >
-            🗑 {t('navTrash')}
-          </button>
         </nav>
 
         {/* Connection status */}

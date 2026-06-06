@@ -20,6 +20,12 @@ export function NodeList({ nodes, onSelect }: NodeListProps) {
     busy: t('nodeBusy'),
   };
 
+  const statusColor: Record<string, string> = {
+    online: '#4caf50',
+    offline: '#9e9e9e',
+    busy: '#ff9800',
+  };
+
   // Fetch agents when a node is expanded
   useEffect(() => {
     if (expandedId && !agentMap[expandedId]) {
@@ -63,57 +69,91 @@ export function NodeList({ nodes, onSelect }: NodeListProps) {
   }
 
   return (
-    <div className="node-list">
+    <div style={{
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
+      gap: '20px',
+    }}>
       {nodes.map((node) => {
         const agents = agentMap[node.id];
         const isExpanded = expandedId === node.id;
 
         return (
-          <div key={node.id} style={{ margin: '8px 0' }}>
+          <div key={node.id} style={{ display: 'flex', flexDirection: 'column' }}>
             <div
-              className={`node-card ${node.status}`}
               onClick={() => {
                 onSelect?.(node);
                 setExpandedId(isExpanded ? null : node.id);
               }}
               style={{
-                padding: '12px',
-                borderRadius: '6px',
+                borderRadius: '12px',
                 cursor: 'pointer',
-                background: node.status === 'online' ? '#e8f5e9' : node.status === 'busy' ? '#fff3e0' : '#f5f5f5',
-                border: `2px solid ${
-                  node.status === 'online' ? '#4caf50' : node.status === 'busy' ? '#ff9800' : '#e0e0e0'
-                }`,
+                background: '#fff',
+                boxShadow: '0 4px 6px rgba(0,0,0,0.1), 0 10px 20px rgba(0,0,0,0.06), 0 2px 4px rgba(0,0,0,0.08)',
+                transition: 'transform 0.2s, boxShadow 0.2s',
+                display: 'flex',
+                flexDirection: 'column',
+                minHeight: '200px',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = 'translateY(-4px)';
+                e.currentTarget.style.boxShadow = '0 12px 24px rgba(0,0,0,0.15), 0 4px 8px rgba(0,0,0,0.1)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = '';
+                e.currentTarget.style.boxShadow = '';
               }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div>
-                  <div style={{ fontWeight: 600 }}>{node.name}</div>
-                  <div style={{ fontSize: '0.85em', color: '#666' }}>
-                    {node.os} / {node.arch} - {statusLabel[node.status] || node.status}
+              <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', flex: 1 }}>
+                {/* Top: status dot + name + scan button */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                    <span style={{
+                      width: '10px', height: '10px', borderRadius: '50%',
+                      background: statusColor[node.status] || '#999',
+                      display: 'inline-block', flexShrink: 0,
+                    }} />
+                    <div style={{ fontWeight: 600, color: '#1a1a2e', fontSize: '1em', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{node.name}</div>
                   </div>
-                  <div style={{ fontSize: '0.8em', color: '#999' }}>
-                    {t('lastSeen')}: {new Date(node.last_seen).toLocaleString()}
-                  </div>
-                </div>
-                <div style={{ fontSize: '0.8em', color: '#999', textAlign: 'right' }}>
-                  <div>{t('maxSessions')}: {node.max_sessions}</div>
                   <button
                     onClick={(e) => handleScan(node.id, e)}
                     disabled={scanning === node.id}
                     style={{
-                      marginTop: '4px',
-                      padding: '3px 8px',
+                      padding: '3px 10px',
                       background: scanning === node.id ? '#ccc' : '#1976d2',
                       color: '#fff',
                       border: 'none',
-                      borderRadius: '3px',
+                      borderRadius: '6px',
                       cursor: scanning === node.id ? 'not-allowed' : 'pointer',
-                      fontSize: '0.85em',
+                      fontSize: '0.75em',
+                      fontWeight: 500,
+                      flexShrink: 0,
                     }}
                   >
                     {scanning === node.id ? t('scanning') : t('scanAgents')}
                   </button>
+                </div>
+
+                {/* Info rows: side by side */}
+                <div style={{ display: 'flex', gap: '12px', fontSize: '0.83em', color: '#888' }}>
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <div><span style={{ color: '#aaa' }}>OS</span> {node.os} / {node.arch}</div>
+                    <div><span style={{ color: '#aaa' }}>{t('maxSessions')}</span> {node.max_sessions}</div>
+                  </div>
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <div>
+                      <span style={{
+                        fontSize: '0.8em', padding: '1px 8px', borderRadius: '10px',
+                        background: node.status === 'online' ? '#e8f5e9' : node.status === 'busy' ? '#fff3e0' : '#f5f5f5',
+                        color: statusColor[node.status] || '#999', fontWeight: 500,
+                      }}>
+                        {statusLabel[node.status] || node.status}
+                      </span>
+                    </div>
+                    <div style={{ color: '#aaa', fontSize: '0.9em', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {new Date(node.last_seen).toLocaleString()}
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -122,12 +162,12 @@ export function NodeList({ nodes, onSelect }: NodeListProps) {
             {isExpanded && (
               <div
                 style={{
-                  margin: '0 8px',
-                  padding: '8px 12px',
+                  margin: '0 0 12px',
+                  padding: '12px',
                   background: '#fafafa',
-                  border: '1px solid #e0e0e0',
+                  border: '1px solid #f0f0f0',
                   borderTop: 'none',
-                  borderRadius: '0 0 6px 6px',
+                  borderRadius: '0 0 12px 12px',
                 }}
               >
                 <div style={{ fontSize: '0.9em', fontWeight: 500, marginBottom: '6px' }}>

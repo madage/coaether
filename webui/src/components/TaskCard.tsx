@@ -49,17 +49,25 @@ export function TaskCard({ task, onEdit, onDelete, onStatusChange }: TaskCardPro
     <div
       style={{
         background: '#fff',
-        borderRadius: '8px',
+        borderRadius: '12px',
         padding: '10px 14px',
-        boxShadow: '0 1px 4px rgba(0,0,0,0.1)',
+        boxShadow: '0 4px 6px rgba(0,0,0,0.1), 0 10px 20px rgba(0,0,0,0.06), 0 2px 4px rgba(0,0,0,0.08)',
+        transition: 'transform 0.2s, boxShadow 0.2s',
         display: 'flex',
         flexDirection: 'column',
         gap: '6px',
-        border: '1px solid #eee',
         cursor: 'pointer',
         position: 'relative',
       }}
       onClick={() => onEdit(task)}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.transform = 'translateY(-4px)';
+        e.currentTarget.style.boxShadow = '0 12px 24px rgba(0,0,0,0.15), 0 4px 8px rgba(0,0,0,0.1)';
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.transform = '';
+        e.currentTarget.style.boxShadow = '';
+      }}
     >
       {/* Top row: menu + status badge */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

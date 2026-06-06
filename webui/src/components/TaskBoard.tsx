@@ -210,8 +210,8 @@ export function TaskBoard() {
               <div key={col} style={{ flex: '0 0 260px', minWidth: '240px' }}>
                 <div
                   style={{
-                    padding: '8px 12px',
-                    borderRadius: '8px 8px 0 0',
+                    padding: '10px 14px',
+                    borderRadius: '12px 12px 0 0',
                     background: columnColors[col],
                     fontWeight: 600,
                     fontSize: '0.85em',
@@ -227,15 +227,14 @@ export function TaskBoard() {
                 </div>
                 <div
                   style={{
-                    background: '#f9f9f9',
-                    borderRadius: '0 0 8px 8px',
+                    background: '#fff',
+                    borderRadius: '0 0 12px 12px',
                     padding: '8px',
                     minHeight: '120px',
                     display: 'flex',
                     flexDirection: 'column',
                     gap: '8px',
-                    border: '1px solid #eee',
-                    borderTop: 'none',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
                   }}
                 >
                   {tasks.map((task) => (
