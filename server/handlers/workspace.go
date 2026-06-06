@@ -18,9 +18,9 @@ import (
 )
 
 type WorkspaceHandler struct {
-	DB      *sql.DB
-	Hub     *DashboardHub
-	Mailer  *mailer.Mailer
+	DB     *sql.DB
+	Hub    *DashboardHub
+	Mailer *mailer.Mailer
 }
 
 func NewWorkspaceHandler(db *sql.DB) *WorkspaceHandler {
@@ -151,8 +151,18 @@ func (h *WorkspaceHandler) Get(c *gin.Context) {
 
 func (h *WorkspaceHandler) Update(c *gin.Context) {
 	wsID := c.Param("id")
+	userID, _ := c.Get("user_id")
 
-	if !middleware.RoleAtLeast(c, "admin") {
+	var role string
+	err := h.DB.QueryRow(
+		`SELECT role FROM workspace_members WHERE workspace_id = $1 AND user_id = $2`,
+		wsID, userID,
+	).Scan(&role)
+	if err == sql.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "workspace not found"})
+		return
+	}
+	if !middleware.RoleAtLeastByRole(role, "admin") {
 		c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions"})
 		return
 	}
@@ -210,17 +220,25 @@ func (h *WorkspaceHandler) Update(c *gin.Context) {
 
 func (h *WorkspaceHandler) Delete(c *gin.Context) {
 	wsID := c.Param("id")
+	userID, _ := c.Get("user_id")
 
-	if !middleware.CanDeleteWorkspace(c) {
+	var role string
+	err := h.DB.QueryRow(
+		`SELECT role FROM workspace_members WHERE workspace_id = $1 AND user_id = $2`,
+		wsID, userID,
+	).Scan(&role)
+	if err == sql.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "workspace not found"})
+		return
+	}
+	if !middleware.RoleAtLeastByRole(role, "owner") {
 		c.JSON(http.StatusForbidden, gin.H{"error": "only workspace owners can delete workspaces"})
 		return
 	}
 
-	userID, _ := c.Get("user_id")
-
 	// Check if this is the user's only workspace
 	var count int
-	err := h.DB.QueryRow(
+	err = h.DB.QueryRow(
 		`SELECT COUNT(*) FROM workspace_members WHERE user_id = $1 AND role = 'owner'`,
 		userID,
 	).Scan(&count)
@@ -253,6 +271,18 @@ func (h *WorkspaceHandler) Delete(c *gin.Context) {
 	h.DB.Exec(`UPDATE projects SET workspace_id = NULL WHERE workspace_id = $1`, wsID)
 	h.DB.Exec(`UPDATE agent_profiles SET workspace_id = NULL WHERE workspace_id = $1`, wsID)
 
+	// Collect member IDs for notification before deleting
+	var memberIDs []string
+	mrows, err := h.DB.Query(`SELECT user_id FROM workspace_members WHERE workspace_id = $1`, wsID)
+	if err == nil {
+		for mrows.Next() {
+			var mid string
+			mrows.Scan(&mid)
+			memberIDs = append(memberIDs, mid)
+		}
+		mrows.Close()
+	}
+
 	result, err := h.DB.Exec(`DELETE FROM workspaces WHERE id = $1`, wsID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete workspace"})
@@ -265,7 +295,9 @@ func (h *WorkspaceHandler) Delete(c *gin.Context) {
 	}
 
 	if h.Hub != nil {
-		h.Hub.SignalChange("workspaces")
+		for _, mid := range memberIDs {
+			h.Hub.SignalUser(mid, "workspaces")
+		}
 		h.Hub.SignalChange("tasks")
 		h.Hub.SignalChange("projects")
 		h.Hub.SignalChange("agent_profiles")
@@ -431,6 +463,7 @@ func (h *WorkspaceHandler) UpdateMemberRole(c *gin.Context) {
 	}
 
 	if h.Hub != nil {
+		h.Hub.SignalUser(targetUserID, "workspaces")
 		h.Hub.SignalChange("workspaces")
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "role updated"})
@@ -491,6 +524,7 @@ func (h *WorkspaceHandler) RemoveMember(c *gin.Context) {
 	}
 
 	if h.Hub != nil {
+		h.Hub.SignalUser(targetUserID, "workspaces")
 		h.Hub.SignalChange("workspaces")
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "member removed"})
@@ -640,6 +674,11 @@ func (h *WorkspaceHandler) CreateInvitation(c *gin.Context) {
 	}
 
 	if h.Hub != nil {
+		var targetID string
+		h.DB.QueryRow(`SELECT id FROM users WHERE email = $1`, req.Email).Scan(&targetID)
+		if targetID != "" {
+			h.Hub.SignalUser(targetID, "invitations")
+		}
 		h.Hub.SignalChange("workspaces")
 	}
 
@@ -755,10 +794,10 @@ func (h *WorkspaceHandler) AcceptInvitation(c *gin.Context) {
 	if !hasAuth {
 		// User must be logged in — send back the token for registration flow
 		c.JSON(http.StatusOK, gin.H{
-			"status":         "authentication_required",
-			"token":          token,
-			"invitee_email":  inv.InviteeEmail,
-			"workspace_id":   inv.WorkspaceID,
+			"status":        "authentication_required",
+			"token":         token,
+			"invitee_email": inv.InviteeEmail,
+			"workspace_id":  inv.WorkspaceID,
 		})
 		return
 	}

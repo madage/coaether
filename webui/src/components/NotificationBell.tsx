@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useLang } from '../i18n/context';
+import { useResourceSync } from '../hooks/useResourceSync';
 import { invitations as invitationsApi, workspaces as workspacesApi } from '../api/client';
 import type { PendingInvitation } from '../types';
 
@@ -28,12 +29,13 @@ export default function NotificationBell({ onWorkspaceChange }: Props) {
     }
   }, []);
 
-  // Fetch on mount and poll every 30s
+  // Fetch on mount
   useEffect(() => {
     fetchPending();
-    const interval = setInterval(fetchPending, 30000);
-    return () => clearInterval(interval);
   }, [fetchPending]);
+
+  // Real-time push via dashboard WebSocket
+  useResourceSync('invitations', fetchPending);
 
   // Close dropdown on outside click
   useEffect(() => {

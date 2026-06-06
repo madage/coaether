@@ -46,6 +46,10 @@ func CanManageMembersByRole(role string) bool {
 	return role == "admin" || role == "owner"
 }
 
+func RoleAtLeastByRole(role string, minimumRole string) bool {
+	return roleHierarchy[role] >= roleHierarchy[minimumRole]
+}
+
 func CanDeleteWorkspace(c *gin.Context) bool {
 	return HasRole(c, "owner")
 }

@@ -32,11 +32,12 @@ type DashboardConn struct {
 
 // DashboardHub manages dashboard WebSocket connections and broadcasting.
 type DashboardHub struct {
-	DB          *sql.DB
-	JWTSecret   string
-	Bus         *protocol.MessageBus
-	Dashboards  map[string]*DashboardConn
-	Mu          sync.RWMutex
+	DB         *sql.DB
+	JWTSecret  string
+	Bus        *protocol.MessageBus
+	Dashboards map[string]*DashboardConn
+	UserConns  map[string]map[string]bool // userID → set of connIDs
+	Mu         sync.RWMutex
 }
 
 func NewDashboardHub(db *sql.DB, jwtSecret string, bus *protocol.MessageBus) *DashboardHub {
@@ -45,6 +46,7 @@ func NewDashboardHub(db *sql.DB, jwtSecret string, bus *protocol.MessageBus) *Da
 		JWTSecret:  jwtSecret,
 		Bus:        bus,
 		Dashboards: make(map[string]*DashboardConn),
+		UserConns:  make(map[string]map[string]bool),
 	}
 }
 
@@ -91,6 +93,10 @@ func (h *DashboardHub) HandleDashboardWS(c *gin.Context) {
 
 	h.Mu.Lock()
 	h.Dashboards[connID] = nc
+	if h.UserConns[userID] == nil {
+		h.UserConns[userID] = make(map[string]bool)
+	}
+	h.UserConns[userID][connID] = true
 	h.Mu.Unlock()
 
 	log.Printf("[Dashboard] Connected: %s (user: %s)", connID, userID)
@@ -115,6 +121,12 @@ func (h *DashboardHub) HandleDashboardWS(c *gin.Context) {
 	defer func() {
 		h.Mu.Lock()
 		delete(h.Dashboards, connID)
+		if h.UserConns[userID] != nil {
+			delete(h.UserConns[userID], connID)
+			if len(h.UserConns[userID]) == 0 {
+				delete(h.UserConns, userID)
+			}
+		}
 		h.Mu.Unlock()
 		conn.Close()
 		log.Printf("[Dashboard] Disconnected: %s", connID)
@@ -258,6 +270,35 @@ func (h *DashboardHub) SignalChange(resource string) {
 	h.BroadcastToDashboards("resource_change", map[string]string{
 		"resource": resource,
 	})
+}
+
+// SignalUser sends a "resource changed" signal only to a specific user's dashboard connections.
+// If the user has no active connections, the signal is silently dropped.
+func (h *DashboardHub) SignalUser(userID string, resource string) {
+	data, err := json.Marshal(wsMessage{Type: "resource_change", Payload: mustJSON(map[string]string{
+		"resource": resource,
+	})})
+	if err != nil {
+		return
+	}
+
+	h.Mu.RLock()
+	connIDs := h.UserConns[userID]
+	h.Mu.RUnlock()
+
+	for connID := range connIDs {
+		h.Mu.RLock()
+		dc := h.Dashboards[connID]
+		h.Mu.RUnlock()
+		if dc == nil {
+			continue
+		}
+		dc.Mu.Lock()
+		if err := dc.Conn.WriteMessage(websocket.TextMessage, data); err != nil {
+			log.Printf("[Dashboard] SignalUser write error (%s): %v", connID, err)
+		}
+		dc.Mu.Unlock()
+	}
 }
 
 // wsMessage is the wire format for dashboard WebSocket messages.
