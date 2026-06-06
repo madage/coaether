@@ -34,11 +34,15 @@ export function FloatingChat({
 }: FloatingChatProps) {
   const { t } = useLang();
   const [open, setOpen] = useState(false);
+  const wsKey = useCallback(() => {
+    return localStorage.getItem('workspace_id') || 'default';
+  }, []);
+
   const [selectedAgent, setSelectedAgent] = useState<string>(() => {
-    return localStorage.getItem('fc_selectedAgent') || '';
+    return localStorage.getItem(`fc_selectedAgent_${wsKey()}`) || '';
   });
   const [agentSessions, setAgentSessions] = useState<Record<string, string>>(() => {
-    try { return JSON.parse(localStorage.getItem('fc_agentSessions') || '{}'); }
+    try { return JSON.parse(localStorage.getItem(`fc_agentSessions_${wsKey()}`) || '{}'); }
     catch { return {}; }
   });
   const [profiles, setProfiles] = useState<AgentProfile[]>([]);
@@ -98,10 +102,10 @@ export function FloatingChat({
 
   // Persist agentSessions and selectedAgent to localStorage
   useEffect(() => {
-    localStorage.setItem('fc_agentSessions', JSON.stringify(agentSessions));
+    localStorage.setItem('fc_agentSessions_' + wsKey(), JSON.stringify(agentSessions));
   }, [agentSessions]);
   useEffect(() => {
-    if (selectedAgent) localStorage.setItem('fc_selectedAgent', selectedAgent);
+    if (selectedAgent) localStorage.setItem('fc_selectedAgent_' + wsKey(), selectedAgent);
   }, [selectedAgent]);
 
   // Restore session on mount: if sessionID (from bus) is already tracked, or

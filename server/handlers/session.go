@@ -124,11 +124,22 @@ func (h *SessionHandler) Create(c *gin.Context) {
 
 func (h *SessionHandler) List(c *gin.Context) {
 	userID, _ := c.Get("user_id")
+	workspaceID := c.Query("workspace_id")
 
-	rows, err := h.DB.Query(
-		`SELECT id, user_id, node_id, agent_id, status, prompt, workspace, created_at
-		 FROM sessions WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50`, userID,
-	)
+	var rows *sql.Rows
+	var err error
+	if workspaceID != "" {
+		rows, err = h.DB.Query(
+			`SELECT id, user_id, node_id, agent_id, status, prompt, workspace, created_at
+			 FROM sessions WHERE user_id = $1 AND workspace = $2 ORDER BY created_at DESC LIMIT 50`,
+			userID, workspaceID,
+		)
+	} else {
+		rows, err = h.DB.Query(
+			`SELECT id, user_id, node_id, agent_id, status, prompt, workspace, created_at
+			 FROM sessions WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50`, userID,
+		)
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query sessions"})
 		return

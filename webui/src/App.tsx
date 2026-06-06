@@ -138,6 +138,7 @@ function App() {
   // Message Bus — only connect when authenticated
   const bus = useMessageBus({
     userID: auth.user?.id || 'anonymous',
+    workspaceID: auth.workspace_id || undefined,
     onMessage: useCallback((env: Envelope) => {
       if (env.type === 'permission.request') {
         if (permissionModeRef.current === 'auto') {
@@ -486,6 +487,7 @@ function App() {
                 onChange={(e) => {
                   const newId = e.target.value;
                   localStorage.setItem('workspace_id', newId);
+                  localStorage.removeItem('activeSessionID');
                   const ws = workspaces.find(w => w.id === newId);
                   setAuth(prev => ({ ...prev, workspace_id: newId, workspace_role: (ws?.role as WorkspaceRole) || null }));
                   setWorkspaceKey((k) => k + 1);

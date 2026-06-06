@@ -12,7 +12,7 @@ function authHeaders(): Record<string, string> {
 }
 
 // List of path prefixes that should NOT get workspace_id appended
-const unscopedPrefixes = ['/workspaces', '/auth/', '/nodes', '/sessions', '/agents/runtimes', '/invitations/', '/users', '/invitations/pending'];
+const unscopedPrefixes = ['/workspaces', '/auth/', '/nodes', '/agents/runtimes', '/invitations/', '/users', '/invitations/pending'];
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const wsId = localStorage.getItem('workspace_id');

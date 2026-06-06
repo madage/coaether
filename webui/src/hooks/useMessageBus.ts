@@ -49,12 +49,13 @@ export interface Envelope {
 
 interface UseMessageBusOptions {
   userID: string;
+  workspaceID?: string;
   onMessage?: (env: Envelope) => void;
 }
 
 const LS_ACTIVE_SESSION = 'activeSessionID';
 
-export function useMessageBus({ userID, onMessage }: UseMessageBusOptions) {
+export function useMessageBus({ userID, workspaceID, onMessage }: UseMessageBusOptions) {
   const wsRef = useRef<WebSocket | null>(null);
   const connIDRef = useRef<string>('');
   const endpointRef = useRef<string>('');
@@ -217,18 +218,22 @@ export function useMessageBus({ userID, onMessage }: UseMessageBusOptions) {
 
   const createSession = useCallback((agents: Array<{ id: string; backend?: string }>): Promise<string> => {
     return new Promise((resolve) => {
+      const payload: Record<string, unknown> = { agents };
+      if (workspaceID) {
+        payload.workspace = workspaceID;
+      }
       const env: Envelope = {
         from: endpointRef.current,
         to: 'system://bus',
         type: 'session.create',
-        payload: { agents },
+        payload,
       };
 
       // Store resolve callback
       pendingRef.current.push({ resolve });
       send(env);
     });
-  }, [send]);
+  }, [send, workspaceID]);
 
   const joinSession = useCallback((sessionID: string) => {
     setSessionID(sessionID);
