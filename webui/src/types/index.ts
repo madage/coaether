@@ -127,6 +127,8 @@ export interface UpdateTaskReq {
 }
 
 // === Workspace Types ===
+export type WorkspaceRole = 'owner' | 'admin' | 'worker' | 'observer';
+
 export interface Workspace {
   id: string;
   user_id: string;
@@ -134,6 +136,7 @@ export interface Workspace {
   description: string;
   created_at: string;
   updated_at: string;
+  role?: WorkspaceRole;
 }
 
 export interface CreateWorkspaceReq {
@@ -146,9 +149,57 @@ export interface UpdateWorkspaceReq {
   description?: string;
 }
 
+export interface WorkspaceMember {
+  workspace_id: string;
+  user_id: string;
+  role: WorkspaceRole;
+  joined_at: string;
+  username: string;
+}
+
+export interface AddMemberReq {
+  user_id: string;
+  role: WorkspaceRole;
+}
+
+export interface UpdateMemberRoleReq {
+  role: WorkspaceRole;
+}
+
+// === Invitation Types ===
+export type InvitationStatus = 'pending' | 'accepted' | 'declined' | 'expired';
+
+export interface PendingInvitation {
+  id: string;
+  workspace_id: string;
+  inviter_id: string;
+  invitee_email: string;
+  token: string;
+  role: WorkspaceRole;
+  status: InvitationStatus;
+  created_at: string;
+  expires_at: string;
+  workspace_name?: string;
+  inviter_name?: string;
+}
+
+export interface InviteMemberReq {
+  email: string;
+  role: WorkspaceRole;
+}
+
 // === Auth Types ===
 export interface AuthState {
   token: string | null;
-  user: { id: string; username: string } | null;
+  user: { id: string; username: string; email?: string } | null;
   workspace_id: string | null;
+  workspace_role: WorkspaceRole | null;
+}
+
+// === User Management ===
+export interface UserSummary {
+  id: string;
+  username: string;
+  email: string;
+  created_at: string;
 }

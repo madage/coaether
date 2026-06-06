@@ -7,10 +7,12 @@ import { ProjectList } from './components/ProjectList';
 import { TrashView } from './components/TrashView';
 import { FloatingChat } from './components/FloatingChat';
 import { LangSwitcher } from './components/LangSwitcher';
+import WorkspaceMembers from './components/WorkspaceMembers';
 import { useDashboardWS } from './hooks/useDashboardWS';
 import { useLang } from './i18n/context';
-import { auth as authApi, workspaces as workspacesApi } from './api/client';
-import type { Node, Session, AuthState, Workspace } from './types';
+import { auth as authApi, workspaces as workspacesApi, workspaceMembers as workspaceMembersApi, invitations as invitationsApi, users as usersApi } from './api/client';
+import type { Node, Session, AuthState, Workspace, WorkspaceRole, WorkspaceMember, UserSummary } from './types';
+import WorkspaceContext from './hooks/WorkspaceContext';
 
 type Page = 'nodes' | 'tasks' | 'projects' | 'agents' | 'trash';
 
@@ -22,26 +24,85 @@ function App() {
     const wsId = localStorage.getItem('workspace_id');
     if (token && raw) {
       try {
-        return { token, user: JSON.parse(raw), workspace_id: wsId };
+        return { token, user: JSON.parse(raw), workspace_id: wsId, workspace_role: null };
       } catch {
         // corrupted user data, ignore
       }
     }
-    return { token: null, user: null, workspace_id: null };
+    return { token: null, user: null, workspace_id: null, workspace_role: null };
   });
   const [page, setPage] = useState<Page>('nodes');
-  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isRegister, setIsRegister] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const { nodes, sessions, connected: dashboardConnected } = useDashboardWS();
 
+  // Invitation token from URL
+  const [invitationToken, setInvitationToken] = useState<string | null>(null);
+  const [invitationInfo, setInvitationInfo] = useState<{
+    workspace_name?: string;
+    inviter_name?: string;
+    status?: string;
+  } | null>(null);
+
+  // Check URL for invitation token on mount
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token');
+    if (token) {
+      setInvitationToken(token);
+      invitationsApi.get(token).then((info) => {
+        setInvitationInfo({
+          workspace_name: info.workspace_name,
+          inviter_name: info.inviter_name,
+          status: 'valid',
+        });
+      }).catch((err) => {
+        setInvitationInfo({ status: err.message || 'invalid' });
+      });
+      // Clean URL
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
+
+  // Handle invitation accept when user is logged in
+  useEffect(() => {
+    if (auth.token && invitationToken && invitationInfo?.status === 'valid') {
+      invitationsApi.accept(invitationToken).then((res) => {
+        if (res.workspace_id) {
+          localStorage.setItem('workspace_id', res.workspace_id);
+          setInvitationToken(null);
+          setInvitationInfo(null);
+          // Refresh workspaces to get updated list
+          workspacesApi.list().then((wsRes) => {
+            setWorkspaces(wsRes.workspaces);
+            const ws = wsRes.workspaces.find(w => w.id === res.workspace_id);
+            setAuth(prev => ({
+              ...prev,
+              workspace_id: res.workspace_id || prev.workspace_id,
+              workspace_role: (ws?.role as WorkspaceRole) || prev.workspace_role,
+            }));
+          }).catch(() => {});
+        }
+      }).catch(() => {});
+    }
+  }, [auth.token, invitationToken, invitationInfo]);
+
   // Workspace state
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [workspaceKey, setWorkspaceKey] = useState(0);
   const [showWorkspaceManager, setShowWorkspaceManager] = useState(false);
+  const [wsManagerTab, setWsManagerTab] = useState<'workspaces' | 'members' | 'users'>('workspaces');
   const [newWsName, setNewWsName] = useState('');
   const [newWsDesc, setNewWsDesc] = useState('');
+
+  // User management state
+  const [userList, setUserList] = useState<UserSummary[]>([]);
+  const [userDeleteVerify, setUserDeleteVerify] = useState<{
+    userId: string; email: string; a: number; b: number; op: '+' | '-'; answer: number;
+  } | null>(null);
+  const [userVerifyInput, setUserVerifyInput] = useState('');
 
   // Workspace delete verification
   const [wsDeleteVerify, setWsDeleteVerify] = useState<{
@@ -53,7 +114,14 @@ function App() {
   // Fetch workspaces when authenticated
   useEffect(() => {
     if (auth.token) {
-      workspacesApi.list().then((res) => setWorkspaces(res.workspaces)).catch(() => {});
+      workspacesApi.list().then((res) => {
+        setWorkspaces(res.workspaces);
+        const currentWsId = localStorage.getItem('workspace_id');
+        const currentWs = res.workspaces.find(w => w.id === currentWsId);
+        if (currentWs?.role) {
+          setAuth(prev => ({ ...prev, workspace_role: currentWs.role as WorkspaceRole }));
+        }
+      }).catch(() => {});
     }
   }, [auth.token]);
 
@@ -71,7 +139,6 @@ function App() {
     onMessage: useCallback((env: Envelope) => {
       if (env.type === 'permission.request') {
         if (permissionModeRef.current === 'auto') {
-          // Auto-approve: send response directly, don't add to pending queue
           const sid = sessionIDRef.current;
           if (sid) {
             bus.send({
@@ -84,7 +151,6 @@ function App() {
               },
             });
           } else {
-            // Session not ready yet — queue for later handling
             setPendingPermissions((prev) => [...prev, env]);
           }
         } else {
@@ -94,14 +160,12 @@ function App() {
     }, []),
   });
 
-  // Track sessionID via ref so the stable onMessage callback can access it
   const sessionIDRef = useRef<string | null>(null);
   sessionIDRef.current = bus.sessionID;
 
   const sendPermissionResponse = useCallback((approved: boolean) => {
     const queue = pendingPermissions;
     if (queue.length === 0 || !bus.sessionID) return;
-    // Approve (or deny) ALL pending requests in one batch
     for (const req of queue) {
       bus.send({
         type: 'permission.response',
@@ -121,12 +185,10 @@ function App() {
   }, []);
 
   const handleSessionSelect = useCallback((session: Session) => {
-    // Join existing session on the bus and load historical messages
     bus.joinSession(session.id);
   }, [bus]);
 
   const handleSessionCreated = useCallback(async (sessionID: string) => {
-    // Session was created via REST API — join the bus session for real-time messaging
     bus.joinSession(sessionID);
   }, [bus]);
 
@@ -158,7 +220,6 @@ function App() {
       await workspacesApi.delete(id);
       const res = await workspacesApi.list();
       setWorkspaces(res.workspaces);
-      // If deleted current workspace, switch to first available
       if (id === localStorage.getItem('workspace_id')) {
         const firstWs = res.workspaces[0];
         if (firstWs) {
@@ -196,6 +257,43 @@ function App() {
     await handleDeleteWorkspace(id);
   }, [wsDeleteVerify, wsVerifyInput, handleDeleteWorkspace]);
 
+  // User management
+  const fetchUsers = useCallback(async () => {
+    try {
+      const res = await usersApi.list();
+      setUserList(res.users);
+    } catch {
+      // silently fail
+    }
+  }, []);
+
+  const handleUserDeleteClick = useCallback((userId: string, userEmail: string) => {
+    const a = Math.floor(Math.random() * 20) + 1;
+    const b = Math.floor(Math.random() * 20) + 1;
+    const op = Math.random() > 0.5 ? '+' : '-';
+    const answer = op === '+' ? a + b : Math.max(a, b) - Math.min(a, b);
+    const [na, nb] = op === '+' ? [a, b] : [Math.max(a, b), Math.min(a, b)];
+    setUserDeleteVerify({ userId, email: userEmail, a: na, b: nb, op, answer });
+    setUserVerifyInput('');
+  }, []);
+
+  const handleUserDeleteConfirm = useCallback(async () => {
+    if (!userDeleteVerify) return;
+    const userAnswer = parseInt(userVerifyInput, 10);
+    if (isNaN(userAnswer) || userAnswer !== userDeleteVerify.answer) {
+      alert(lang === 'zh' ? '答案错误' : 'Wrong answer');
+      return;
+    }
+    try {
+      await usersApi.delete(userDeleteVerify.userId);
+      setUserDeleteVerify(null);
+      setUserVerifyInput('');
+      fetchUsers();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to delete user');
+    }
+  }, [userDeleteVerify, userVerifyInput, fetchUsers, lang]);
+
   // Login screen
   if (!auth.token) {
     return (
@@ -218,7 +316,7 @@ function App() {
             padding: '40px',
             borderRadius: '12px',
             boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
-            width: '360px',
+            width: '400px',
           }}
         >
           <h1 style={{ margin: '0 0 24px', textAlign: 'center', color: '#1a1a2e' }}>{t('appTitle')}</h1>
@@ -226,28 +324,56 @@ function App() {
             {t('appSubtitle')}
           </p>
 
+          {/* Invitation info banner */}
+          {invitationInfo?.status === 'valid' && (
+            <div style={{
+              background: '#e8f5e9', borderRadius: '8px', padding: '12px',
+              marginBottom: '16px', fontSize: '0.9em', color: '#2e7d32',
+            }}>
+              {lang === 'zh' ? (
+                <>你已被 <strong>{invitationInfo.inviter_name}</strong> 邀请加入工作区 <strong>{invitationInfo.workspace_name}</strong></>
+              ) : (
+                <>You've been invited by <strong>{invitationInfo.inviter_name}</strong> to join workspace <strong>{invitationInfo.workspace_name}</strong></>
+              )}
+              <div style={{ marginTop: '4px', fontSize: '0.85em' }}>
+                {lang === 'zh' ? '登录或注册后将自动接受邀请' : 'Login or register to accept the invitation'}
+              </div>
+            </div>
+          )}
+
+          {invitationInfo?.status && invitationInfo.status !== 'valid' && (
+            <div style={{
+              background: '#fbe9e7', borderRadius: '8px', padding: '12px',
+              marginBottom: '16px', fontSize: '0.9em', color: '#c62828',
+            }}>
+              {invitationInfo.status}
+            </div>
+          )}
+
           <form onSubmit={async (e) => {
             e.preventDefault();
             setAuthError(null);
             try {
-              const fn = isRegister ? authApi.register : authApi.login;
-              const data = await fn(username, password);
+              const fn = isRegister
+                ? (email: string, password: string) => authApi.register(email, password, invitationToken || undefined)
+                : authApi.login;
+              const data = await fn(email, password);
               localStorage.setItem('token', data.token);
               localStorage.setItem('user', JSON.stringify(data.user));
               if (data.workspace_id) {
                 localStorage.setItem('workspace_id', data.workspace_id);
               }
-              setAuth({ token: data.token, user: data.user, workspace_id: data.workspace_id || null });
+              setAuth({ token: data.token, user: data.user, workspace_id: data.workspace_id || null, workspace_role: null });
             } catch (err) {
               setAuthError(err instanceof Error ? err.message : t('authFailed'));
             }
           }}>
             <div style={{ marginBottom: '16px' }}>
               <input
-                type="text"
-                placeholder={t('username')}
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
+                type="email"
+                placeholder={lang === 'zh' ? '邮箱' : 'Email'}
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
                 style={inputStyle}
                 required
               />
@@ -287,6 +413,20 @@ function App() {
               </button>
             </div>
           </form>
+
+          {invitationToken && (
+            <div style={{ marginTop: '12px', textAlign: 'center' }}>
+              <button
+                onClick={() => { setInvitationToken(null); setInvitationInfo(null); }}
+                style={{
+                  background: 'none', border: 'none', color: '#999',
+                  cursor: 'pointer', fontSize: '0.85em',
+                }}
+              >
+                {lang === 'zh' ? '忽略邀请' : 'Dismiss invitation'}
+              </button>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -296,7 +436,7 @@ function App() {
   const hasSession = bus.sessionID !== null;
 
   return (
-    <>
+    <WorkspaceContext.Provider value={{ role: auth.workspace_role, workspaceId: auth.workspace_id }}>
     <div style={{ display: 'flex', height: '100vh', background: '#f5f5f5' }}>
       {/* Sidebar */}
       <div
@@ -318,6 +458,8 @@ function App() {
                 onChange={(e) => {
                   const newId = e.target.value;
                   localStorage.setItem('workspace_id', newId);
+                  const ws = workspaces.find(w => w.id === newId);
+                  setAuth(prev => ({ ...prev, workspace_id: newId, workspace_role: (ws?.role as WorkspaceRole) || null }));
                   setWorkspaceKey((k) => k + 1);
                 }}
                 style={{
@@ -335,7 +477,7 @@ function App() {
             </div>
           )}
           <div style={{ fontSize: '0.85em', color: '#999', marginTop: '4px' }}>
-            {auth.user?.username}
+            {auth.user?.username} ({auth.user?.email})
           </div>
         </div>
 
@@ -391,7 +533,7 @@ function App() {
               localStorage.removeItem('user');
               localStorage.removeItem('workspace_id');
               localStorage.removeItem('activeSessionID');
-              setAuth({ token: null, user: null, workspace_id: null });
+              setAuth({ token: null, user: null, workspace_id: null, workspace_role: null });
             }}
             style={{
               width: '100%',
@@ -473,7 +615,7 @@ function App() {
           onClick={(e) => e.stopPropagation()}
           style={{
             background: '#fff', borderRadius: '16px', padding: '28px',
-            width: '420px', maxWidth: '90vw',
+            width: '480px', maxWidth: '90vw',
             boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
           }}
         >
@@ -486,8 +628,49 @@ function App() {
             }}>✕</button>
           </div>
 
+          {/* Tabs */}
+          <div style={{ display: 'flex', gap: '4px', marginBottom: '16px', borderBottom: '1px solid #eee' }}>
+            <button
+              onClick={() => setWsManagerTab('workspaces')}
+              style={{
+                padding: '8px 16px', border: 'none', background: 'none',
+                cursor: 'pointer', fontSize: '0.9em', color: wsManagerTab === 'workspaces' ? '#1976d2' : '#999',
+                borderBottom: wsManagerTab === 'workspaces' ? '2px solid #1976d2' : '2px solid transparent',
+                fontWeight: wsManagerTab === 'workspaces' ? 600 : 400,
+              }}
+            >
+              {t('workspaceLabel')}
+            </button>
+            <button
+              onClick={() => setWsManagerTab('members')}
+              style={{
+                padding: '8px 16px', border: 'none', background: 'none',
+                cursor: 'pointer', fontSize: '0.9em', color: wsManagerTab === 'members' ? '#1976d2' : '#999',
+                borderBottom: wsManagerTab === 'members' ? '2px solid #1976d2' : '2px solid transparent',
+                fontWeight: wsManagerTab === 'members' ? 600 : 400,
+              }}
+            >
+              {lang === 'zh' ? '成员' : 'Members'}
+            </button>
+            {(auth.workspace_role === 'admin' || auth.workspace_role === 'owner') && (
+              <button
+                onClick={() => { setWsManagerTab('users'); fetchUsers(); }}
+                style={{
+                  padding: '8px 16px', border: 'none', background: 'none',
+                  cursor: 'pointer', fontSize: '0.9em', color: wsManagerTab === 'users' ? '#1976d2' : '#999',
+                  borderBottom: wsManagerTab === 'users' ? '2px solid #1976d2' : '2px solid transparent',
+                  fontWeight: wsManagerTab === 'users' ? 600 : 400,
+                }}
+              >
+                {lang === 'zh' ? '用户管理' : 'Users'}
+              </button>
+            )}
+          </div>
+
+          {wsManagerTab === 'workspaces' ? (
+          <>
           {/* Workspace list */}
-          <div style={{ marginBottom: '16px' }}>
+          <div style={{ marginBottom: '16px', maxHeight: '300px', overflow: 'auto' }}>
             {workspaces.map((ws) => (
               <div key={ws.id} style={{
                 display: 'flex', justifyContent: 'space-between', alignItems: 'center',
@@ -548,6 +731,47 @@ function App() {
               + {t('addWorkspace')}
             </button>
           </div>
+          </>
+          ) : wsManagerTab === 'members' ? (
+            <WorkspaceMembers workspaceId={localStorage.getItem('workspace_id') || ''} />
+          ) : (
+            <>
+            {/* User management tab */}
+            <div style={{ maxHeight: '350px', overflow: 'auto' }}>
+              {userList.length === 0 ? (
+                <div style={{ textAlign: 'center', color: '#999', padding: '24px', fontSize: '0.9em' }}>
+                  {lang === 'zh' ? '暂无用户' : 'No users'}
+                </div>
+              ) : (
+                userList.map((u) => (
+                  <div key={u.id} style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    padding: '10px 12px', borderRadius: '8px', marginBottom: '6px',
+                    background: '#f9f9f9',
+                  }}>
+                    <div>
+                      <div style={{ fontWeight: 500, fontSize: '0.95em' }}>{u.username}</div>
+                      <div style={{ fontSize: '0.8em', color: '#999' }}>
+                        {u.email} · {new Date(u.created_at).toLocaleDateString()}
+                      </div>
+                    </div>
+                    {u.id !== auth.user?.id && (
+                      <button
+                        onClick={() => handleUserDeleteClick(u.id, u.email)}
+                        style={{
+                          padding: '4px 12px', borderRadius: '4px', border: '1px solid #e0e0e0',
+                          background: '#fff', cursor: 'pointer', color: '#c62828', fontSize: '0.8em',
+                        }}
+                      >
+                        {t('taskDelete')}
+                      </button>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+            </>
+          )}
         </div>
       </div>
     )}
@@ -615,7 +839,71 @@ function App() {
         </div>
       </div>
     )}
-    </>
+
+    {/* User delete verification modal */}
+    {userDeleteVerify && (
+      <div
+        onClick={() => setUserDeleteVerify(null)}
+        style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
+          display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 2100,
+        }}
+      >
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            background: '#fff', borderRadius: '12px', padding: '28px',
+            width: '360px', maxWidth: '90vw',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.2)', textAlign: 'center',
+          }}
+        >
+          <h3 style={{ margin: '0 0 8px', color: '#333' }}>
+            {lang === 'zh' ? '删除用户' : 'Delete User'}
+          </h3>
+          <p style={{ color: '#666', fontSize: '0.9em', marginBottom: '8px' }}>
+            {lang === 'zh' ? `确定删除用户 ${userDeleteVerify.email}？` : `Delete user ${userDeleteVerify.email}?`}
+          </p>
+          <p style={{ color: '#999', fontSize: '0.85em', marginBottom: '20px' }}>
+            {lang === 'zh' ? '此操作将删除该用户及其所有数据，不可恢复。请回答验证问题：' : 'This permanently removes the user and all their data.'}
+          </p>
+          <div style={{ fontSize: '1.4em', fontWeight: 700, color: '#333', marginBottom: '16px' }}>
+            {userDeleteVerify.a} {userDeleteVerify.op} {userDeleteVerify.b} = ?
+          </div>
+          <input
+            value={userVerifyInput}
+            onChange={(e) => setUserVerifyInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') handleUserDeleteConfirm(); }}
+            style={{
+              width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ddd',
+              fontSize: '1.1em', textAlign: 'center', boxSizing: 'border-box', outline: 'none',
+              marginBottom: '8px',
+            }}
+            autoFocus
+          />
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginTop: '12px' }}>
+            <button
+              onClick={() => setUserDeleteVerify(null)}
+              style={{
+                padding: '10px 20px', borderRadius: '6px', border: '1px solid #ddd',
+                background: '#fff', cursor: 'pointer', color: '#666', fontSize: '0.95em',
+              }}
+            >
+              {t('cancel')}
+            </button>
+            <button
+              onClick={handleUserDeleteConfirm}
+              style={{
+                padding: '10px 20px', borderRadius: '6px', border: 'none',
+                background: '#c62828', color: '#fff', cursor: 'pointer', fontSize: '0.95em',
+              }}
+            >
+              {t('taskDelete')}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+    </WorkspaceContext.Provider>
   );
 }
 

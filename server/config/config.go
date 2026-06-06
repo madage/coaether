@@ -27,6 +27,12 @@ type Config struct {
 	ServerPort  string
 	PostgresDSN string
 	JWTSecret   string
+	SMTPHost    string
+	SMTPPort    string
+	SMTPUser    string
+	SMTPPass    string
+	SMTPFrom    string
+	PublicURL   string
 }
 
 func Load() *Config {
@@ -34,6 +40,12 @@ func Load() *Config {
 		ServerPort:  getEnv("SERVER_PORT", "8088"),
 		PostgresDSN: getEnvOrFail("POSTGRES_DSN"),
 		JWTSecret:   getEnvOrFail("JWT_SECRET"),
+		SMTPHost:    getEnv("SMTP_HOST", ""),
+		SMTPPort:    getEnv("SMTP_PORT", "587"),
+		SMTPUser:    getEnv("SMTP_USER", ""),
+		SMTPPass:    getEnv("SMTP_PASS", ""),
+		SMTPFrom:    getEnv("SMTP_FROM", "noreply@superco.local"),
+		PublicURL:   getEnv("PUBLIC_URL", "http://localhost:5173"),
 	}
 }
 

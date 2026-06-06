@@ -33,6 +33,7 @@ func Migrate() error {
 	CREATE TABLE IF NOT EXISTS users (
 		id          VARCHAR(36) PRIMARY KEY,
 		username    VARCHAR(64) UNIQUE NOT NULL,
+		email       VARCHAR(128) UNIQUE NOT NULL DEFAULT '',
 		password    VARCHAR(256) NOT NULL,
 		created_at  TIMESTAMP DEFAULT NOW()
 	);
@@ -147,6 +148,31 @@ func Migrate() error {
 		updated_at  TIMESTAMP NOT NULL DEFAULT NOW()
 	);
 	CREATE INDEX IF NOT EXISTS idx_workspaces_user_id ON workspaces(user_id);
+
+	CREATE TABLE IF NOT EXISTS workspace_members (
+		workspace_id VARCHAR(36) NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+		user_id      VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		role         VARCHAR(32) NOT NULL DEFAULT 'worker',
+		joined_at    TIMESTAMP NOT NULL DEFAULT NOW(),
+		PRIMARY KEY (workspace_id, user_id)
+	);
+	CREATE INDEX IF NOT EXISTS idx_workspace_members_user_id ON workspace_members(user_id);
+	CREATE INDEX IF NOT EXISTS idx_workspace_members_workspace_id ON workspace_members(workspace_id);
+
+	CREATE TABLE IF NOT EXISTS pending_invitations (
+		id             VARCHAR(36) PRIMARY KEY,
+		workspace_id   VARCHAR(36) NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+		inviter_id     VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		invitee_email  VARCHAR(128) NOT NULL,
+		token          VARCHAR(64) UNIQUE NOT NULL,
+		role           VARCHAR(32) NOT NULL DEFAULT 'worker',
+		status         VARCHAR(16) NOT NULL DEFAULT 'pending',
+		created_at     TIMESTAMP NOT NULL DEFAULT NOW(),
+		expires_at     TIMESTAMP NOT NULL
+	);
+	CREATE INDEX IF NOT EXISTS idx_pending_invitations_token ON pending_invitations(token);
+	CREATE INDEX IF NOT EXISTS idx_pending_invitations_email ON pending_invitations(invitee_email);
+	CREATE INDEX IF NOT EXISTS idx_pending_invitations_workspace ON pending_invitations(workspace_id);
 	`
 
 	_, err := DB.Exec(schema)
@@ -156,6 +182,7 @@ func Migrate() error {
 
 	// Alter existing tables to add columns that may not exist yet
 	alterations := []string{
+		"ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(128) NOT NULL DEFAULT ''",
 		"ALTER TABLE nodes ADD COLUMN IF NOT EXISTS max_sessions INT NOT NULL DEFAULT 3",
 		"ALTER TABLE sessions ADD COLUMN IF NOT EXISTS agent_id VARCHAR(36)",
 		"ALTER TABLE sessions ALTER COLUMN prompt DROP NOT NULL",
@@ -175,6 +202,11 @@ func Migrate() error {
 		}
 	}
 
+	// Backfill email from username for existing users
+	DB.Exec(`UPDATE users SET email = username WHERE email = ''`)
+	// Add unique constraint on email (safe after backfill)
+	DB.Exec(`DROP INDEX IF EXISTS users_email_key`)
+	DB.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS users_email_key ON users(email)`)
 	log.Println("[DB] Migrations completed")
 
 	// Clean up stale sessions from previous server run
@@ -202,7 +234,11 @@ func Migrate() error {
 		}
 	}
 
+	// Expire old pending invitations
+	DB.Exec(`UPDATE pending_invitations SET status = 'expired' WHERE status = 'pending' AND expires_at < NOW()`)
+
 	backfillWorkspaces()
+	backfillWorkspaceMembers()
 	return nil
 }
 
@@ -232,6 +268,22 @@ func backfillWorkspaces() {
 		DB.Exec(`UPDATE projects SET workspace_id = (SELECT id FROM workspaces WHERE user_id = $1 ORDER BY created_at ASC LIMIT 1) WHERE user_id = $1 AND workspace_id IS NULL`, userID)
 		DB.Exec(`UPDATE agent_profiles SET workspace_id = (SELECT id FROM workspaces WHERE user_id = $1 ORDER BY created_at ASC LIMIT 1) WHERE user_id = $1 AND workspace_id IS NULL`, userID)
 		log.Printf("[DB] Backfilled default workspace for user %s", userID)
+	}
+}
+
+func backfillWorkspaceMembers() {
+	_, err := DB.Exec(`
+		INSERT INTO workspace_members (workspace_id, user_id, role, joined_at)
+		SELECT id, user_id, 'owner', created_at FROM workspaces w
+		WHERE NOT EXISTS (
+			SELECT 1 FROM workspace_members wm
+			WHERE wm.workspace_id = w.id AND wm.user_id = w.user_id
+		)
+	`)
+	if err != nil {
+		log.Printf("[DB] Failed to backfill workspace members: %v", err)
+	} else {
+		log.Println("[DB] Backfilled workspace members")
 	}
 }
 

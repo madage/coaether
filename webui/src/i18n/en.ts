@@ -7,6 +7,7 @@ export const en = {
   login: 'Login',
   register: 'Register',
   username: 'Username',
+  email: 'Email',
   password: 'Password',
   logout: 'Logout',
   alreadyHasAccount: 'Already have an account? Login',

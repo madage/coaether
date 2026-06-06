@@ -5,6 +5,7 @@ import { useResourceSync } from '../hooks/useResourceSync';
 import { TaskCard } from './TaskCard';
 import { TaskForm } from './TaskForm';
 import type { Task, TaskStatus, Project, UpdateTaskReq } from '../types';
+import { useWorkspace } from '../hooks/WorkspaceContext';
 
 const columns: TaskStatus[] = ['todo', 'in_progress', 'blocked', 'review', 'done'];
 
@@ -26,6 +27,8 @@ const columnColors: Record<TaskStatus, string> = {
 
 export function TaskBoard() {
   const { t, lang } = useLang();
+  const { role } = useWorkspace();
+  const isObserver = role === 'observer';
   const [taskList, setTaskList] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<'kanban' | 'list'>('kanban');
@@ -210,7 +213,7 @@ export function TaskBoard() {
               {t('taskViewList')}
             </button>
           </div>
-          <button
+          {!isObserver && <button
             onClick={() => setShowForm(true)}
             style={{
               padding: '6px 16px',
@@ -224,7 +227,7 @@ export function TaskBoard() {
             }}
           >
             + {t('taskCreate')}
-          </button>
+          </button>}
         </div>
       </div>
 

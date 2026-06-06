@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/superco/server/middleware"
 	"github.com/superco/server/models"
 )
 
@@ -22,17 +23,23 @@ func NewProjectHandler(db *sql.DB) *ProjectHandler {
 }
 
 func (h *ProjectHandler) List(c *gin.Context) {
-	userID, _ := c.Get("user_id")
 	workspaceID := c.Query("workspace_id")
+	isMember, _ := c.Get("is_workspace_member")
 
 	query := `SELECT p.id, p.user_id, p.name, p.description, p.color, p.created_at, p.updated_at,
 		        COALESCE((SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND t.deleted_at IS NULL), 0) AS task_count
-		 FROM projects p WHERE p.user_id = $1 AND p.deleted_at IS NULL`
-	args := []any{userID}
-	argIdx := 2
-	if workspaceID != "" {
+		 FROM projects p WHERE p.deleted_at IS NULL`
+	args := []any{}
+	argIdx := 1
+
+	if workspaceID != "" && isMember.(bool) {
 		query += fmt.Sprintf(" AND p.workspace_id = $%d", argIdx)
 		args = append(args, workspaceID)
+		argIdx++
+	} else {
+		userID, _ := c.Get("user_id")
+		query += fmt.Sprintf(" AND p.user_id = $%d", argIdx)
+		args = append(args, userID)
 		argIdx++
 	}
 	query += " ORDER BY p.updated_at DESC"
@@ -57,6 +64,11 @@ func (h *ProjectHandler) List(c *gin.Context) {
 }
 
 func (h *ProjectHandler) Create(c *gin.Context) {
+	if !middleware.CanWrite(c) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions to create projects"})
+		return
+	}
+
 	userID, _ := c.Get("user_id")
 	workspaceID := c.Query("workspace_id")
 
@@ -98,18 +110,29 @@ func (h *ProjectHandler) Create(c *gin.Context) {
 	c.JSON(http.StatusCreated, project)
 }
 
+func (h *ProjectHandler) canModifyProject(c *gin.Context, creatorID string) bool {
+	return middleware.HasRole(c, "admin", "owner") ||
+		(middleware.HasRole(c, "worker") && middleware.IsOwner(c, creatorID))
+}
+
 func (h *ProjectHandler) Get(c *gin.Context) {
-	userID, _ := c.Get("user_id")
 	workspaceID := c.Query("workspace_id")
+	isMember, _ := c.Get("is_workspace_member")
 	projectID := c.Param("id")
 
 	query := `SELECT p.id, p.user_id, p.name, p.description, p.color, p.created_at, p.updated_at,
 		        COALESCE((SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND t.deleted_at IS NULL), 0) AS task_count
-		 FROM projects p WHERE p.id = $1 AND p.user_id = $2`
-	args := []any{projectID, userID}
-	if workspaceID != "" {
-		query += ` AND p.workspace_id = $3`
+		 FROM projects p WHERE p.id = $1`
+	args := []any{projectID}
+	argIdx := 2
+
+	if workspaceID != "" && isMember.(bool) {
+		query += fmt.Sprintf(" AND p.workspace_id = $%d", argIdx)
 		args = append(args, workspaceID)
+	} else {
+		userID, _ := c.Get("user_id")
+		query += fmt.Sprintf(" AND p.user_id = $%d", argIdx)
+		args = append(args, userID)
 	}
 
 	var p models.Project
@@ -128,9 +151,20 @@ func (h *ProjectHandler) Get(c *gin.Context) {
 }
 
 func (h *ProjectHandler) Update(c *gin.Context) {
-	userID, _ := c.Get("user_id")
 	workspaceID := c.Query("workspace_id")
 	projectID := c.Param("id")
+
+	// Check permission
+	var creatorID string
+	err := h.DB.QueryRow(`SELECT user_id FROM projects WHERE id = $1`, projectID).Scan(&creatorID)
+	if err == sql.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "project not found"})
+		return
+	}
+	if !h.canModifyProject(c, creatorID) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions"})
+		return
+	}
 
 	var req models.UpdateProjectReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -164,15 +198,14 @@ func (h *ProjectHandler) Update(c *gin.Context) {
 	}
 
 	sets = append(sets, "updated_at = NOW()")
-	whereArgs := []any{projectID, userID}
-	if workspaceID != "" {
-		whereArgs = append(whereArgs, workspaceID)
-	}
-	args = append(args, whereArgs...)
+	isMember, _ := c.Get("is_workspace_member")
 
-	whereClause := fmt.Sprintf("WHERE id = $%d AND user_id = $%d", argIdx, argIdx+1)
-	argIdx += 2
-	if workspaceID != "" {
+	args = append(args, projectID)
+	whereClause := fmt.Sprintf("WHERE id = $%d", argIdx)
+	argIdx++
+
+	if workspaceID != "" && isMember.(bool) {
+		args = append(args, workspaceID)
 		whereClause += fmt.Sprintf(" AND workspace_id = $%d", argIdx)
 	}
 
@@ -203,14 +236,25 @@ func (h *ProjectHandler) Update(c *gin.Context) {
 }
 
 func (h *ProjectHandler) Delete(c *gin.Context) {
-	userID, _ := c.Get("user_id")
 	workspaceID := c.Query("workspace_id")
 	projectID := c.Param("id")
 
-	query := `UPDATE projects SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`
-	args := []any{projectID, userID}
-	if workspaceID != "" {
-		query += ` AND workspace_id = $3`
+	var creatorID string
+	err := h.DB.QueryRow(`SELECT user_id FROM projects WHERE id = $1`, projectID).Scan(&creatorID)
+	if err == sql.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "project not found"})
+		return
+	}
+	if !h.canModifyProject(c, creatorID) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions"})
+		return
+	}
+
+	query := `UPDATE projects SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL`
+	args := []any{projectID}
+	isMember, _ := c.Get("is_workspace_member")
+	if workspaceID != "" && isMember.(bool) {
+		query += ` AND workspace_id = $2`
 		args = append(args, workspaceID)
 	}
 
@@ -232,16 +276,24 @@ func (h *ProjectHandler) Delete(c *gin.Context) {
 }
 
 func (h *ProjectHandler) ListTrash(c *gin.Context) {
-	userID, _ := c.Get("user_id")
 	workspaceID := c.Query("workspace_id")
+	isMember, _ := c.Get("is_workspace_member")
 
 	query := `SELECT p.id, p.user_id, p.name, p.description, p.color, p.created_at, p.updated_at,
 		        COALESCE((SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND t.deleted_at IS NULL), 0) AS task_count
-		 FROM projects p WHERE p.user_id = $1 AND p.deleted_at IS NOT NULL`
-	args := []any{userID}
-	if workspaceID != "" {
-		query += ` AND p.workspace_id = $2`
+		 FROM projects p WHERE p.deleted_at IS NOT NULL`
+	args := []any{}
+	argIdx := 1
+
+	if workspaceID != "" && isMember.(bool) {
+		query += fmt.Sprintf(" AND p.workspace_id = $%d", argIdx)
 		args = append(args, workspaceID)
+		argIdx++
+	} else {
+		userID, _ := c.Get("user_id")
+		query += fmt.Sprintf(" AND p.user_id = $%d", argIdx)
+		args = append(args, userID)
+		argIdx++
 	}
 	query += " ORDER BY p.updated_at DESC"
 
@@ -265,23 +317,35 @@ func (h *ProjectHandler) ListTrash(c *gin.Context) {
 }
 
 func (h *ProjectHandler) PermanentDelete(c *gin.Context) {
-	userID, _ := c.Get("user_id")
 	workspaceID := c.Query("workspace_id")
 	projectID := c.Param("id")
 
+	var creatorID string
+	err := h.DB.QueryRow(`SELECT user_id FROM projects WHERE id = $1`, projectID).Scan(&creatorID)
+	if err == sql.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "project not found"})
+		return
+	}
+	if !h.canModifyProject(c, creatorID) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions"})
+		return
+	}
+
+	isMember, _ := c.Get("is_workspace_member")
+
 	// Unlink tasks from this project first
-	unlinkQuery := `UPDATE tasks SET project_id = NULL WHERE project_id = $1 AND user_id = $2`
-	unlinkArgs := []any{projectID, userID}
-	if workspaceID != "" {
-		unlinkQuery += ` AND workspace_id = $3`
+	unlinkQuery := `UPDATE tasks SET project_id = NULL WHERE project_id = $1`
+	unlinkArgs := []any{projectID}
+	if workspaceID != "" && isMember.(bool) {
+		unlinkQuery += ` AND workspace_id = $2`
 		unlinkArgs = append(unlinkArgs, workspaceID)
 	}
 	_, _ = h.DB.Exec(unlinkQuery, unlinkArgs...)
 
-	query := `DELETE FROM projects WHERE id = $1 AND user_id = $2 AND deleted_at IS NOT NULL`
-	args := []any{projectID, userID}
-	if workspaceID != "" {
-		query += ` AND workspace_id = $3`
+	query := `DELETE FROM projects WHERE id = $1 AND deleted_at IS NOT NULL`
+	args := []any{projectID}
+	if workspaceID != "" && isMember.(bool) {
+		query += ` AND workspace_id = $2`
 		args = append(args, workspaceID)
 	}
 
@@ -303,14 +367,25 @@ func (h *ProjectHandler) PermanentDelete(c *gin.Context) {
 }
 
 func (h *ProjectHandler) Restore(c *gin.Context) {
-	userID, _ := c.Get("user_id")
 	workspaceID := c.Query("workspace_id")
 	projectID := c.Param("id")
 
-	query := `UPDATE projects SET deleted_at = NULL, updated_at = NOW() WHERE id = $1 AND user_id = $2`
-	args := []any{projectID, userID}
-	if workspaceID != "" {
-		query += ` AND workspace_id = $3`
+	var creatorID string
+	err := h.DB.QueryRow(`SELECT user_id FROM projects WHERE id = $1`, projectID).Scan(&creatorID)
+	if err == sql.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "project not found"})
+		return
+	}
+	if !h.canModifyProject(c, creatorID) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions"})
+		return
+	}
+
+	query := `UPDATE projects SET deleted_at = NULL, updated_at = NOW() WHERE id = $1`
+	args := []any{projectID}
+	isMember, _ := c.Get("is_workspace_member")
+	if workspaceID != "" && isMember.(bool) {
+		query += ` AND workspace_id = $2`
 		args = append(args, workspaceID)
 	}
 

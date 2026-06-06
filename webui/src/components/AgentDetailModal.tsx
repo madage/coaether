@@ -7,8 +7,8 @@ interface AgentDetailModalProps {
   profile: AgentProfile;
   runtimeName?: string;
   onClose: () => void;
-  onSave: (id: string, data: Partial<AgentProfile>) => void;
-  onDelete: (id: string) => void;
+  onSave?: (id: string, data: Partial<AgentProfile>) => void;
+  onDelete?: (id: string) => void;
 }
 
 const overlayStyle: React.CSSProperties = {
@@ -59,7 +59,7 @@ export function AgentDetailModal({ profile, runtimeName, onClose, onSave, onDele
   }, []);
 
   const handleSave = () => {
-    onSave(profile.id, { name: editName, description: editDesc, agent_id: editAgentId });
+    onSave?.(profile.id, { name: editName, description: editDesc, agent_id: editAgentId });
     setEditing(false);
   };
 
@@ -71,7 +71,7 @@ export function AgentDetailModal({ profile, runtimeName, onClose, onSave, onDele
   };
 
   const handleDelete = () => {
-    onDelete(profile.id);
+    onDelete?.(profile.id);
   };
 
   return (
@@ -204,14 +204,14 @@ export function AgentDetailModal({ profile, runtimeName, onClose, onSave, onDele
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', borderTop: '1px solid #eee', paddingTop: '20px' }}>
-              <button onClick={handleDelete} style={{
+              {onDelete && <button onClick={handleDelete} style={{
                 padding: '10px 24px', background: '#fbe9e7', color: '#d32f2f',
                 border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '0.95em',
-              }}>{t('deleteAgent')}</button>
-              <button onClick={() => setEditing(true)} style={{
+              }}>{t('deleteAgent')}</button>}
+              {onSave && <button onClick={() => setEditing(true)} style={{
                 padding: '10px 24px', background: '#1976d2', color: '#fff',
                 border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '0.95em', fontWeight: 600,
-              }}>{t('editAgent')}</button>
+              }}>{t('editAgent')}</button>}
             </div>
           </>
         )}

@@ -8,9 +8,12 @@ import { ProjectDetail } from './ProjectDetail';
 import { TaskCard } from './TaskCard';
 import { TaskForm } from './TaskForm';
 import type { Project, Task, TaskStatus } from '../types';
+import { useWorkspace } from '../hooks/WorkspaceContext';
 
 export function ProjectList() {
   const { t, lang } = useLang();
+  const { role } = useWorkspace();
+  const isObserver = role === 'observer';
   const [projectList, setProjectList] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
@@ -135,7 +138,7 @@ export function ProjectList() {
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
         <h2 style={{ margin: 0 }}>{t('navProjects')}</h2>
-        <button
+        {!isObserver && <button
           onClick={() => setShowCreate(true)}
           style={{
             padding: '8px 20px', background: '#1976d2', color: '#fff',
@@ -144,7 +147,7 @@ export function ProjectList() {
           }}
         >
           + {t('projectCreate')}
-        </button>
+        </button>}
       </div>
 
       {/* Grid with "No Project" card always first */}

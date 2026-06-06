@@ -7,6 +7,7 @@ import (
 	"github.com/superco/server/config"
 	"github.com/superco/server/database"
 	"github.com/superco/server/handlers"
+	"github.com/superco/server/mailer"
 	"github.com/superco/server/middleware"
 	"github.com/superco/server/protocol"
 	"github.com/superco/server/store"
@@ -23,6 +24,14 @@ func main() {
 
 	if err := database.Migrate(); err != nil {
 		log.Fatalf("[FATAL] %v", err)
+	}
+
+	// Mailer
+	mail := mailer.New(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPass, cfg.SMTPFrom, cfg.PublicURL)
+	if mail.IsConfigured() {
+		log.Println("[Mailer] SMTP configured")
+	} else {
+		log.Println("[Mailer] SMTP not configured — invitation links will be logged")
 	}
 
 	// Message Bus
@@ -44,6 +53,8 @@ func main() {
 	projectH.Hub = dashHub
 	workspaceH := handlers.NewWorkspaceHandler(database.DB)
 	workspaceH.Hub = dashHub
+	workspaceH.Mailer = mail
+	userH := handlers.NewUserHandler(database.DB)
 	busH.Hub = dashHub // link for dashboard broadcasting
 
 	// Router
@@ -65,6 +76,10 @@ func main() {
 	r.POST("/api/auth/login", authH.Login)
 	r.POST("/api/auth/register", authH.Register)
 
+	// Public invitation routes (no auth needed — info only)
+	r.GET("/api/invitations/:token", workspaceH.GetInvitationByToken)
+	r.POST("/api/invitations/:token/decline", workspaceH.DeclineInvitation)
+
 	// Health check
 	r.GET("/api/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok"})
@@ -77,6 +92,7 @@ func main() {
 	// Auth required
 	api := r.Group("/api")
 	api.Use(middleware.AuthMiddleware(cfg.JWTSecret))
+	api.Use(middleware.WorkspaceAuthMiddleware(database.DB))
 	{
 		api.GET("/nodes", nodeH.List)
 		api.GET("/nodes/:id", nodeH.GetByID)
@@ -87,13 +103,14 @@ func main() {
 
 		api.PATCH("/agents/:id", nodeH.UpdateAgent)
 
-			// Agent profiles
-			api.GET("/agents/profiles", profileH.List)
-			api.POST("/agents/profiles", profileH.Create)
-			api.GET("/agents/profiles/:id", profileH.Get)
-			api.PUT("/agents/profiles/:id", profileH.Update)
-			api.DELETE("/agents/profiles/:id", profileH.Delete)
-			api.GET("/agents/runtimes", profileH.ListRuntimes)
+		// Agent profiles
+		api.GET("/agents/profiles", profileH.List)
+		api.POST("/agents/profiles", profileH.Create)
+		api.GET("/agents/profiles/:id", profileH.Get)
+		api.PUT("/agents/profiles/:id", profileH.Update)
+		api.DELETE("/agents/profiles/:id", profileH.Delete)
+		api.GET("/agents/runtimes", profileH.ListRuntimes)
+
 		// Tasks
 		api.GET("/tasks", taskH.List)
 		api.POST("/tasks", taskH.Create)
@@ -104,6 +121,7 @@ func main() {
 		api.DELETE("/tasks/:id/force", taskH.PermanentDelete)
 		api.POST("/tasks/:id/restore", taskH.Restore)
 		api.PATCH("/tasks/:id/status", taskH.SetStatus)
+
 		// Projects
 		api.GET("/projects", projectH.List)
 		api.POST("/projects", projectH.Create)
@@ -121,6 +139,22 @@ func main() {
 		api.PUT("/workspaces/:id", workspaceH.Update)
 		api.DELETE("/workspaces/:id", workspaceH.Delete)
 
+		// Workspace members
+		api.GET("/workspaces/:id/members", workspaceH.ListMembers)
+		api.POST("/workspaces/:id/members", workspaceH.AddMember)
+		api.PUT("/workspaces/:id/members/:userId", workspaceH.UpdateMemberRole)
+		api.DELETE("/workspaces/:id/members/:userId", workspaceH.RemoveMember)
+
+		// Workspace invitations (authenticated)
+		api.POST("/workspaces/:id/invitations", workspaceH.CreateInvitation)
+		api.GET("/workspaces/:id/invitations", workspaceH.ListInvitations)
+		api.DELETE("/workspaces/:id/invitations/:invitationId", workspaceH.CancelInvitation)
+		api.POST("/invitations/:token/accept", workspaceH.AcceptInvitation)
+
+		// User management (admin/owner)
+		api.GET("/users", userH.List)
+		api.DELETE("/users/:id", userH.Delete)
+
 		api.POST("/sessions", sessionH.Create)
 		api.GET("/sessions", sessionH.List)
 		api.GET("/sessions/:id", sessionH.GetByID)
@@ -128,13 +162,13 @@ func main() {
 			sessionID := c.Param("id")
 			store := messageBus.GetStore()
 			if store == nil {
-		c.JSON(500, gin.H{"error": "message store not available"})
-		return
+				c.JSON(500, gin.H{"error": "message store not available"})
+				return
 			}
 			envelopes, err := store.GetBySession(sessionID, 200)
 			if err != nil {
-		c.JSON(500, gin.H{"error": "failed to fetch messages"})
-		return
+				c.JSON(500, gin.H{"error": "failed to fetch messages"})
+				return
 			}
 			c.JSON(200, gin.H{"messages": envelopes})
 		})

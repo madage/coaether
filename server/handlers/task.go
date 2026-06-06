@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/superco/server/middleware"
 	"github.com/superco/server/models"
 )
 
@@ -23,17 +24,22 @@ func NewTaskHandler(db *sql.DB) *TaskHandler {
 }
 
 func (h *TaskHandler) List(c *gin.Context) {
-	userID, _ := c.Get("user_id")
 	workspaceID := c.Query("workspace_id")
+	isMember, _ := c.Get("is_workspace_member")
 
 	query := `SELECT id, user_id, title, description, status, project_id, created_at, updated_at
-		 FROM tasks WHERE user_id = $1 AND deleted_at IS NULL`
-	args := []any{userID}
-	argIdx := 2
+		 FROM tasks WHERE deleted_at IS NULL`
+	args := []any{}
+	argIdx := 1
 
-	if workspaceID != "" {
+	if workspaceID != "" && isMember.(bool) {
 		query += fmt.Sprintf(" AND workspace_id = $%d", argIdx)
 		args = append(args, workspaceID)
+		argIdx++
+	} else {
+		userID, _ := c.Get("user_id")
+		query += fmt.Sprintf(" AND user_id = $%d", argIdx)
+		args = append(args, userID)
 		argIdx++
 	}
 
@@ -69,6 +75,11 @@ func (h *TaskHandler) List(c *gin.Context) {
 }
 
 func (h *TaskHandler) Create(c *gin.Context) {
+	if !middleware.CanWrite(c) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions to create tasks"})
+		return
+	}
+
 	userID, _ := c.Get("user_id")
 	workspaceID := c.Query("workspace_id")
 
@@ -107,18 +118,22 @@ func (h *TaskHandler) Create(c *gin.Context) {
 }
 
 func (h *TaskHandler) Get(c *gin.Context) {
-	userID, _ := c.Get("user_id")
 	workspaceID := c.Query("workspace_id")
+	isMember, _ := c.Get("is_workspace_member")
 	taskID := c.Param("id")
 
 	query := `SELECT id, user_id, title, description, status, project_id, created_at, updated_at
-		 FROM tasks WHERE id = $1 AND user_id = $2`
-	args := []any{taskID, userID}
-	argIdx := 3
+		 FROM tasks WHERE id = $1`
+	args := []any{taskID}
+	argIdx := 2
 
-	if workspaceID != "" {
+	if workspaceID != "" && isMember.(bool) {
 		query += fmt.Sprintf(" AND workspace_id = $%d", argIdx)
 		args = append(args, workspaceID)
+	} else {
+		userID, _ := c.Get("user_id")
+		query += fmt.Sprintf(" AND user_id = $%d", argIdx)
+		args = append(args, userID)
 	}
 
 	var t models.Task
@@ -136,10 +151,31 @@ func (h *TaskHandler) Get(c *gin.Context) {
 	c.JSON(http.StatusOK, t)
 }
 
+func (h *TaskHandler) canModifyTask(c *gin.Context, creatorID string) bool {
+	return middleware.HasRole(c, "admin", "owner") ||
+		(middleware.HasRole(c, "worker") && middleware.IsOwner(c, creatorID))
+}
+
 func (h *TaskHandler) Update(c *gin.Context) {
-	userID, _ := c.Get("user_id")
-	workspaceID := c.Query("workspace_id")
 	taskID := c.Param("id")
+	workspaceID := c.Query("workspace_id")
+
+	// Check permission
+	var creatorID string
+	err := h.DB.QueryRow(`SELECT user_id FROM tasks WHERE id = $1`, taskID).Scan(&creatorID)
+	if err == sql.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "database error"})
+		return
+	}
+
+	if !h.canModifyTask(c, creatorID) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions"})
+		return
+	}
 
 	bodyBytes, err := c.GetRawData()
 	if err != nil {
@@ -153,11 +189,9 @@ func (h *TaskHandler) Update(c *gin.Context) {
 		return
 	}
 
-	// Parse body into a map to detect which fields were explicitly provided
 	var fields map[string]interface{}
 	json.Unmarshal(bodyBytes, &fields)
 
-	// Build dynamic SET clause
 	var sets []string
 	var args []any
 	argIdx := 1
@@ -177,8 +211,6 @@ func (h *TaskHandler) Update(c *gin.Context) {
 		args = append(args, *req.Status)
 		argIdx++
 	}
-
-	// project_id can be explicitly set to null (clear project), distinguish from "not provided"
 	if _, exists := fields["project_id"]; exists {
 		if req.ProjectID != nil {
 			sets = append(sets, fmt.Sprintf("project_id = $%d", argIdx))
@@ -196,15 +228,14 @@ func (h *TaskHandler) Update(c *gin.Context) {
 	}
 
 	sets = append(sets, "updated_at = NOW()")
-	whereArgs := []any{taskID, userID}
-	if workspaceID != "" {
-		whereArgs = append(whereArgs, workspaceID)
-	}
-	args = append(args, whereArgs...)
+	isMember, _ := c.Get("is_workspace_member")
 
-	whereClause := fmt.Sprintf("WHERE id = $%d AND user_id = $%d", argIdx, argIdx+1)
-	argIdx += 2
-	if workspaceID != "" {
+	args = append(args, taskID)
+	whereClause := fmt.Sprintf("WHERE id = $%d", argIdx)
+	argIdx++
+
+	if workspaceID != "" && isMember.(bool) {
+		args = append(args, workspaceID)
 		whereClause += fmt.Sprintf(" AND workspace_id = $%d", argIdx)
 	}
 
@@ -221,7 +252,6 @@ func (h *TaskHandler) Update(c *gin.Context) {
 		return
 	}
 
-	// Return updated task
 	var t models.Task
 	h.DB.QueryRow(
 		`SELECT id, user_id, title, description, status, project_id, created_at, updated_at
@@ -235,14 +265,26 @@ func (h *TaskHandler) Update(c *gin.Context) {
 }
 
 func (h *TaskHandler) Delete(c *gin.Context) {
-	userID, _ := c.Get("user_id")
 	workspaceID := c.Query("workspace_id")
 	taskID := c.Param("id")
 
-	query := `UPDATE tasks SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`
-	args := []any{taskID, userID}
-	if workspaceID != "" {
-		query += ` AND workspace_id = $3`
+	// Check permission
+	var creatorID string
+	err := h.DB.QueryRow(`SELECT user_id FROM tasks WHERE id = $1`, taskID).Scan(&creatorID)
+	if err == sql.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
+		return
+	}
+	if !h.canModifyTask(c, creatorID) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions"})
+		return
+	}
+
+	query := `UPDATE tasks SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL`
+	args := []any{taskID}
+	isMember, _ := c.Get("is_workspace_member")
+	if workspaceID != "" && isMember.(bool) {
+		query += ` AND workspace_id = $2`
 		args = append(args, workspaceID)
 	}
 
@@ -264,15 +306,23 @@ func (h *TaskHandler) Delete(c *gin.Context) {
 }
 
 func (h *TaskHandler) ListTrash(c *gin.Context) {
-	userID, _ := c.Get("user_id")
 	workspaceID := c.Query("workspace_id")
+	isMember, _ := c.Get("is_workspace_member")
 
 	query := `SELECT id, user_id, title, description, status, project_id, created_at, updated_at
-		 FROM tasks WHERE user_id = $1 AND deleted_at IS NOT NULL`
-	args := []any{userID}
-	if workspaceID != "" {
-		query += ` AND workspace_id = $2`
+		 FROM tasks WHERE deleted_at IS NOT NULL`
+	args := []any{}
+	argIdx := 1
+
+	if workspaceID != "" && isMember.(bool) {
+		query += fmt.Sprintf(" AND workspace_id = $%d", argIdx)
 		args = append(args, workspaceID)
+		argIdx++
+	} else {
+		userID, _ := c.Get("user_id")
+		query += fmt.Sprintf(" AND user_id = $%d", argIdx)
+		args = append(args, userID)
+		argIdx++
 	}
 	query += ` ORDER BY updated_at DESC`
 
@@ -296,14 +346,25 @@ func (h *TaskHandler) ListTrash(c *gin.Context) {
 }
 
 func (h *TaskHandler) PermanentDelete(c *gin.Context) {
-	userID, _ := c.Get("user_id")
 	workspaceID := c.Query("workspace_id")
 	taskID := c.Param("id")
 
-	query := `DELETE FROM tasks WHERE id = $1 AND user_id = $2 AND deleted_at IS NOT NULL`
-	args := []any{taskID, userID}
-	if workspaceID != "" {
-		query += ` AND workspace_id = $3`
+	var creatorID string
+	err := h.DB.QueryRow(`SELECT user_id FROM tasks WHERE id = $1`, taskID).Scan(&creatorID)
+	if err == sql.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
+		return
+	}
+	if !h.canModifyTask(c, creatorID) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions"})
+		return
+	}
+
+	query := `DELETE FROM tasks WHERE id = $1 AND deleted_at IS NOT NULL`
+	args := []any{taskID}
+	isMember, _ := c.Get("is_workspace_member")
+	if workspaceID != "" && isMember.(bool) {
+		query += ` AND workspace_id = $2`
 		args = append(args, workspaceID)
 	}
 
@@ -325,14 +386,25 @@ func (h *TaskHandler) PermanentDelete(c *gin.Context) {
 }
 
 func (h *TaskHandler) Restore(c *gin.Context) {
-	userID, _ := c.Get("user_id")
 	workspaceID := c.Query("workspace_id")
 	taskID := c.Param("id")
 
-	query := `UPDATE tasks SET deleted_at = NULL, updated_at = NOW() WHERE id = $1 AND user_id = $2`
-	args := []any{taskID, userID}
-	if workspaceID != "" {
-		query += ` AND workspace_id = $3`
+	var creatorID string
+	err := h.DB.QueryRow(`SELECT user_id FROM tasks WHERE id = $1`, taskID).Scan(&creatorID)
+	if err == sql.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
+		return
+	}
+	if !h.canModifyTask(c, creatorID) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions"})
+		return
+	}
+
+	query := `UPDATE tasks SET deleted_at = NULL, updated_at = NOW() WHERE id = $1`
+	args := []any{taskID}
+	isMember, _ := c.Get("is_workspace_member")
+	if workspaceID != "" && isMember.(bool) {
+		query += ` AND workspace_id = $2`
 		args = append(args, workspaceID)
 	}
 
@@ -354,9 +426,19 @@ func (h *TaskHandler) Restore(c *gin.Context) {
 }
 
 func (h *TaskHandler) SetStatus(c *gin.Context) {
-	userID, _ := c.Get("user_id")
 	workspaceID := c.Query("workspace_id")
 	taskID := c.Param("id")
+
+	var creatorID string
+	err := h.DB.QueryRow(`SELECT user_id FROM tasks WHERE id = $1`, taskID).Scan(&creatorID)
+	if err == sql.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
+		return
+	}
+	if !h.canModifyTask(c, creatorID) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions"})
+		return
+	}
 
 	var req models.SetStatusReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -364,17 +446,17 @@ func (h *TaskHandler) SetStatus(c *gin.Context) {
 		return
 	}
 
-	// Validate status
 	valid := map[string]bool{"todo": true, "in_progress": true, "blocked": true, "done": true, "review": true}
 	if !valid[req.Status] {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid status"})
 		return
 	}
 
-	query := `UPDATE tasks SET status = $1, updated_at = NOW() WHERE id = $2 AND user_id = $3`
-	args := []any{req.Status, taskID, userID}
-	if workspaceID != "" {
-		query += ` AND workspace_id = $4`
+	query := `UPDATE tasks SET status = $1, updated_at = NOW() WHERE id = $2`
+	args := []any{req.Status, taskID}
+	isMember, _ := c.Get("is_workspace_member")
+	if workspaceID != "" && isMember.(bool) {
+		query += ` AND workspace_id = $3`
 		args = append(args, workspaceID)
 	}
 
@@ -389,7 +471,6 @@ func (h *TaskHandler) SetStatus(c *gin.Context) {
 		return
 	}
 
-	// Return updated task
 	var t models.Task
 	h.DB.QueryRow(
 		`SELECT id, user_id, title, description, status, project_id, created_at, updated_at

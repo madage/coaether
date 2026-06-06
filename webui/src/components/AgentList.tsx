@@ -6,6 +6,7 @@ import { AgentCreateCard } from './AgentCreateCard';
 import { AgentForm } from './AgentForm';
 import { AgentDetailModal } from './AgentDetailModal';
 import type { AgentProfile, RuntimeEntity } from '../types';
+import { useWorkspace } from '../hooks/WorkspaceContext';
 
 function generateQuestion(): { a: number; b: number; op: '+' | '-'; answer: number } {
   const a = Math.floor(Math.random() * 20) + 1;
@@ -18,6 +19,9 @@ function generateQuestion(): { a: number; b: number; op: '+' | '-'; answer: numb
 
 export function AgentList() {
   const { t, lang } = useLang();
+  const { role } = useWorkspace();
+  const isObserver = role === 'observer';
+  const canWrite = role === 'admin' || role === 'owner' || role === 'worker';
   const [profiles, setProfiles] = useState<AgentProfile[]>([]);
   const [runtimes, setRuntimes] = useState<Record<string, string>>({});
   const [selectedProfile, setSelectedProfile] = useState<AgentProfile | null>(null);
@@ -112,7 +116,7 @@ export function AgentList() {
             onClick={() => setSelectedProfile(profile)}
           />
         ))}
-        <AgentCreateCard onClick={() => setShowCreate(true)} />
+        {!isObserver && <AgentCreateCard onClick={() => setShowCreate(true)} />}
       </div>
 
       {profiles.length === 0 && (
@@ -133,8 +137,8 @@ export function AgentList() {
           profile={selectedProfile}
           runtimeName={runtimes[selectedProfile.agent_id] || selectedProfile.agent_id}
           onClose={() => setSelectedProfile(null)}
-          onSave={handleUpdate}
-          onDelete={handleDelete}
+          onSave={canWrite ? handleUpdate : undefined}
+          onDelete={role === 'admin' || role === 'owner' ? handleDelete : undefined}
         />
       )}
 

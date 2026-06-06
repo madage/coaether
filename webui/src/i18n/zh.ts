@@ -7,6 +7,7 @@ export const zh = {
   login: '登录',
   register: '注册',
   username: '用户名',
+  email: '邮箱',
   password: '密码',
   logout: '退出登录',
   alreadyHasAccount: '已有账号？去登录',

@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/superco/server/middleware"
 	"github.com/superco/server/models"
 )
 
@@ -20,15 +21,23 @@ func NewAgentProfileHandler(db *sql.DB) *AgentProfileHandler {
 }
 
 func (h *AgentProfileHandler) List(c *gin.Context) {
-	userID, _ := c.Get("user_id")
 	workspaceID := c.Query("workspace_id")
+	isMember, _ := c.Get("is_workspace_member")
 
 	query := `SELECT id, user_id, name, avatar, description, agent_id, version, model, backend, enabled, created_at, updated_at
-		 FROM agent_profiles WHERE user_id = $1`
-	args := []any{userID}
-	if workspaceID != "" {
-		query += ` AND workspace_id = $2`
+		 FROM agent_profiles`
+	args := []any{}
+	argIdx := 1
+
+	if workspaceID != "" && isMember.(bool) {
+		query += fmt.Sprintf(" WHERE workspace_id = $%d", argIdx)
 		args = append(args, workspaceID)
+		argIdx++
+	} else {
+		userID, _ := c.Get("user_id")
+		query += fmt.Sprintf(" WHERE user_id = $%d", argIdx)
+		args = append(args, userID)
+		argIdx++
 	}
 	query += ` ORDER BY created_at ASC`
 
@@ -53,16 +62,22 @@ func (h *AgentProfileHandler) List(c *gin.Context) {
 }
 
 func (h *AgentProfileHandler) Get(c *gin.Context) {
-	userID, _ := c.Get("user_id")
 	workspaceID := c.Query("workspace_id")
+	isMember, _ := c.Get("is_workspace_member")
 	profileID := c.Param("id")
 
 	query := `SELECT id, user_id, name, avatar, description, agent_id, version, model, backend, enabled, created_at, updated_at
-		 FROM agent_profiles WHERE id = $1 AND user_id = $2`
-	args := []any{profileID, userID}
-	if workspaceID != "" {
-		query += ` AND workspace_id = $3`
+		 FROM agent_profiles WHERE id = $1`
+	args := []any{profileID}
+	argIdx := 2
+
+	if workspaceID != "" && isMember.(bool) {
+		query += fmt.Sprintf(" AND workspace_id = $%d", argIdx)
 		args = append(args, workspaceID)
+	} else {
+		userID, _ := c.Get("user_id")
+		query += fmt.Sprintf(" AND user_id = $%d", argIdx)
+		args = append(args, userID)
 	}
 
 	var p models.AgentProfile
@@ -79,7 +94,17 @@ func (h *AgentProfileHandler) Get(c *gin.Context) {
 	c.JSON(http.StatusOK, p)
 }
 
+func (h *AgentProfileHandler) canModifyProfile(c *gin.Context, creatorID string) bool {
+	return middleware.HasRole(c, "admin", "owner") ||
+		(middleware.HasRole(c, "worker") && middleware.IsOwner(c, creatorID))
+}
+
 func (h *AgentProfileHandler) Create(c *gin.Context) {
+	if !middleware.CanWrite(c) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions to create profiles"})
+		return
+	}
+
 	userID, _ := c.Get("user_id")
 	workspaceID := c.Query("workspace_id")
 
@@ -119,9 +144,20 @@ func (h *AgentProfileHandler) Create(c *gin.Context) {
 }
 
 func (h *AgentProfileHandler) Update(c *gin.Context) {
-	userID, _ := c.Get("user_id")
 	workspaceID := c.Query("workspace_id")
 	profileID := c.Param("id")
+
+	// Check permission
+	var creatorID string
+	err := h.DB.QueryRow(`SELECT user_id FROM agent_profiles WHERE id = $1`, profileID).Scan(&creatorID)
+	if err == sql.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "profile not found"})
+		return
+	}
+	if !h.canModifyProfile(c, creatorID) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions"})
+		return
+	}
 
 	var req struct {
 		Name        *string `json:"name,omitempty"`
@@ -167,12 +203,9 @@ func (h *AgentProfileHandler) Update(c *gin.Context) {
 	}
 
 	setClauses = append(setClauses, "updated_at = NOW()")
-	whereArgs := []interface{}{profileID, userID}
-	if workspaceID != "" {
-		whereArgs = append(whereArgs, workspaceID)
-	}
-	args = append(args, whereArgs...)
+	isMember, _ := c.Get("is_workspace_member")
 
+	args = append(args, profileID)
 	query := "UPDATE agent_profiles SET "
 	for i, clause := range setClauses {
 		if i > 0 {
@@ -180,9 +213,11 @@ func (h *AgentProfileHandler) Update(c *gin.Context) {
 		}
 		query += clause
 	}
-	query += fmt.Sprintf(" WHERE id = $%d AND user_id = $%d", argIdx, argIdx+1)
-	argIdx += 2
-	if workspaceID != "" {
+	query += fmt.Sprintf(" WHERE id = $%d", argIdx)
+	argIdx++
+
+	if workspaceID != "" && isMember.(bool) {
+		args = append(args, workspaceID)
 		query += fmt.Sprintf(" AND workspace_id = $%d", argIdx)
 	}
 
@@ -199,14 +234,25 @@ func (h *AgentProfileHandler) Update(c *gin.Context) {
 }
 
 func (h *AgentProfileHandler) Delete(c *gin.Context) {
-	userID, _ := c.Get("user_id")
 	workspaceID := c.Query("workspace_id")
 	profileID := c.Param("id")
 
-	query := `DELETE FROM agent_profiles WHERE id = $1 AND user_id = $2`
-	args := []interface{}{profileID, userID}
-	if workspaceID != "" {
-		query += ` AND workspace_id = $3`
+	var creatorID string
+	err := h.DB.QueryRow(`SELECT user_id FROM agent_profiles WHERE id = $1`, profileID).Scan(&creatorID)
+	if err == sql.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "profile not found"})
+		return
+	}
+	if !h.canModifyProfile(c, creatorID) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions"})
+		return
+	}
+
+	query := `DELETE FROM agent_profiles WHERE id = $1`
+	args := []interface{}{profileID}
+	isMember, _ := c.Get("is_workspace_member")
+	if workspaceID != "" && isMember.(bool) {
+		query += ` AND workspace_id = $2`
 		args = append(args, workspaceID)
 	}
 

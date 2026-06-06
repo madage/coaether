@@ -1,4 +1,4 @@
-import type { Node, Session, CreateSessionReq, Agent, AgentProfile, RuntimeEntity, Task, CreateTaskReq, UpdateTaskReq, TaskStatus, Project, CreateProjectReq, UpdateProjectReq, Workspace, CreateWorkspaceReq, UpdateWorkspaceReq } from '../types';
+import type { Node, Session, CreateSessionReq, Agent, AgentProfile, RuntimeEntity, Task, CreateTaskReq, UpdateTaskReq, TaskStatus, Project, CreateProjectReq, UpdateProjectReq, Workspace, CreateWorkspaceReq, UpdateWorkspaceReq, WorkspaceMember, AddMemberReq, UpdateMemberRoleReq, PendingInvitation, InviteMemberReq, UserSummary } from '../types';
 
 const BASE = '/api';
 
@@ -12,10 +12,9 @@ function authHeaders(): Record<string, string> {
 }
 
 // List of path prefixes that should NOT get workspace_id appended
-const unscopedPrefixes = ['/workspaces', '/auth/', '/nodes', '/sessions', '/agents/runtimes'];
+const unscopedPrefixes = ['/workspaces', '/auth/', '/nodes', '/sessions', '/agents/runtimes', '/invitations/', '/users'];
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  // Append workspace_id query param for scoped resources
   const wsId = localStorage.getItem('workspace_id');
   let url = `${BASE}${path}`;
   if (wsId && !unscopedPrefixes.some(p => path.startsWith(p))) {
@@ -42,17 +41,20 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
 // Auth
 export const auth = {
-  login: (username: string, password: string) =>
-    request<{ token: string; user: { id: string; username: string }; workspace_id: string }>('/auth/login', {
+  login: (email: string, password: string) =>
+    request<{ token: string; user: { id: string; username: string; email: string }; workspace_id: string }>('/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ email, password }),
     }),
 
-  register: (username: string, password: string) =>
-    request<{ token: string; user: { id: string; username: string }; workspace_id: string }>('/auth/register', {
+  register: (email: string, password: string, invitationToken?: string) => {
+    const body: Record<string, string> = { email, password };
+    if (invitationToken) body.invitation_token = invitationToken;
+    return request<{ token: string; user: { id: string; username: string; email: string }; workspace_id: string }>('/auth/register', {
       method: 'POST',
-      body: JSON.stringify({ username, password }),
-    }),
+      body: JSON.stringify(body),
+    });
+  },
 };
 
 // Nodes
@@ -195,4 +197,66 @@ export const workspaces = {
 
   delete: (id: string) =>
     request<{ status: string }>(`/workspaces/${id}`, { method: 'DELETE' }),
+};
+
+// Workspace Members
+export const workspaceMembers = {
+  list: (workspaceId: string) =>
+    request<{ members: WorkspaceMember[] }>(`/workspaces/${workspaceId}/members`),
+
+  add: (workspaceId: string, data: AddMemberReq) =>
+    request<{ status: string }>(`/workspaces/${workspaceId}/members`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  updateRole: (workspaceId: string, userId: string, data: UpdateMemberRoleReq) =>
+    request<{ status: string }>(`/workspaces/${workspaceId}/members/${userId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
+  remove: (workspaceId: string, userId: string) =>
+    request<{ status: string }>(`/workspaces/${workspaceId}/members/${userId}`, {
+      method: 'DELETE',
+    }),
+};
+
+// Invitations
+export const invitations = {
+  get: (token: string) =>
+    request<PendingInvitation>(`/invitations/${token}`),
+
+  accept: (token: string) =>
+    request<{ status: string; workspace_id?: string; invitee_email?: string; token?: string }>(`/invitations/${token}/accept`, {
+      method: 'POST',
+    }),
+
+  decline: (token: string) =>
+    request<{ status: string }>(`/invitations/${token}/decline`, {
+      method: 'POST',
+    }),
+
+  create: (workspaceId: string, data: InviteMemberReq) =>
+    request<{ status: string; invitation: PendingInvitation; redirect_url: string }>(`/workspaces/${workspaceId}/invitations`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  list: (workspaceId: string) =>
+    request<{ invitations: PendingInvitation[] }>(`/workspaces/${workspaceId}/invitations`),
+
+  cancel: (workspaceId: string, invitationId: string) =>
+    request<{ status: string }>(`/workspaces/${workspaceId}/invitations/${invitationId}`, {
+      method: 'DELETE',
+    }),
+};
+
+// User Management
+export const users = {
+  list: () =>
+    request<{ users: UserSummary[] }>('/users'),
+
+  delete: (id: string) =>
+    request<{ status: string }>(`/users/${id}`, { method: 'DELETE' }),
 };
