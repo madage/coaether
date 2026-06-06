@@ -12,7 +12,7 @@ function authHeaders(): Record<string, string> {
 }
 
 // List of path prefixes that should NOT get workspace_id appended
-const unscopedPrefixes = ['/workspaces', '/auth/', '/nodes', '/sessions', '/agents/runtimes', '/invitations/', '/users'];
+const unscopedPrefixes = ['/workspaces', '/auth/', '/nodes', '/sessions', '/agents/runtimes', '/invitations/', '/users', '/invitations/pending'];
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const wsId = localStorage.getItem('workspace_id');
@@ -226,6 +226,9 @@ export const workspaceMembers = {
 export const invitations = {
   get: (token: string) =>
     request<PendingInvitation>(`/invitations/${token}`),
+
+  pending: () =>
+    request<{ invitations: PendingInvitation[] }>('/invitations/pending'),
 
   accept: (token: string) =>
     request<{ status: string; workspace_id?: string; invitee_email?: string; token?: string }>(`/invitations/${token}/accept`, {

@@ -150,6 +150,7 @@ func main() {
 		api.GET("/workspaces/:id/invitations", workspaceH.ListInvitations)
 		api.DELETE("/workspaces/:id/invitations/:invitationId", workspaceH.CancelInvitation)
 		api.POST("/invitations/:token/accept", workspaceH.AcceptInvitation)
+		api.GET("/invitations/pending", workspaceH.ListPendingInvitations)
 
 		// User management (admin/owner)
 		api.GET("/users", userH.List)

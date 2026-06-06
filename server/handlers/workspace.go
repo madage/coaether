@@ -506,6 +506,42 @@ func generateInviteToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
+// ListPendingInvitations returns pending invitations for the current user's email
+func (h *WorkspaceHandler) ListPendingInvitations(c *gin.Context) {
+	email, _ := c.Get("email")
+	if email == nil || email.(string) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "email not found in token"})
+		return
+	}
+
+	rows, err := h.DB.Query(`
+		SELECT pi.id, pi.workspace_id, pi.inviter_id, pi.invitee_email, pi.token, pi.role, pi.status, pi.created_at, pi.expires_at,
+		       w.name, u.username
+		FROM pending_invitations pi
+		JOIN workspaces w ON w.id = pi.workspace_id
+		JOIN users u ON u.id = pi.inviter_id
+		WHERE pi.invitee_email = $1 AND pi.status = 'pending' AND pi.expires_at > NOW()
+		ORDER BY pi.created_at DESC
+	`, email.(string))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query invitations"})
+		return
+	}
+	defer rows.Close()
+
+	invitations := make([]models.PendingInvitation, 0)
+	for rows.Next() {
+		var inv models.PendingInvitation
+		if err := rows.Scan(&inv.ID, &inv.WorkspaceID, &inv.InviterID, &inv.InviteeEmail, &inv.Token, &inv.Role, &inv.Status, &inv.CreatedAt, &inv.ExpiresAt,
+			&inv.WorkspaceName, &inv.InviterName); err != nil {
+			continue
+		}
+		invitations = append(invitations, inv)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"invitations": invitations})
+}
+
 // CreateInvitation creates a new invitation for a user by email
 func (h *WorkspaceHandler) CreateInvitation(c *gin.Context) {
 	wsID := c.Param("id")

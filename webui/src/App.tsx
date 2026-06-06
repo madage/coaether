@@ -8,6 +8,7 @@ import { TrashView } from './components/TrashView';
 import { FloatingChat } from './components/FloatingChat';
 import { LangSwitcher } from './components/LangSwitcher';
 import WorkspaceMembers from './components/WorkspaceMembers';
+import NotificationBell from './components/NotificationBell';
 import { useDashboardWS } from './hooks/useDashboardWS';
 import { useLang } from './i18n/context';
 import { auth as authApi, workspaces as workspacesApi, workspaceMembers as workspaceMembersApi, invitations as invitationsApi, users as usersApi } from './api/client';
@@ -201,6 +202,19 @@ function App() {
       payload: { content: blocks },
     });
   }, [bus.sessionID, bus.send]);
+
+  const handleWorkspaceChange = useCallback(async () => {
+    try {
+      const res = await workspacesApi.list();
+      setWorkspaces(res.workspaces);
+      const currentWsId = localStorage.getItem('workspace_id');
+      const currentWs = res.workspaces.find(w => w.id === currentWsId);
+      if (currentWs?.role) {
+        setAuth(prev => ({ ...prev, workspace_role: currentWs.role as WorkspaceRole }));
+      }
+      setWorkspaceKey((k) => k + 1);
+    } catch {}
+  }, []);
 
   const handleCreateWorkspace = useCallback(async () => {
     if (!newWsName.trim()) return;
@@ -476,8 +490,9 @@ function App() {
               }} title={t('manageWorkspaces')}>⚙</button>
             </div>
           )}
-          <div style={{ fontSize: '0.85em', color: '#999', marginTop: '4px' }}>
-            {auth.user?.username} ({auth.user?.email})
+          <div style={{ fontSize: '0.85em', color: '#999', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span>{auth.user?.username} ({auth.user?.email})</span>
+            <NotificationBell onWorkspaceChange={handleWorkspaceChange} />
           </div>
         </div>
 

@@ -167,4 +167,13 @@ export const zh = {
 
   // Language
   switchLang: 'English',
+
+  // Notifications
+  pendingInvitations: '待处理的邀请',
+  invitationFrom: '{name} 邀请你加入 {workspace}',
+  accept: '接受',
+  decline: '拒绝',
+  noPendingInvitations: '暂无待处理的邀请',
+  invitationAccepted: '已接受邀请',
+  invitationDeclined: '已拒绝邀请',
 } as const;

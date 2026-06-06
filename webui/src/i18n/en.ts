@@ -167,4 +167,13 @@ export const en = {
 
   // Language
   switchLang: '中文',
+
+  // Notifications
+  pendingInvitations: 'Pending Invitations',
+  invitationFrom: '{name} invited you to {workspace}',
+  accept: 'Accept',
+  decline: 'Decline',
+  noPendingInvitations: 'No pending invitations',
+  invitationAccepted: 'Invitation accepted',
+  invitationDeclined: 'Invitation declined',
 } as const;
