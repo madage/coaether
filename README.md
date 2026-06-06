@@ -1,58 +1,89 @@
-# Superco - AI Agent Distributed Scheduling Platform / AI Agent 分布式调度平台
+# Superco - AI Agent 分布式调度平台
 
-[EN] Cross-platform AI Agent scheduling platform with Web UI chat, Go backend, and Message Bus architecture.
-[CN] 跨平台 AI Agent 分布式调度平台，提供 Web 聊天界面、Go 后端服务和消息总线架构。
+跨平台 AI Agent 分布式调度平台，提供 Web 聊天界面、多用户工作区、任务/项目管理。
 
-## Architecture
+## 架构
 
 ```
 superco/
-├── server/         # Go + Gin + WebSocket backend server
-├── agent-runtime/  # Agent Runtime (connects via Message Bus)
-└── webui/          # React + TypeScript + Vite chat interface
+├── server/          # Go + Gin + WebSocket + Message Bus 后端
+├── agent-runtime/   # Agent Runtime（通过 Message Bus 连接）
+└── webui/           # React + TypeScript + Vite 前端
 ```
 
-## Quick Start / 快速开始
+## 功能特性
 
-### 1. Server / 启动后端
+- **多用户工作区** — 基于角色的权限体系（owner/admin/worker/observer）
+- **AI Agent 聊天** — 浮动聊天窗口，支持多会话管理
+- **Agent 配置** — 可自定义 Agent 名称、描述、运行时
+- **任务管理** — 看板视图，支持状态流转（待办/进行中/阻塞/完成/审核）
+- **项目管理** — 按项目组织任务
+- **回收站** — 软删除，可恢复
+- **工作区邀请** — 邮箱邀请 + 站内通知 + WebSocket 实时推送
+- **多语言** — 中文 / English
+- **用户管理** — 管理员可查看/删除用户
+
+## 快速开始
+
+### 1. 依赖
+
+- Go 1.21+
+- Node.js 18+
+- PostgreSQL
+
+### 2. 配置
+
+```bash
+cp .env.example .env
+# 编辑 .env，填写 POSTGRES_DSN、JWT_SECRET 等
+```
+
+### 3. 启动后端
 
 ```bash
 cd server
 go run .
-# Starts on :8088
+# 监听 :8088
 ```
 
-> Requires PostgreSQL. / 需要本地运行 PostgreSQL。
+首次启动自动执行数据库迁移。
 
-### 2. Web UI / 启动前端
+### 4. 启动前端
 
 ```bash
 cd webui
 npm install
 npm run dev
-# Opens on localhost:5173
+# 打开 localhost:5173
 ```
 
-### 3. Agent Runtime / 启动运行时
+### 5. 启动 Agent Runtime
 
 ```bash
 cd agent-runtime
 go build -o agent-runtime .
 ./agent-runtime
-# Connects to ws://localhost:8088/ws/bus
+# 自动连接 ws://localhost:8088/ws/bus
 ```
 
-> Requires `claude` CLI in PATH. / 需要 `claude` 命令在 PATH 中。
+> 需要 `claude` CLI 在 PATH 中，或配置其他 AI 工具。
 
-## Project Structure / 项目结构
+## 环境变量
 
-```
-superco/
-├── server/         # Go + Gin + Message Bus backend / 后端服务
-├── agent-runtime/  # Agent Runtime (Message Bus client) / 运行时节点
-└── webui/          # React + TypeScript + Vite / 前端界面
-```
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `POSTGRES_DSN` | PostgreSQL 连接字符串 | `postgres://postgres:postgres@localhost:5432/superco?sslmode=disable` |
+| `JWT_SECRET` | JWT 签名密钥 | `superco-secret-key` |
+| `SMTP_HOST` | SMTP 服务器（可选，用于邮件邀请） | - |
+| `SMTP_PORT` | SMTP 端口 | `587` |
+| `SMTP_USER` | SMTP 用户名 | - |
+| `SMTP_PASS` | SMTP 密码 | - |
+| `SMTP_FROM` | 发件人地址 | - |
+| `PORT` | 服务端口 | `8088` |
 
-## License / 许可证
+## 技术栈
 
-Apache License 2.0
+- **后端**: Go, Gin, gorilla/websocket, PostgreSQL, JWT (golang-jwt)
+- **前端**: React 18, TypeScript, Vite
+- **通信**: REST API + WebSocket（Dashboard 总线 + Message Bus）
+- **AI 运行时**: 通过 Message Bus 协议连接 Agent Runtime
