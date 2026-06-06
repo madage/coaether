@@ -10,6 +10,7 @@ import { LangSwitcher } from './components/LangSwitcher';
 import WorkspaceMembers from './components/WorkspaceMembers';
 import NotificationBell from './components/NotificationBell';
 import { useDashboardWS } from './hooks/useDashboardWS';
+import { useResourceSync } from './hooks/useResourceSync';
 import { useLang } from './i18n/context';
 import { auth as authApi, workspaces as workspacesApi, workspaceMembers as workspaceMembersApi, invitations as invitationsApi, users as usersApi } from './api/client';
 import type { Node, Session, AuthState, Workspace, WorkspaceRole, WorkspaceMember, UserSummary } from './types';
@@ -37,7 +38,8 @@ function App() {
   const [password, setPassword] = useState('');
   const [isRegister, setIsRegister] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
-  const { nodes, sessions, connected: dashboardConnected } = useDashboardWS();
+  const { nodes, sessions, connected: dashboardConnected, subscribeNotification } = useDashboardWS();
+  const [toast, setToast] = useState<{ title: string; message: string } | null>(null);
 
   // Invitation token from URL
   const [invitationToken, setInvitationToken] = useState<string | null>(null);
@@ -126,7 +128,6 @@ function App() {
     }
   }, [auth.token]);
 
-  // Queue of pending permission requests from claude
   const [pendingPermissions, setPendingPermissions] = useState<Envelope[]>([]);
 
   // Permission mode: 'auto' (auto-approve) or 'restricted' (require user input)
@@ -215,6 +216,19 @@ function App() {
       setWorkspaceKey((k) => k + 1);
     } catch {}
   }, []);
+
+  // Auto-refresh workspaces on WebSocket resource_change signal
+  useResourceSync("workspaces", handleWorkspaceChange);
+
+  // In-app notification toast from WebSocket
+  useEffect(() => {
+    if (!auth.token) return;
+    const unsub = subscribeNotification((n) => {
+      setToast(n);
+      setTimeout(() => setToast(null), 5000);
+    });
+    return unsub;
+  }, [auth.token, subscribeNotification]);
 
   const handleCreateWorkspace = useCallback(async () => {
     if (!newWsName.trim()) return;
@@ -916,6 +930,29 @@ function App() {
             </button>
           </div>
         </div>
+      </div>
+    )}
+
+    {/* In-app notification toast */}
+    {toast && (
+      <div
+        onClick={() => setToast(null)}
+        style={{
+          position: 'fixed',
+          top: '20px',
+          right: '20px',
+          zIndex: 10000,
+          background: '#323232',
+          color: '#fff',
+          padding: '14px 20px',
+          borderRadius: '10px',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
+          maxWidth: '400px',
+          cursor: 'pointer',
+        }}
+      >
+        <div style={{ fontWeight: 600, fontSize: '0.9em', marginBottom: '4px' }}>{toast.title}</div>
+        <div style={{ fontSize: '0.82em', opacity: 0.9 }}>{toast.message}</div>
       </div>
     )}
     </WorkspaceContext.Provider>

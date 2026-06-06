@@ -13,6 +13,7 @@ interface WsMessage {
 }
 
 type ResourceChangeCallback = (resource: string) => void;
+type NotificationCallback = (notification: { type: string; title: string; message: string }) => void;
 
 export function useDashboardWS() {
   const [state, setState] = useState<DashboardState>({
@@ -24,10 +25,16 @@ export function useDashboardWS() {
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>();
   const shouldReconnect = useRef(true);
   const resourceListeners = useRef<Set<ResourceChangeCallback>>(new Set());
+  const notificationListeners = useRef<Set<NotificationCallback>>(new Set());
 
   const subscribeResource = useCallback((cb: ResourceChangeCallback) => {
     resourceListeners.current.add(cb);
     return () => { resourceListeners.current.delete(cb); };
+  }, []);
+
+  const subscribeNotification = useCallback((cb: NotificationCallback) => {
+    notificationListeners.current.add(cb);
+    return () => { notificationListeners.current.delete(cb); };
   }, []);
 
   const connect = useCallback(() => {
@@ -135,6 +142,14 @@ export function useDashboardWS() {
             }
             break;
           }
+
+          case 'notification': {
+            const p = msg.payload as { type: string; title: string; message: string };
+            if (p.type) {
+              notificationListeners.current.forEach((cb) => cb(p));
+            }
+            break;
+          }
         }
       } catch (e) {
         console.warn('[DashboardWS] Failed to parse message:', e);
@@ -169,5 +184,5 @@ export function useDashboardWS() {
     };
   }, [connect]);
 
-  return { ...state, subscribeResource };
+  return { ...state, subscribeResource, subscribeNotification };
 }

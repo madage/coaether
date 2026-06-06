@@ -301,6 +301,37 @@ func (h *DashboardHub) SignalUser(userID string, resource string) {
 	}
 }
 
+// SendNotification sends a notification message to a specific user's dashboard connections.
+// The notification appears as a visible popup/toast in the UI.
+func (h *DashboardHub) SendNotification(userID string, notifType string, title, message string) {
+	data, err := json.Marshal(wsMessage{Type: "notification", Payload: mustJSON(map[string]string{
+		"type":    notifType,
+		"title":   title,
+		"message": message,
+	})})
+	if err != nil {
+		return
+	}
+
+	h.Mu.RLock()
+	connIDs := h.UserConns[userID]
+	h.Mu.RUnlock()
+
+	for connID := range connIDs {
+		h.Mu.RLock()
+		dc := h.Dashboards[connID]
+		h.Mu.RUnlock()
+		if dc == nil {
+			continue
+		}
+		dc.Mu.Lock()
+		if err := dc.Conn.WriteMessage(websocket.TextMessage, data); err != nil {
+			log.Printf("[Dashboard] SendNotification write error (%s): %v", connID, err)
+		}
+		dc.Mu.Unlock()
+	}
+}
+
 // wsMessage is the wire format for dashboard WebSocket messages.
 type wsMessage struct {
 	Type    string          `json:"type"`

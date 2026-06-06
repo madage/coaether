@@ -294,8 +294,14 @@ func (h *WorkspaceHandler) Delete(c *gin.Context) {
 		return
 	}
 
+	// Get caller username for notification
+	var callerName string
+	h.DB.QueryRow("SELECT username FROM users WHERE id = $1", userID).Scan(&callerName)
+
 	if h.Hub != nil {
 		for _, mid := range memberIDs {
+			h.Hub.SendNotification(mid, "workspace_deleted", "工作区已删除",
+				fmt.Sprintf("工作区「%s」已被 %s 删除", wsName, callerName))
 			h.Hub.SignalUser(mid, "workspaces")
 		}
 		h.Hub.SignalChange("tasks")
@@ -523,7 +529,15 @@ func (h *WorkspaceHandler) RemoveMember(c *gin.Context) {
 		return
 	}
 
+	// Get workspace name and caller name for notification
+	var wsName string
+	h.DB.QueryRow("SELECT name FROM workspaces WHERE id = $1", wsID).Scan(&wsName)
+	var callerUsername string
+	h.DB.QueryRow("SELECT username FROM users WHERE id = $1", userID).Scan(&callerUsername)
+
 	if h.Hub != nil {
+		h.Hub.SendNotification(targetUserID, "workspace_removed", "工作区移除通知",
+			fmt.Sprintf("你已被 %s 移出工作区「%s」", callerUsername, wsName))
 		h.Hub.SignalUser(targetUserID, "workspaces")
 		h.Hub.SignalChange("workspaces")
 	}
