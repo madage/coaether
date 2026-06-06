@@ -256,20 +256,13 @@ func main() {
 	}
 
 	nodeToken := os.Getenv("NODE_TOKEN")
-
-	nodeID := os.Getenv("NODE_ID")
-	if nodeID == "" {
-		if nodeToken != "" {
-			// Derive deterministic node ID from token (matches server-side HashToken)
-			h := sha256.Sum256([]byte(nodeToken))
-			nodeID = "tok-" + hex.EncodeToString(h[:8])
-		} else {
-			nodeID = "runtime-" + os.Getenv("HOSTNAME")
-			if nodeID == "runtime-" {
-				nodeID = "runtime-default"
-			}
-		}
+	if nodeToken == "" {
+		log.Fatal("[Runtime] NODE_TOKEN is required. Generate a token via the Superco Web UI (Nodes -> Add Node).")
 	}
+
+	// Derive deterministic node ID from token (matches server-side HashToken)
+	h := sha256.Sum256([]byte(nodeToken))
+	nodeID := "tok-" + hex.EncodeToString(h[:8])
 
 	name := os.Getenv("RUNTIME_NAME")
 	if name == "" {

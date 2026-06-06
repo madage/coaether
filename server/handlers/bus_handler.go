@@ -109,50 +109,42 @@ func (h *BusHandler) HandleWS(c *gin.Context) {
 
 	case "runtime":
 		token := c.Query("token")
-		nodeID := c.Query("node_id")
-
-		if token != "" {
-			// Scheme B: Token-based authentication via node_join_tokens
-			var nodeName, status string
-			var expiresAt time.Time
-			err := h.DB.QueryRow(
-				`SELECT user_id, node_name, status, expires_at FROM node_join_tokens WHERE token = $1`,
-				token,
-			).Scan(&tokenUserID, &nodeName, &status, &expiresAt)
-			if err != nil {
-				conn.Close()
-				log.Printf("[Bus] Token lookup failed: %v", err)
-				return
-			}
-			if status != "pending" {
-				conn.Close()
-				log.Printf("[Bus] Token already %s", status)
-				return
-			}
-			if time.Now().After(expiresAt) {
-				h.DB.Exec(`UPDATE node_join_tokens SET status = 'expired' WHERE token = $1`, token)
-				conn.Close()
-				log.Printf("[Bus] Token expired")
-				return
-			}
-			// Mark as used
-			h.DB.Exec(`UPDATE node_join_tokens SET status = 'used', used_at = NOW() WHERE token = $1`, token)
-
-			nodeID = HashToken(token)
-			endpointID = "runtime://" + nodeID
-			metadata["node_id"] = nodeID
-			metadata["user_id"] = tokenUserID
-			metadata["node_name"] = nodeName
-		} else {
-			// Scheme A: Direct node_id (backward compatible)
-			if nodeID == "" {
-				conn.Close()
-				c.JSON(http.StatusBadRequest, gin.H{"error": "missing node_id or token"})
-				return
-			}
-			endpointID = "runtime://" + nodeID
-			metadata["node_id"] = nodeID
+		if token == "" {
+			conn.Close()
+			c.JSON(http.StatusBadRequest, gin.H{"error": "missing token"})
+			return
 		}
+
+		var nodeName, status string
+		var expiresAt time.Time
+		err := h.DB.QueryRow(
+			`SELECT user_id, node_name, status, expires_at FROM node_join_tokens WHERE token = $1`,
+			token,
+		).Scan(&tokenUserID, &nodeName, &status, &expiresAt)
+		if err != nil {
+			conn.Close()
+			log.Printf("[Bus] Token lookup failed: %v", err)
+			return
+		}
+		if status != "pending" {
+			conn.Close()
+			log.Printf("[Bus] Token already %s", status)
+			return
+		}
+		if time.Now().After(expiresAt) {
+			h.DB.Exec(`UPDATE node_join_tokens SET status = 'expired' WHERE token = $1`, token)
+			conn.Close()
+			log.Printf("[Bus] Token expired")
+			return
+		}
+		// Mark as used
+		h.DB.Exec(`UPDATE node_join_tokens SET status = 'used', used_at = NOW() WHERE token = $1`, token)
+
+		nodeID := HashToken(token)
+		endpointID = "runtime://" + nodeID
+		metadata["node_id"] = nodeID
+		metadata["user_id"] = tokenUserID
+		metadata["node_name"] = nodeName
 
 	default:
 		conn.Close()
@@ -166,23 +158,12 @@ func (h *BusHandler) HandleWS(c *gin.Context) {
 	// Upsert bus node in DB and broadcast to dashboards
 	if epType == "runtime" && h.Hub != nil {
 		sanID := "bus-" + strings.ReplaceAll(endpointID, "://", "--")
-			if tokenUserID != "" {
-				// Scheme B: use actual user_id from token
 				h.Hub.DB.Exec(
 					`INSERT INTO nodes (id, user_id, name, os, status, version, ip, max_sessions, last_seen, created_at)
 					 VALUES ($1, $2, $3, $4, 'online', $5, $6, $7, NOW(), NOW())
 					 ON CONFLICT (id) DO UPDATE SET status = 'online', last_seen = NOW()`,
 					sanID, tokenUserID, "Runtime: "+endpointID, "unknown", "0.1.0", "bus", 3,
 				)
-			} else {
-				// Scheme A: fallback to first user
-				h.Hub.DB.Exec(
-					`INSERT INTO nodes (id, user_id, name, os, status, version, ip, max_sessions, last_seen, created_at)
-					 VALUES ($1, (SELECT id FROM users ORDER BY created_at ASC LIMIT 1), $2, $3, 'online', $4, $5, $6, NOW(), NOW())
-					 ON CONFLICT (id) DO UPDATE SET status = 'online', last_seen = NOW()`,
-					sanID, "Runtime: "+endpointID, "unknown", "0.1.0", "bus", 3,
-				)
-			}
 		h.Hub.BroadcastToDashboards("node_status", map[string]interface{}{
 			"node_id": sanID,
 			"name":    endpointID,
