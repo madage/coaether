@@ -12,6 +12,8 @@ interface WsMessage {
   payload: Record<string, unknown>;
 }
 
+type ResourceChangeCallback = (resource: string) => void;
+
 export function useDashboardWS() {
   const [state, setState] = useState<DashboardState>({
     nodes: [],
@@ -21,6 +23,12 @@ export function useDashboardWS() {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>();
   const shouldReconnect = useRef(true);
+  const resourceListeners = useRef<Set<ResourceChangeCallback>>(new Set());
+
+  const subscribeResource = useCallback((cb: ResourceChangeCallback) => {
+    resourceListeners.current.add(cb);
+    return () => { resourceListeners.current.delete(cb); };
+  }, []);
 
   const connect = useCallback(() => {
     const token = localStorage.getItem('token');
@@ -58,7 +66,6 @@ export function useDashboardWS() {
             setState((prev) => {
               const exists = prev.nodes.find((n) => n.id === p.node_id);
               if (!exists) {
-                // Only add new nodes that are actually online — ignore stale offline status
                 if (p.status !== 'online') return prev;
                 const newNode: Node = {
                   id: p.node_id,
@@ -96,7 +103,6 @@ export function useDashboardWS() {
             setState((prev) => {
               const exists = prev.sessions.find((s) => s.id === p.id);
               if (exists) {
-                // Update existing session
                 return {
                   ...prev,
                   sessions: prev.sessions.map((s) =>
@@ -104,7 +110,6 @@ export function useDashboardWS() {
                   ),
                 };
               }
-              // New session — prepend (prompt/workspace/node_id only available on create)
               const newSession: Session = {
                 id: p.id,
                 user_id: '',
@@ -120,6 +125,14 @@ export function useDashboardWS() {
                 sessions: [newSession, ...prev.sessions],
               };
             });
+            break;
+          }
+
+          case 'resource_change': {
+            const p = msg.payload as { resource: string };
+            if (p.resource) {
+              resourceListeners.current.forEach((cb) => cb(p.resource));
+            }
             break;
           }
         }
@@ -156,5 +169,5 @@ export function useDashboardWS() {
     };
   }, [connect]);
 
-  return state;
+  return { ...state, subscribeResource };
 }

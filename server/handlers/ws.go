@@ -252,6 +252,14 @@ func (h *DashboardHub) BroadcastSessionUpdate(sessionID string, status interface
 	})
 }
 
+// SignalChange broadcasts a lightweight "resource changed" signal to all dashboard clients.
+// Components use this to know when to refetch data.
+func (h *DashboardHub) SignalChange(resource string) {
+	h.BroadcastToDashboards("resource_change", map[string]string{
+		"resource": resource,
+	})
+}
+
 // wsMessage is the wire format for dashboard WebSocket messages.
 type wsMessage struct {
 	Type    string          `json:"type"`

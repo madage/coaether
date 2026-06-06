@@ -38,6 +38,8 @@ func main() {
 	dashHub := handlers.NewDashboardHub(database.DB, cfg.JWTSecret, messageBus)
 	sessionH := handlers.NewSessionHandler(database.DB, messageBus)
 	profileH := handlers.NewAgentProfileHandler(database.DB)
+	taskH := handlers.NewTaskHandler(database.DB)
+	taskH.Hub = dashHub
 	busH.Hub = dashHub // link for dashboard broadcasting
 
 	// Router
@@ -88,6 +90,16 @@ func main() {
 			api.PUT("/agents/profiles/:id", profileH.Update)
 			api.DELETE("/agents/profiles/:id", profileH.Delete)
 			api.GET("/agents/runtimes", profileH.ListRuntimes)
+		// Tasks
+		api.GET("/tasks", taskH.List)
+		api.POST("/tasks", taskH.Create)
+		api.GET("/tasks/trash", taskH.ListTrash)
+		api.GET("/tasks/:id", taskH.Get)
+		api.PUT("/tasks/:id", taskH.Update)
+		api.DELETE("/tasks/:id", taskH.Delete)
+		api.DELETE("/tasks/:id/force", taskH.PermanentDelete)
+		api.POST("/tasks/:id/restore", taskH.Restore)
+		api.PATCH("/tasks/:id/status", taskH.SetStatus)
 
 		api.POST("/sessions", sessionH.Create)
 		api.GET("/sessions", sessionH.List)
@@ -96,13 +108,13 @@ func main() {
 			sessionID := c.Param("id")
 			store := messageBus.GetStore()
 			if store == nil {
-				c.JSON(500, gin.H{"error": "message store not available"})
-				return
+		c.JSON(500, gin.H{"error": "message store not available"})
+		return
 			}
 			envelopes, err := store.GetBySession(sessionID, 200)
 			if err != nil {
-				c.JSON(500, gin.H{"error": "failed to fetch messages"})
-				return
+		c.JSON(500, gin.H{"error": "failed to fetch messages"})
+		return
 			}
 			c.JSON(200, gin.H{"messages": envelopes})
 		})

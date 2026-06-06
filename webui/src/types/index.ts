@@ -75,6 +75,30 @@ export interface CreateSessionReq {
   agent_id: string;
 }
 
+// === Task Types ===
+export type TaskStatus = 'todo' | 'in_progress' | 'blocked' | 'done' | 'review';
+
+export interface Task {
+  id: string;
+  user_id: string;
+  title: string;
+  description: string;
+  status: TaskStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateTaskReq {
+  title: string;
+  description?: string;
+}
+
+export interface UpdateTaskReq {
+  title?: string;
+  description?: string;
+  status?: TaskStatus;
+}
+
 // === Auth Types ===
 export interface AuthState {
   token: string | null;

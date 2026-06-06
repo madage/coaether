@@ -71,9 +71,7 @@ export function AgentDetailModal({ profile, runtimeName, onClose, onSave, onDele
   };
 
   const handleDelete = () => {
-    if (window.confirm(t('confirmDelete'))) {
-      onDelete(profile.id);
-    }
+    onDelete(profile.id);
   };
 
   return (

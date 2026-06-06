@@ -1,4 +1,4 @@
-import type { Node, Session, CreateSessionReq, Agent, AgentProfile, RuntimeEntity } from '../types';
+import type { Node, Session, CreateSessionReq, Agent, AgentProfile, RuntimeEntity, Task, CreateTaskReq, UpdateTaskReq, TaskStatus } from '../types';
 
 const BASE = '/api';
 
@@ -115,4 +115,32 @@ export const sessions = {
 
   getMessages: (sessionID: string) =>
     request<{ messages: Record<string, unknown>[] }>(`/sessions/${sessionID}/messages`),
+};
+
+// Tasks
+export const tasks = {
+  list: () => request<{ tasks: Task[] }>('/tasks'),
+
+  get: (id: string) => request<Task>(`/tasks/${id}`),
+
+  create: (data: CreateTaskReq) =>
+    request<Task>('/tasks', { method: 'POST', body: JSON.stringify(data) }),
+
+  update: (id: string, data: UpdateTaskReq) =>
+    request<Task>(`/tasks/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+
+  delete: (id: string) =>
+    request<{ status: string }>(`/tasks/${id}`, { method: 'DELETE' }),
+
+  setStatus: (id: string, status: TaskStatus) =>
+    request<Task>(`/tasks/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+
+  // Trash
+  listTrash: () => request<{ tasks: Task[] }>('/tasks/trash'),
+
+  permanentDelete: (id: string) =>
+    request<{ status: string }>(`/tasks/${id}/force`, { method: 'DELETE' }),
+
+  restore: (id: string) =>
+    request<{ status: string }>(`/tasks/${id}/restore`, { method: 'POST' }),
 };

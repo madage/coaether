@@ -2,6 +2,8 @@ import { useState, useCallback, useRef } from 'react';
 import { useMessageBus, type Envelope, type ContentBlock } from './hooks/useMessageBus';
 import { NodeList } from './components/NodeList';
 import { AgentList } from './components/AgentList';
+import { TaskBoard } from './components/TaskBoard';
+import { TrashView } from './components/TrashView';
 import { FloatingChat } from './components/FloatingChat';
 import { LangSwitcher } from './components/LangSwitcher';
 import { useDashboardWS } from './hooks/useDashboardWS';
@@ -9,7 +11,7 @@ import { useLang } from './i18n/context';
 import { auth as authApi } from './api/client';
 import type { Node, Session, AuthState } from './types';
 
-type Page = 'nodes' | 'agents';
+type Page = 'nodes' | 'tasks' | 'agents' | 'trash';
 
 function App() {
   const { t, lang } = useLang();
@@ -232,7 +234,7 @@ function App() {
         </div>
 
         <nav style={{ display: 'flex', flexDirection: 'column', padding: '8px' }}>
-          {(['nodes', 'agents'] as Page[]).map((p) => (
+          {(['nodes', 'tasks', 'agents'] as Page[]).map((p) => (
             <button
               key={p}
               onClick={() => setPage(p)}
@@ -248,9 +250,26 @@ function App() {
                 marginBottom: '2px',
               }}
             >
-              {p === 'nodes' ? `📡 ${t('navNodes')}` : `🤖 ${t('agents')}`}
+              {p === 'nodes' ? `📡 ${t('navNodes')}` : p === 'tasks' ? `📋 ${t('navTasks')}` : `🤖 ${t('agents')}`}
             </button>
           ))}
+          {/* Trash */}
+          <button
+            onClick={() => setPage('trash')}
+            style={{
+              padding: '12px 16px',
+              textAlign: 'left',
+              background: page === 'trash' ? 'rgba(255,255,255,0.1)' : 'transparent',
+              color: '#999',
+              border: 'none',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontSize: '0.85em',
+              marginTop: 'auto',
+            }}
+          >
+            🗑 {t('navTrash')}
+          </button>
         </nav>
 
         {/* Connection status */}
@@ -310,6 +329,16 @@ function App() {
         <div style={{ display: page === 'agents' ? 'block' : 'none', height: '100%', overflow: 'auto' }}>
           <h2 style={{ padding: '24px 24px 0' }}>{t('agents')}</h2>
           <AgentList />
+        </div>
+
+        {/* Tasks page */}
+        <div style={{ display: page === 'tasks' ? 'block' : 'none', height: '100%', overflow: 'auto' }}>
+          <TaskBoard />
+        </div>
+
+        {/* Trash page */}
+        <div style={{ display: page === 'trash' ? 'block' : 'none', height: '100%', overflow: 'auto' }}>
+          <TrashView />
         </div>
 
         <FloatingChat
