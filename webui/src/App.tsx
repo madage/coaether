@@ -613,7 +613,7 @@ function App() {
           <TrashView key={workspaceKey} />
         </div>
 
-        <FloatingChat
+        <FloatingChat key={workspaceKey}
           messages={bus.messages}
           sessionID={bus.sessionID}
           sessionActive={bus.sessionActive}

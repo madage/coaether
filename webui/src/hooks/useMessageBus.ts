@@ -70,6 +70,15 @@ export function useMessageBus({ userID, workspaceID, onMessage }: UseMessageBusO
   const [sessionActive, setSessionActive] = useState(false); // confirmed active on bus
   const pendingRef = useRef<Array<{ resolve: (id: string) => void }>>([]);
 
+  // Reset session when workspace changes
+  useEffect(() => {
+    localStorage.removeItem(LS_ACTIVE_SESSION);
+    setSessionID(null);
+    setMessages([]);
+    setSessionEnded(false);
+    setSessionActive(false);
+  }, [workspaceID]);
+
   // Get or create a unique connection ID
   const getConnID = useCallback(() => {
     if (!connIDRef.current) {
