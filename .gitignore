@@ -54,6 +54,9 @@ Thumbs.db
 credentials.json
 service-account.json
 
+# === Prompts ===
+prompt.md
+
 # === Docs ===
 doc/
 docs/
