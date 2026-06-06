@@ -129,12 +129,12 @@
 - 邀请变更实时同步
 
 ### 远程节点管理
-- Token 式节点注册（Scheme B），支持 Mac 和 Windows 节点
-- macOS: 自动生成 bash 安装脚本，创建 LaunchAgent 实现开机自启
-- Windows: 自动生成 PowerShell 安装脚本，创建 Startup 文件夹启动项实现开机自启
-- 节点卡片：状态指示（在线/离线/忙碌）、扫描 Agent、启停 Agent、删除节点
+- **Token 式节点注册**（唯一方式）：通过 Web UI 生成 token，在目标机器执行安装脚本即可注册
+- 跨平台支持：**macOS**（bash 安装脚本 + LaunchAgent 开机自启）和 **Windows**（PowerShell 安装脚本 + Startup 文件夹自启）
+- 节点卡片管理：状态指示（在线/离线/忙碌）、扫描 Agent、启停 Agent、**删除节点**
+- 平台选择界面：添加节点对话框支持 macOS/Windows 选项卡，自动显示对应安装命令
 - 跨平台二进制分发：自动下载对应 OS/Arch 的 agent-runtime
-- 节点加入 token 机制：15 分钟有效期，防止未授权注册
+- 节点加入 token 机制：15 分钟有效期，防止未授权注册，使用后自动标记
 - 节点列表通过 WebSocket 实时同步状态
 
 ### 多语言
@@ -412,12 +412,14 @@ powershell -c "iex ((Invoke-WebRequest -Uri 'http://<server>:8088/api/nodes/inst
 
 ### Agent Runtime (agent-runtime/.env)
 
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| `BUS_URL` | Message Bus WebSocket 地址 | `ws://localhost:8088/ws/bus` |
-| `AGENT_BACKEND` | AI 后端模式 (`cli` / `api`) | `cli` |
-| `API_KEY` | API 模式时的密钥 | - |
-| `API_MODEL` | API 模式时的模型名 | `claude-sonnet-4-6` |
+| 变量 | 说明 | 默认值 | 必填 |
+|------|------|--------|------|
+| `SERVER_URL` | 服务端地址 | `localhost:8088` | 否 |
+| `NODE_TOKEN` | 节点注册 token | - | **是** |
+| `RUNTIME_NAME` | 节点显示名称 | 主机名 | 否 |
+| `AGENT_BACKEND` | AI 后端模式 (`cli` / `api`) | `cli` | 否 |
+| `API_KEY` | API 模式时的密钥 | - | 否 |
+| `API_MODEL` | API 模式时的模型名 | `claude-sonnet-4-6` | 否 |
 
 ---
 
@@ -484,10 +486,18 @@ superco/
 │   │   ├── claude_cli.go     # Claude CLI 模式（stream-json，首选）
 │   │   ├── claude.go         # Claude API 模式（ANTHROPIC_API_KEY）
 │   │   └── echo.go           # 测试用 Echo 后端（fallback）
-│   └── bin/                  # 预编译跨平台二进制
+│   └── bin/                  # 本地编译输出
 │       ├── darwin-arm64/
-│       ├── darwin-amd64/
-│       └── windows-amd64/
+│       └── darwin-amd64/
+│
+├── server/
+│   └── bin/
+│       ├── myai-server*      # 服务端二进制
+│       ├── myai-server.exe   # Windows 服务端二进制
+│       └── agents/           # 节点分发二进制
+│           ├── darwin-arm64/agent-runtime
+│           ├── darwin-amd64/agent-runtime
+│           └── windows-amd64/agent-runtime.exe
 │
 └── README.md
 ```

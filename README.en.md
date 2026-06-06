@@ -128,6 +128,15 @@ The system uses a **dual WebSocket channel** architecture:
 - Dashboard auto-refresh (`useResourceSync` hook)
 - Real-time invitation change sync
 
+### Remote Node Management
+- **Token-based node registration** (sole approach): generate a token via Web UI, run the install script on target machine
+- Cross-platform: **macOS** (bash install script + LaunchAgent auto-start) and **Windows** (PowerShell install script + Startup folder auto-start)
+- Node card management: status indicator (online/offline/busy), scan Agents, enable/disable Agents, **delete node**
+- Platform selection UI: Add Node dialog with macOS/Windows tabs, auto-displays correct install command
+- Cross-platform binary distribution: auto-downloads agent-runtime for the target OS/Arch
+- Join token mechanism: 15-minute expiry, auto-marked as used, prevents unauthorized registration
+- Real-time status sync via WebSocket
+
 ### Multi-Language
 - Chinese / English bilingual UI
 - Toggle via `useLang()` hook
@@ -205,7 +214,7 @@ All communication uses JSON `Envelope` format:
 | Endpoint Type | Format | Example |
 |---------------|--------|---------|
 | UI Frontend | `ui://{userID}/{connID}` | `ui://u001/cabc123` |
-| Agent Runtime | `runtime://{nodeID}/{instance}` | `runtime://node-001/main` |
+| Agent Runtime | `runtime://{nodeID}/{instance}` | `runtime://tok-abc123/main` |
 | System | `system://{service}` | `system://bus`, `system://api` |
 | Session | `session://{sessionID}` | `session://abc-123-def` |
 
@@ -294,6 +303,20 @@ All communication uses JSON `Envelope` format:
 - `DELETE /api/projects/:id/force` — Permanent delete
 - `POST /api/projects/:id/restore` — Restore
 
+### Node Management
+- `POST /api/nodes/token` — Generate node join token
+- `GET /api/nodes/install.sh?token=` — Bash install script (macOS/Linux)
+- `GET /api/nodes/install.ps1?token=` — PowerShell install script (Windows)
+- `GET /api/nodes/bin/:os/:arch` — Download prebuilt agent-runtime binary
+- `POST /api/nodes/register` — Node registration
+- `POST /api/nodes/heartbeat` — Node heartbeat
+- `GET /api/nodes` — Node list
+- `GET /api/nodes/:id` — Node detail
+- `GET /api/nodes/:id/agents` — Node Agent list
+- `POST /api/nodes/:id/scan` — Scan node Agents
+- `PATCH /api/agents/:id` — Enable/disable Agent
+- `DELETE /api/nodes/:id` — Remove node
+
 ### WebSocket
 - `GET /ws/dashboard?token={jwt}` — Dashboard real-time notifications
 - `GET /ws/bus?type=ui&user_id={id}` — Message Bus routing
@@ -345,16 +368,27 @@ npm run dev
 # Open http://localhost:5173
 ```
 
-### 6. Start Agent Runtime
+### 6. Add Remote Node
 
+In the Web UI, go to Nodes page and click **Add Node**, enter a node name to generate an install command, then run it on the target machine (Mac/Windows):
+
+**macOS:**
 ```bash
-cd agent-runtime
-go build -o agent-runtime .
-./agent-runtime
-# Auto-connects to ws://localhost:8088/ws/bus
+curl -s 'http://<server>:8088/api/nodes/install.sh?token=TOKEN' | bash
 ```
 
-> The Agent Runtime requires an AI backend configuration. It defaults to Claude CLI (requires `claude` command in PATH), but can be switched to API mode via environment variables.
+**Windows (PowerShell):**
+```powershell
+powershell -c "iex ((Invoke-WebRequest -Uri 'http://<server>:8088/api/nodes/install.ps1?token=TOKEN').Content)"
+```
+
+The install script will automatically:
+- Download the agent-runtime binary for the target OS/Arch
+- Install Claude Code CLI (if not already installed and npm is available)
+- Create auto-start service (LaunchAgent on macOS / Startup folder on Windows)
+- Start agent-runtime and connect to Message Bus
+
+> Agent Runtime backend registration priority: Claude CLI → Claude API (ANTHROPIC_API_KEY) → Echo (fallback)
 
 ---
 
@@ -378,12 +412,14 @@ go build -o agent-runtime .
 
 ### Agent Runtime (agent-runtime/.env)
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `BUS_URL` | Message Bus WebSocket URL | `ws://localhost:8088/ws/bus` |
-| `AGENT_BACKEND` | AI backend mode (`cli` / `api`) | `cli` |
-| `API_KEY` | API key (for api mode) | - |
-| `API_MODEL` | Model name (for api mode) | `claude-sonnet-4-6` |
+| Variable | Description | Default | Required |
+|----------|-------------|---------|----------|
+| `SERVER_URL` | Server address | `localhost:8088` | No |
+| `NODE_TOKEN` | Node registration token | - | **Yes** |
+| `RUNTIME_NAME` | Node display name | hostname | No |
+| `AGENT_BACKEND` | AI backend mode (`cli` / `api`) | `cli` | No |
+| `API_KEY` | API key (for api mode) | - | No |
+| `API_MODEL` | Model name (for api mode) | `claude-sonnet-4-6` | No |
 
 ---
 
@@ -422,33 +458,61 @@ superco/
 ├── webui/                    # React frontend
 │   ├── src/
 │   │   ├── App.tsx           # Main app: routing, auth, layout
-│   │   ├── api/client.ts     # HTTP API client
-│   │   ├── components/       # Components
+│   │   ├── api/client.ts     # HTTP API client│   │   ├── components/       # Components
 │   │   │   ├── FloatingChat.tsx    # Floating chat window
 │   │   │   ├── MessageStream.tsx   # Message stream (rich text)
 │   │   │   ├── InputArea.tsx       # Message input area
+│   │   │   ├── AddNodeDialog.tsx   # Add node dialog (platform tabs / copy cmd)
+│   │   │   ├── NodeList.tsx        # Node card list (status / Agent / delete)
 │   │   │   ├── TaskBoard.tsx       # Task kanban board
 │   │   │   ├── ProjectList.tsx     # Project list
 │   │   │   ├── NotificationBell.tsx # Notification bell
 │   │   │   ├── AgentList.tsx       # Agent list
 │   │   │   ├── Sidebar.tsx         # Sidebar
-│   │   │   └── LoginForm.tsx       # Login form
+│   │   │   ├── LoginForm.tsx       # Login form
+│   │   │   ├── TaskForm.tsx        # Task create/edit form
+│   │   │   ├── TaskCard.tsx        # Task card
+│   │   │   ├── ProjectForm.tsx     # Project form
+│   │   │   ├── ProjectCard.tsx     # Project card
+│   │   │   ├── ProjectDetail.tsx   # Project detail
+│   │   │   ├── TrashView.tsx       # Trash (tasks & projects)
+│   │   │   ├── WorkspaceMembers.tsx # Workspace member management
+│   │   │   ├── PermissionDialog.tsx # Tool use permission dialog
+│   │   │   ├── SessionList.tsx     # Session list
+│   │   │   ├── AgentCard.tsx       # Agent card
+│   │   │   ├── AgentCreateCard.tsx # Create agent card
+│   │   │   ├── AgentDetailModal.tsx # Agent detail modal
+│   │   │   ├── AgentForm.tsx       # Agent config form
+│   │   │   ├── LangSwitcher.tsx    # Language switcher
+│   │   │   ├── CreateSession.tsx   # Create session
+│   │   │   └── Terminal.tsx        # Terminal component
+
 │   │   ├── hooks/            # React Hooks
 │   │   │   ├── useMessageBus.ts    # Message Bus WebSocket hook
 │   │   │   ├── useDashboardWS.ts   # Dashboard WebSocket hook
 │   │   │   ├── useResourceSync.ts  # Resource auto-sync
-│   │   │   └── useLang.ts          # Internationalization
 │   │   ├── i18n/             # i18n language packs
 │   │   └── types/            # TypeScript type definitions
 │   └── vite.config.ts
 │
 ├── agent-runtime/            # AI Agent runtime
-│   ├── main.go               # Entry point
-│   ├── bus_client.go         # Message Bus client
-│   ├── session.go            # Session management
-│   └── backends/             # AI backend adapters
-│       ├── cli.go            # Claude CLI mode
-│       └── api.go            # API mode
+│   ├── runtime.go            # Entry: connect Message Bus, register backends
+│   ├── backends/             # AI backend adapters
+│   │   ├── claude_cli.go     # Claude CLI mode (stream-json, preferred)
+│   │   ├── claude.go         # Claude API mode (ANTHROPIC_API_KEY)
+│   │   └── echo.go           # Echo backend for testing (fallback)
+│   └── bin/                  # Local build output
+│       ├── darwin-arm64/
+│       └── darwin-amd64/
+│
+├── server/
+│   └── bin/
+│       ├── myai-server*      # Server binary
+│       ├── myai-server.exe   # Windows server binary
+│       └── agents/           # Node distribution binaries
+│           ├── darwin-arm64/agent-runtime
+│           ├── darwin-amd64/agent-runtime
+│           └── windows-amd64/agent-runtime.exe
 │
 └── README.md
 ```
