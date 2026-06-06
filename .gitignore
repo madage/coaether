@@ -89,3 +89,6 @@ dev-debug.log
 # tasks.json
 # tasks/ 
 .codragraph
+
+# Session workspaces
+agent-runtime/workspaces/

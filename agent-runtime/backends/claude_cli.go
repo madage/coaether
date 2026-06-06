@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -141,6 +143,14 @@ func (b *ClaudeCLIBackend) startSession(sessionID string) *claudeSession {
 	}
 
 	cmd := exec.CommandContext(ctx, b.command, args...)
+
+	// Set session-specific workspace directory
+	wsDir := filepath.Join("workspaces", sessionID)
+	if err := os.MkdirAll(wsDir, 0755); err != nil {
+		log.Printf("[ClaudeCLI] Failed to create workspace %s: %v", wsDir, err)
+	} else {
+		cmd.Dir = wsDir
+	}
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
