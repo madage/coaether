@@ -1,11 +1,15 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"log"
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -20,6 +24,7 @@ type Runtime struct {
 	ServerURL string
 	NodeID    string
 	Name      string
+	Token     string
 
 	conn      *websocket.Conn
 	connMu    sync.Mutex
@@ -28,11 +33,12 @@ type Runtime struct {
 }
 
 // NewRuntime creates a new Runtime.
-func NewRuntime(serverURL, nodeID, name string) *Runtime {
+func NewRuntime(serverURL, nodeID, name, token string) *Runtime {
 	return &Runtime{
 		ServerURL: serverURL,
 		NodeID:    nodeID,
 		Name:      name,
+		Token:     token,
 		backends:  make(map[string]Backend),
 		endpoint:  "runtime://" + nodeID,
 	}
@@ -46,14 +52,18 @@ func (r *Runtime) RegisterBackend(agentID string, backend Backend) {
 
 // Run connects to the Message Bus and starts the message loop.
 func (r *Runtime) Run() error {
+	q := url.Values{
+		"type":    {"runtime"},
+		"node_id": {r.NodeID},
+	}
+	if r.Token != "" {
+		q.Set("token", r.Token)
+	}
 	u := url.URL{
-		Scheme: "ws",
-		Host:   r.ServerURL,
-		Path:   "/ws/bus",
-		RawQuery: url.Values{
-			"type":    {"runtime"},
-			"node_id": {r.NodeID},
-		}.Encode(),
+		Scheme:   "ws",
+		Host:     r.ServerURL,
+		Path:     "/ws/bus",
+		RawQuery: q.Encode(),
 	}
 
 	conn, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
@@ -208,17 +218,56 @@ type Backend interface {
 	HandleMessage(env *protocol.Envelope) (*protocol.Envelope, error)
 }
 
+// loadConfig reads ~/.superco/env and sets env vars if not already set.
+func loadConfig() {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	data, err := os.ReadFile(filepath.Join(homeDir, ".superco", "env"))
+	if err != nil {
+		return // config file doesn't exist, use env vars or defaults
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(parts[0])
+		val := strings.TrimSpace(parts[1])
+		if os.Getenv(key) != "" {
+			continue // don't override existing env vars
+		}
+		os.Setenv(key, val)
+	}
+}
+
 func main() {
+	// Load config from ~/.superco/env (set by install script)
+	loadConfig()
+
 	serverURL := os.Getenv("SERVER_URL")
 	if serverURL == "" {
 		serverURL = "localhost:8088"
 	}
 
+	nodeToken := os.Getenv("NODE_TOKEN")
+
 	nodeID := os.Getenv("NODE_ID")
 	if nodeID == "" {
-		nodeID = "runtime-" + os.Getenv("HOSTNAME")
-		if nodeID == "runtime-" {
-			nodeID = "runtime-default"
+		if nodeToken != "" {
+			// Derive deterministic node ID from token (matches server-side HashToken)
+			h := sha256.Sum256([]byte(nodeToken))
+			nodeID = "tok-" + hex.EncodeToString(h[:8])
+		} else {
+			nodeID = "runtime-" + os.Getenv("HOSTNAME")
+			if nodeID == "runtime-" {
+				nodeID = "runtime-default"
+			}
 		}
 	}
 
@@ -229,7 +278,7 @@ func main() {
 
 	log.Printf("[Runtime] Starting on node %s, connecting to %s", nodeID, serverURL)
 
-	rt := NewRuntime(serverURL, nodeID, name)
+	rt := NewRuntime(serverURL, nodeID, name, nodeToken)
 
 	// Register backends
 	// 1. Try Claude CLI (stream-json) — persistent, full tool support

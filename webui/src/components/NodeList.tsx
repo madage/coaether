@@ -13,6 +13,18 @@ export function NodeList({ nodes, onSelect }: NodeListProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [agentMap, setAgentMap] = useState<Record<string, Agent[]>>({});
   const [scanning, setScanning] = useState<string | null>(null);
+  const [removing, setRemoving] = useState<string | null>(null);
+
+  const handleRemove = useCallback(async (nodeID: string, nodeName: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!window.confirm(t('nodeRemoveConfirm'))) return;
+    setRemoving(nodeID);
+    try {
+      await nodesApi.remove(nodeID);
+    } catch {
+      setRemoving(null);
+    }
+  }, [t]);
 
   const statusLabel: Record<string, string> = {
     online: t('nodeOnline'),
@@ -115,23 +127,40 @@ export function NodeList({ nodes, onSelect }: NodeListProps) {
                     }} />
                     <div style={{ fontWeight: 600, color: '#1a1a2e', fontSize: '1em', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{node.name}</div>
                   </div>
-                  <button
-                    onClick={(e) => handleScan(node.id, e)}
-                    disabled={scanning === node.id}
-                    style={{
-                      padding: '3px 10px',
-                      background: scanning === node.id ? '#ccc' : '#1976d2',
-                      color: '#fff',
-                      border: 'none',
-                      borderRadius: '6px',
-                      cursor: scanning === node.id ? 'not-allowed' : 'pointer',
-                      fontSize: '0.75em',
-                      fontWeight: 500,
-                      flexShrink: 0,
-                    }}
-                  >
-                    {scanning === node.id ? t('scanning') : t('scanAgents')}
-                  </button>
+                  <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+                    <button
+                      onClick={(e) => handleScan(node.id, e)}
+                      disabled={scanning === node.id}
+                      style={{
+                        padding: '3px 10px',
+                        background: scanning === node.id ? '#ccc' : '#1976d2',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: '6px',
+                        cursor: scanning === node.id ? 'not-allowed' : 'pointer',
+                        fontSize: '0.75em',
+                        fontWeight: 500,
+                      }}
+                    >
+                      {scanning === node.id ? t('scanning') : t('scanAgents')}
+                    </button>
+                    <button
+                      onClick={(e) => handleRemove(node.id, node.name, e)}
+                      disabled={removing === node.id}
+                      style={{
+                        padding: '3px 10px',
+                        background: removing === node.id ? '#ccc' : '#fff',
+                        color: '#e53935',
+                        border: '1px solid #e53935',
+                        borderRadius: '6px',
+                        cursor: removing === node.id ? 'not-allowed' : 'pointer',
+                        fontSize: '0.75em',
+                        fontWeight: 500,
+                      }}
+                    >
+                      {removing === node.id ? '...' : t('nodeRemove')}
+                    </button>
+                  </div>
                 </div>
 
                 {/* Info rows: side by side */}

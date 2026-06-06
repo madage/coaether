@@ -41,3 +41,30 @@ type NodeHeartbeatReq struct {
 	NodeID string `json:"node_id" binding:"required"`
 	Status string `json:"status"`
 }
+
+// NodeJoinToken represents a one-time join token for remote node registration.
+type NodeJoinToken struct {
+	Token       string    `json:"token"`
+	UserID      string    `json:"user_id"`
+	WorkspaceID string    `json:"workspace_id"`
+	NodeName    string    `json:"node_name"`
+	Status      string    `json:"status"` // pending, used, expired
+	ExpiresAt   time.Time `json:"expires_at"`
+	CreatedAt   time.Time `json:"created_at"`
+	UsedAt      *time.Time `json:"used_at,omitempty"`
+}
+
+type GenerateTokenReq struct {
+	NodeName string `json:"node_name" binding:"required"`
+}
+
+type GenerateTokenResp struct {
+	Token     string    `json:"token"`
+	ExpiresAt time.Time `json:"expires_at"`
+	Command   string    `json:"command"`
+	CommandPS1 string   `json:"command_ps1"`
+}
+
+type RemoveNodeReq struct {
+	NodeID string `uri:"id" binding:"required"`
+}

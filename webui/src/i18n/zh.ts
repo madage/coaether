@@ -1,179 +1,392 @@
 export const zh = {
+
   // App
+
   appTitle: 'Superco',
+
   appSubtitle: 'AI Agent 分布式调度平台',
 
+
+
   // Auth
+
   login: '登录',
+
   register: '注册',
+
   username: '用户名',
+
   email: '邮箱',
+
   password: '密码',
+
   logout: '退出登录',
+
   alreadyHasAccount: '已有账号？去登录',
+
   noAccount: '没有账号？去注册',
+
   authFailed: '认证失败',
 
+
+
   // Sidebar
+
   navNodes: '节点',
+
   navSessions: '会话',
+
   navTerminal: '终端',
 
+
+
   // Nodes
+
   agentNodes: 'Agent 节点',
+
   loadingNodes: '加载节点中...',
+
   noNodes: '暂无注册节点。请先启动 Agent Node。',
+
   refresh: '刷新',
+
   lastSeen: '最后在线',
+
   nodeOnline: '在线',
+
   nodeOffline: '离线',
+
   nodeBusy: '忙碌',
 
+
+
   // Sessions
+
   sessions: '会话',
+
   loadingSessions: '加载会话中...',
+
   noSessions: '暂无会话。创建一个开始使用。',
+
   workspace: '工作区',
+
   created: '创建于',
+
   sessionPending: '等待中',
+
   sessionRunning: '运行中',
+
   sessionPaused: '已暂停',
+
   sessionStatusCompleted: '已完成',
+
   sessionStatusFailed: '失败',
 
+
+
   // Create Session
+
   newSession: '新建会话',
+
   targetNode: '目标节点',
+
   selectNode: '选择一个节点...',
+
   noOnlineNodes: '没有在线节点',
+
   workspacePath: '工作区路径',
+
   workspacePlaceholder: '/home/user/project 或 C:\\Users\\me\\project',
+
   prompt: '提示词',
+
   promptPlaceholder: '描述要 Claude Code 执行的任务...',
+
   allFieldsRequired: '所有字段为必填',
+
   creating: '创建中...',
+
   startSession: '启动会话',
+
   failedToCreate: '创建会话失败',
 
+
+
   // Terminal
+
   terminal: '终端',
+
   session: '会话',
+
   none: '无',
+
   disconnect: '断开连接',
+
   noActiveSession: '没有活跃会话。请先在"会话"标签页创建一个会话。',
+
   waitingForSession: '等待会话中...',
+
   sessionCompleted: '[会话执行成功]',
+
   sessionFailed: '[会话执行失败：',
+
   unknownError: '未知错误',
 
+
+
   // Projects
+
   navProjects: '项目',
+
   projectCreate: '创建项目',
+
   projectName: '项目名称',
+
   projectDescription: '项目描述',
+
   projectColor: '颜色',
+
   projectEmpty: '还没有项目',
+
   noProject: '无项目',
 
+
+
   // Tasks
+
   navTasks: '任务',
+
   navTrash: '回收站',
+
   taskCreate: '创建任务',
+
   taskEdit: '编辑任务',
+
   taskDelete: '删除',
+
   taskConfirmDelete: '确定删除该任务？',
+
   taskStatusTodo: '待办',
+
   taskStatusInProgress: '进行中',
+
   taskStatusBlocked: '阻塞',
+
   taskStatusDone: '完成',
+
   taskStatusReview: '审核',
+
   taskTitle: '标题',
+
   taskDescription: '描述',
+
   taskStatus: '状态',
+
   taskEmpty: '还没有任务',
+
   taskViewKanban: '看板',
+
   taskViewList: '列表',
+
   taskProgress: '推进',
+
   taskActions: '操作',
+
   taskRestore: '恢复',
+
   taskPermanentDelete: '永久删除',
+
   taskTrashEmpty: '回收站为空',
 
+
+
   // Agents
+
   agents: '智能体',
+
   noAgents: '该节点没有 Agent',
+
   scanAgents: '扫描',
+
   scanning: '扫描中...',
+
   maxSessions: '最大会话数',
+
   agent: 'Agent',
+
   selectAgent: '选择一个 Agent...',
+
   noAgentsOnNode: '该节点没有可用 Agent。点击"扫描"检测已安装的 AI 工具。',
+
   enabled: '已启用',
+
   disabled: '已禁用',
+
   agentHint: 'Agent 从 PATH 中自动检测。可切换启用/禁用。',
+
   loading: '加载中',
+
   optional: '可选',
 
+
+
   // Agent Profiles
+
   agentProfiles: '智能体配置',
+
   createAgent: '添加智能体',
+
   editAgent: '编辑智能体',
+
   deleteAgent: '删除智能体',
+
   agentName: '名称',
+
   agentNamePlaceholder: '给智能体起个名字...',
+
   agentDescription: '描述',
+
   agentDescriptionPlaceholder: '描述这个智能体的用途...',
+
   agentRuntime: '运行时能力',
+
   selectRuntime: '选择一个运行时能力...',
+
   saveAgent: '保存',
+
   cancel: '取消',
+
   confirmDelete: '确定删除该智能体？',
+
   createSuccess: '创建成功',
+
   updateSuccess: '更新成功',
+
   deleteSuccess: '删除成功',
+
   noProfiles: '还没有智能体，点击"+"添加一个吧',
+
   profileDetail: '详情',
+
   profileEdit: '编辑',
 
+
+
   // Permission Mode
+
   permissionMode: '权限模式',
+
   autoMode: '自动模式',
+
   restrictedMode: '受限模式',
 
+
+
   // Chat
+
   chat: '聊天',
+
   noMessages: '暂无消息。发送消息开始对话。',
+
   send: '发送',
+
   inputPlaceholder: '输入消息，按 Enter 发送...',
+
   connecting: '连接中...',
+
   sessionActive: '活跃',
+
   clear: '清空',
+
   sessionNoActive: '无活跃会话',
+
   connected: '已连接',
+
   offline: '离线',
+
   you: '你',
+
   system: '系统',
 
+
+
   // Workspaces
+
   workspaceLabel: '工作区',
+
   manageWorkspaces: '管理工作区',
+
   addWorkspace: '添加工作区',
+
   workspaceName: '工作区名称',
+
   workspaceDescription: '工作区描述',
+
   workspaceCreate: '创建工作区',
+
   workspaceDelete: '删除工作区',
+
   workspaceDeleteConfirm: '删除该工作区？任务和项目将成为未分配状态。',
+
   workspaceDefaultName: '默认',
 
+
+
   // Language
+
   switchLang: 'English',
 
+
+
+  // Remote Nodes
+
+  addNode: '添加节点',
+
+  addNodeTitle: '添加远程节点',
+
+  nodeName: '节点名称',
+
+  nodeNamePlaceholder: '例如 my-mac-claude',
+
+  step1: '在目标机器（Mac 或 Windows）上执行以下命令，agent-runtime 将在登录时自动启动。',
+
+  generateCommand: '生成安装命令',
+
+  runOnMac: 'macOS（bash）',
+
+  runOnWindows: 'Windows（PowerShell）',
+
+  copyCommand: '复制',
+
+  copied: '已复制！',
+
+  waitingNode: '等待节点连接...',
+
+  nodeAdded: '节点连接成功！',
+
+  nodeRemove: '移除',
+
+  nodeRemoveConfirm: '确定要移除这个节点吗？',
+
+  alreadyHasNode: '你已有一个活跃节点，请先移除它。',
+
+
+
   // Notifications
+
   pendingInvitations: '待处理的邀请',
+
   invitationFrom: '{name} 邀请你加入 {workspace}',
+
   accept: '接受',
+
   decline: '拒绝',
+
   noPendingInvitations: '暂无待处理的邀请',
+
   invitationAccepted: '已接受邀请',
+
   invitationDeclined: '已拒绝邀请',
+
 } as const;
+

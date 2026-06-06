@@ -128,6 +128,15 @@
 - Dashboard 数据自动刷新（`useResourceSync` hook）
 - 邀请变更实时同步
 
+### 远程节点管理
+- Token 式节点注册（Scheme B），支持 Mac 和 Windows 节点
+- macOS: 自动生成 bash 安装脚本，创建 LaunchAgent 实现开机自启
+- Windows: 自动生成 PowerShell 安装脚本，创建 Startup 文件夹启动项实现开机自启
+- 节点卡片：状态指示（在线/离线/忙碌）、扫描 Agent、启停 Agent、删除节点
+- 跨平台二进制分发：自动下载对应 OS/Arch 的 agent-runtime
+- 节点加入 token 机制：15 分钟有效期，防止未授权注册
+- 节点列表通过 WebSocket 实时同步状态
+
 ### 多语言
 - 中文 / English 双语界面
 - 通过 `useLang()` hook 切换
@@ -294,6 +303,20 @@
 - `DELETE /api/projects/:id/force` — 永久删除
 - `POST /api/projects/:id/restore` — 恢复
 
+### 节点管理
+- `POST /api/nodes/token` — 生成节点加入 token
+- `GET /api/nodes/install.sh?token=` — 获取 bash 安装脚本（macOS/Linux）
+- `GET /api/nodes/install.ps1?token=` — 获取 PowerShell 安装脚本（Windows）
+- `GET /api/nodes/bin/:os/:arch` — 下载预编译 agent-runtime 二进制
+- `POST /api/nodes/register` — 节点注册
+- `POST /api/nodes/heartbeat` — 节点心跳
+- `GET /api/nodes` — 节点列表
+- `GET /api/nodes/:id` — 节点详情
+- `GET /api/nodes/:id/agents` — 节点 Agent 列表
+- `POST /api/nodes/:id/scan` — 扫描节点 Agent
+- `PATCH /api/agents/:id` — 启停 Agent
+- `DELETE /api/nodes/:id` — 移除节点
+
 ### WebSocket
 - `GET /ws/dashboard?token={jwt}` — Dashboard 实时通知
 - `GET /ws/bus?type=ui&user_id={id}` — Message Bus 消息路由
@@ -345,16 +368,27 @@ npm run dev
 # 打开 http://localhost:5173
 ```
 
-### 6. 启动 Agent Runtime
+### 6. 添加远程节点
 
+在 Web UI 的节点页面点击 **添加节点**，输入节点名称生成安装命令，在目标机器（Mac/Windows）上执行即可自动安装并注册：
+
+**Mac:**
 ```bash
-cd agent-runtime
-go build -o agent-runtime .
-./agent-runtime
-# 自动连接 ws://localhost:8088/ws/bus
+curl -s 'http://<server>:8088/api/nodes/install.sh?token=TOKEN' | bash
 ```
 
-> Agent Runtime 需要配置 AI 后端。默认使用 Claude CLI（需要 `claude` 命令在 PATH 中），也可通过环境变量切换为 API 模式。
+**Windows (PowerShell):**
+```powershell
+powershell -c "iex ((Invoke-WebRequest -Uri 'http://<server>:8088/api/nodes/install.ps1?token=TOKEN').Content)"
+```
+
+安装脚本会自动：
+- 下载对应 OS/Arch 的 agent-runtime 二进制
+- 安装 Claude Code CLI（如未安装且 npm 可用）
+- 创建开机自启服务（LaunchAgent / Startup 文件夹）
+- 启动 agent-runtime 并连接 Message Bus
+
+> Agent Runtime 后端注册顺序：Claude CLI → Claude API (ANTHROPIC_API_KEY) → Echo (测试用)
 
 ---
 
@@ -423,7 +457,7 @@ superco/
 │   ├── src/
 │   │   ├── App.tsx           # 主应用：路由、认证、布局
 │   │   ├── api/client.ts     # HTTP API 客户端
-│   │   ├── components/       # 组件
+│   │   │   ├── components/       # 组件
 │   │   │   ├── FloatingChat.tsx    # 浮动聊天窗口
 │   │   │   ├── MessageStream.tsx   # 消息渲染流（富文本）
 │   │   │   ├── InputArea.tsx       # 消息输入区
@@ -432,7 +466,9 @@ superco/
 │   │   │   ├── NotificationBell.tsx # 通知铃铛
 │   │   │   ├── AgentList.tsx       # Agent 列表
 │   │   │   ├── Sidebar.tsx         # 侧边栏
-│   │   │   └── LoginForm.tsx       # 登录表单
+│   │   │   ├── LoginForm.tsx       # 登录表单
+│   │   │   ├── AddNodeDialog.tsx   # 添加节点对话框（平台选择/命令复制）
+│   │   │   └── NodeList.tsx        # 节点卡片列表（状态/Agent/删除）
 │   │   ├── hooks/            # React Hooks
 │   │   │   ├── useMessageBus.ts    # Message Bus WebSocket hook
 │   │   │   ├── useDashboardWS.ts   # Dashboard WebSocket hook
@@ -443,12 +479,15 @@ superco/
 │   └── vite.config.ts
 │
 ├── agent-runtime/            # AI Agent 运行时
-│   ├── main.go               # 入口
-│   ├── bus_client.go         # Message Bus 客户端
-│   ├── session.go            # 会话管理
-│   └── backends/             # AI 后端适配器
-│       ├── cli.go            # Claude CLI 模式
-│       └── api.go            # API 模式
+│   ├── runtime.go            # 入口：连接 Message Bus，注册后端
+│   ├── backends/             # AI 后端适配器
+│   │   ├── claude_cli.go     # Claude CLI 模式（stream-json，首选）
+│   │   ├── claude.go         # Claude API 模式（ANTHROPIC_API_KEY）
+│   │   └── echo.go           # 测试用 Echo 后端（fallback）
+│   └── bin/                  # 预编译跨平台二进制
+│       ├── darwin-arm64/
+│       ├── darwin-amd64/
+│       └── windows-amd64/
 │
 └── README.md
 ```

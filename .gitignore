@@ -7,6 +7,7 @@ server/tmp/
 agent-node/builds/
 bin/
 agent-runtime/agent-runtime
+agent-runtime/agent-runtime-*
 agent-runtime/server
 agent-runtime/bin/
 server/agent-node
