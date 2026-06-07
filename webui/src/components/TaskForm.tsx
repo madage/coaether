@@ -85,7 +85,7 @@ export function TaskForm({ task, onClose, onSave }: TaskFormProps) {
       assignee_type: assigneeType,
       priority,
       tags: tags.length > 0 ? tags : undefined,
-      due_at: dueAt || null,
+      due_at: dueAt ? dueAt + 'T00:00:00Z' : null,
     });
   };
 

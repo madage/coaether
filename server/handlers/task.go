@@ -460,12 +460,12 @@ func (h *TaskHandler) Update(c *gin.Context) {
 	var t models.Task
 	query := fmt.Sprintf(`SELECT %s FROM tasks t LEFT JOIN users u ON u.id = t.user_id WHERE t.id = $1`, taskSelectCols)
 	h.DB.QueryRow(query, taskID).Scan(
-		&t.ID, &t.UserID, &t.Title, &t.Description, &t.Status,
+		&t.ID, &t.UserID, &t.CreatorName, &t.Title, &t.Description, &t.Status,
 		&t.ProjectID, &t.ParentID, &t.AssigneeID, &t.AssigneeType,
 		&t.Priority, &t.DueAt, &t.CompletedAt, &t.CreatedAt, &t.UpdatedAt,
 	)
 	t.Tags = h.fetchTags(t.ID)
-			t.Assignees = h.fetchAssignees(t.ID)
+	t.Assignees = h.fetchAssignees(t.ID)
 
 	if h.Hub != nil {
 		h.Hub.SignalChange("tasks")
@@ -692,12 +692,12 @@ func (h *TaskHandler) SetStatus(c *gin.Context) {
 	h.DB.QueryRow(
 		fmt.Sprintf(`SELECT %s FROM tasks t LEFT JOIN users u ON u.id = t.user_id WHERE t.id = $1`, taskSelectCols), taskID,
 	).Scan(
-		&t.ID, &t.UserID, &t.Title, &t.Description, &t.Status,
+		&t.ID, &t.UserID, &t.CreatorName, &t.Title, &t.Description, &t.Status,
 		&t.ProjectID, &t.ParentID, &t.AssigneeID, &t.AssigneeType,
 		&t.Priority, &t.DueAt, &t.CompletedAt, &t.CreatedAt, &t.UpdatedAt,
 	)
 	t.Tags = h.fetchTags(t.ID)
-			t.Assignees = h.fetchAssignees(t.ID)
+	t.Assignees = h.fetchAssignees(t.ID)
 
 	if h.Hub != nil {
 		h.Hub.SignalChange("tasks")

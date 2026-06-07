@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -65,8 +66,10 @@ func (h *ProjectHandler) List(c *gin.Context) {
 
 	query += " ORDER BY p.updated_at DESC"
 
+	log.Printf("[Project] List query: %s args=%v", query, args)
 	rows, err := h.DB.Query(query, args...)
 	if err != nil {
+		log.Printf("[Project] List query error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query projects"})
 		return
 	}
@@ -75,15 +78,20 @@ func (h *ProjectHandler) List(c *gin.Context) {
 	projects := make([]models.Project, 0)
 	for rows.Next() {
 		var p models.Project
-		if err := h.scanProject(rows, &p); err != nil {
-			continue
-		}
-		// extra scan for task_count
-		if err := rows.Scan(&p.TaskCount); err != nil {
+		if err := rows.Scan(
+			&p.ID, &p.UserID, &p.Name, &p.Description, &p.Color,
+			&p.AssigneeID, &p.AssigneeType, &p.Status, &p.StartedAt, &p.DueAt,
+			&p.CreatedAt, &p.UpdatedAt, &p.TaskCount,
+		); err != nil {
+			log.Printf("[Project] List scan error: %v", err)
 			continue
 		}
 		projects = append(projects, p)
 	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[Project] List rows err: %v", err)
+	}
+	log.Printf("[Project] List returning %d projects", len(projects))
 
 	c.JSON(http.StatusOK, gin.H{"projects": projects})
 }
@@ -137,7 +145,8 @@ func (h *ProjectHandler) Create(c *gin.Context) {
 		project.CreatedAt, project.UpdatedAt,
 	)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create project"})
+		log.Printf("[Project] Create error: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create project"})
 		return
 	}
 

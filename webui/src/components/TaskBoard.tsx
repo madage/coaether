@@ -5,6 +5,7 @@ import { useResourceSync } from '../hooks/useResourceSync';
 import { useWorkspace } from '../hooks/WorkspaceContext';
 import { TaskCard } from './TaskCard';
 import { TaskForm } from './TaskForm';
+import { TaskDetail } from './TaskDetail';
 import type { Task, TaskStatus, Project, UpdateTaskReq, Priority, AssigneeType } from '../types';
 
 const columns: TaskStatus[] = ['todo', 'in_progress', 'blocked', 'review', 'done'];
@@ -137,30 +138,20 @@ export function TaskBoard() {
     }
   }, [fetchTasks]);
 
-  const handleUpdate = useCallback(async (data: { title: string; description: string; status?: TaskStatus; project_id?: string | null; parent_id?: string | null; assignee_id?: string | null; assignee_type?: AssigneeType | null; priority?: Priority; tags?: string[]; due_at?: string | null }) => {
-    if (!editingTask) return;
+  const handleDetailDelete = useCallback(async (id: string) => {
     try {
-      const updateData: UpdateTaskReq = {};
-      if (data.title !== editingTask.title) updateData.title = data.title;
-      if (data.description !== editingTask.description) updateData.description = data.description;
-      if (data.status && data.status !== editingTask.status) updateData.status = data.status;
-      if (data.project_id !== editingTask.project_id) updateData.project_id = data.project_id ?? null;
-      if (data.parent_id !== editingTask.parent_id) updateData.parent_id = data.parent_id ?? null;
-      if (data.assignee_id !== editingTask.assignee_id) updateData.assignee_id = data.assignee_id ?? null;
-      if (data.assignee_type !== editingTask.assignee_type) updateData.assignee_type = data.assignee_type ?? null;
-      if (data.priority !== editingTask.priority) updateData.priority = data.priority;
-      if (JSON.stringify(data.tags) !== JSON.stringify(editingTask.tags)) updateData.tags = data.tags;
-      if (data.due_at !== (editingTask.due_at || null)) updateData.due_at = data.due_at ?? null;
-      if (Object.keys(updateData).length > 0) {
-        await tasksApi.update(editingTask.id, updateData);
-      }
+      await tasksApi.delete(id);
       setEditingTask(null);
-      fetchTasks();
-    } catch (err) {
-      console.error('Failed to update task', err);
-      alert('Failed to update task');
+      fetchTasks({
+        projectId: filterProjectId || undefined,
+        priority: filterPriority || undefined,
+        tag: filterTag || undefined,
+        assigneeId: filterAssigneeId || undefined,
+      });
+    } catch {
+      alert('Failed to delete task');
     }
-  }, [editingTask, fetchTasks]);
+  }, [fetchTasks, filterProjectId, filterPriority, filterTag, filterAssigneeId]);
 
   const handleDelete = useCallback(async (id: string) => {
     const a = Math.floor(Math.random() * 20) + 1;
@@ -468,9 +459,19 @@ export function TaskBoard() {
         <TaskForm onClose={() => setShowForm(false)} onSave={handleCreate} />
       )}
 
-      {/* Edit form */}
+      {/* Edit detail */}
       {editingTask && (
-        <TaskForm task={editingTask} onClose={() => setEditingTask(null)} onSave={handleUpdate} />
+        <TaskDetail
+          task={editingTask}
+          onClose={() => setEditingTask(null)}
+          onDelete={handleDetailDelete}
+          onRefresh={() => fetchTasks({
+            projectId: filterProjectId || undefined,
+            priority: filterPriority || undefined,
+            tag: filterTag || undefined,
+            assigneeId: filterAssigneeId || undefined,
+          })}
+        />
       )}
     </div>
   );

@@ -59,6 +59,8 @@ export function ProjectForm({ initial, onClose, onSave }: ProjectFormProps) {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
+    // Convert date-only strings to RFC3339 format for Go time.Time parsing
+    const toRFC3339 = (d: string) => d ? d + 'T00:00:00Z' : null;
     onSave({
       name: name.trim(),
       description: description.trim(),
@@ -66,8 +68,8 @@ export function ProjectForm({ initial, onClose, onSave }: ProjectFormProps) {
       assignee_id: assigneeId,
       assignee_type: assigneeType,
       status,
-      started_at: startedAt || null,
-      due_at: dueAt || null,
+      started_at: toRFC3339(startedAt),
+      due_at: toRFC3339(dueAt),
     });
   };
 

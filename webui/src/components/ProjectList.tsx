@@ -6,7 +6,7 @@ import { ProjectCard } from './ProjectCard';
 import { ProjectForm } from './ProjectForm';
 import { ProjectDetail } from './ProjectDetail';
 import { TaskCard } from './TaskCard';
-import { TaskForm } from './TaskForm';
+import { TaskDetail } from './TaskDetail';
 import type { Project, Task, TaskStatus, ProjectStatus, CreateProjectReq, UpdateProjectReq, AssigneeType } from '../types';
 import { useWorkspace } from '../hooks/WorkspaceContext';
 
@@ -107,6 +107,18 @@ export function ProjectList() {
     } catch {}
   }, []);
 
+  const handleDetailDelete = useCallback(async (id: string) => {
+    try {
+      await tasksApi.delete(id);
+      setEditingUnassignedTask(null);
+      const res = await tasksApi.list({ projectId: 'none' });
+      setUnassignedTasks(res.tasks);
+      setUnassignedCount(res.tasks.length);
+    } catch {
+      alert('Failed to delete task');
+    }
+  }, []);
+
   const handleUnassignedTaskDelete = useCallback(async (id: string) => {
     try {
       await tasksApi.delete(id);
@@ -126,27 +138,6 @@ export function ProjectList() {
       alert('Failed to update status');
     }
   }, []);
-
-  const handleUnassignedTaskUpdate = useCallback(async (data: { title: string; description: string; status?: TaskStatus; project_id?: string | null }) => {
-    if (!editingUnassignedTask) return;
-    try {
-      const updateData: Record<string, unknown> = {};
-      if (data.title !== editingUnassignedTask.title) updateData.title = data.title;
-      if (data.description !== editingUnassignedTask.description) updateData.description = data.description;
-      if (data.status && data.status !== editingUnassignedTask.status) updateData.status = data.status;
-      if (data.project_id !== editingUnassignedTask.project_id) updateData.project_id = data.project_id ?? null;
-      if (Object.keys(updateData).length > 0) {
-        await tasksApi.update(editingUnassignedTask.id, updateData);
-      }
-      setEditingUnassignedTask(null);
-      const res = await tasksApi.list({ projectId: 'none' });
-      setUnassignedTasks(res.tasks);
-      setUnassignedCount(res.tasks.length);
-    } catch (err) {
-      console.error('Failed to update task', err);
-      alert('Failed to update task');
-    }
-  }, [editingUnassignedTask]);
 
   if (loading) {
     return (
@@ -284,12 +275,17 @@ export function ProjectList() {
         </div>
       )}
 
-      {/* Unassigned task edit form */}
+      {/* Unassigned task detail view */}
       {editingUnassignedTask && (
-        <TaskForm
+        <TaskDetail
           task={editingUnassignedTask}
           onClose={() => setEditingUnassignedTask(null)}
-          onSave={handleUnassignedTaskUpdate}
+          onDelete={handleDetailDelete}
+          onRefresh={async () => {
+            const res = await tasksApi.list({ projectId: 'none' });
+            setUnassignedTasks(res.tasks);
+            setUnassignedCount(res.tasks.length);
+          }}
         />
       )}
     </div>
