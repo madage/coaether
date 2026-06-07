@@ -189,6 +189,11 @@ func (r *Runtime) handleMessage(env *protocol.Envelope) {
 			cli.HandlePermissionResponse(env)
 		}
 
+	case protocol.MsgNodeStop:
+		log.Printf("[Runtime] Node stop received, shutting down...")
+		r.Shutdown()
+		os.Exit(0)
+
 	default:
 		log.Printf("[Runtime] Unhandled type: %s", env.Type)
 	}

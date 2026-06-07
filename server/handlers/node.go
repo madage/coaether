@@ -21,6 +21,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/coaether/server/middleware"
 	"github.com/coaether/server/models"
 
 	"github.com/coaether/server/protocol"
@@ -164,10 +165,11 @@ func (h *NodeHandler) List(c *gin.Context) {
 
 	}
 
-	// Determine which nodes can be managed locally
+	// Determine which nodes can be managed
 	runtimePath := findRuntimePath()
 	localIPs := getLocalIPs()
 	for i := range nodes {
+		// Local binary found → can start/stop
 		if runtimePath != "" {
 			for _, ip := range localIPs {
 				if nodes[i].IP == ip {
@@ -175,6 +177,10 @@ func (h *NodeHandler) List(c *gin.Context) {
 					break
 				}
 			}
+		}
+		// Online runtime on bus → can stop (even if not local)
+		if !nodes[i].CanManage && h.Bus != nil && h.Bus.GetEndpoint("runtime://"+nodes[i].ID) != nil {
+			nodes[i].CanManage = true
 		}
 	}
 
@@ -926,21 +932,10 @@ func saveNodeSecretToEnv(secret, nodeID, serverAddr string) {
 // StartNode starts the agent-runtime on the local machine.
 func (h *NodeHandler) StartNode(c *gin.Context) {
 	nodeID := c.Param("id")
-	userID, _ := c.Get("user_id")
 
-	// Verify ownership
-	var ownerID string
-	err := h.DB.QueryRow(`SELECT user_id FROM nodes WHERE id = $1`, nodeID).Scan(&ownerID)
-	if err == sql.ErrNoRows {
-		c.JSON(http.StatusNotFound, gin.H{"error": "node not found"})
-		return
-	}
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "database error"})
-		return
-	}
-	if ownerID != userID {
-		c.JSON(http.StatusForbidden, gin.H{"error": "not your node"})
+	// Permission check: node owner or workspace admin
+	if ok, msg := h.canControlNode(c, nodeID); !ok {
+		c.JSON(http.StatusForbidden, gin.H{"error": msg})
 		return
 	}
 
@@ -1015,32 +1010,36 @@ func (h *NodeHandler) StartNode(c *gin.Context) {
 // StopNode stops the agent-runtime on the local machine.
 func (h *NodeHandler) StopNode(c *gin.Context) {
 	nodeID := c.Param("id")
-	userID, _ := c.Get("user_id")
 
-	// Verify ownership
-	var ownerID string
-	err := h.DB.QueryRow(`SELECT user_id FROM nodes WHERE id = $1`, nodeID).Scan(&ownerID)
-	if err == sql.ErrNoRows {
-		c.JSON(http.StatusNotFound, gin.H{"error": "node not found"})
+	// Permission check: node owner or workspace admin
+	if ok, msg := h.canControlNode(c, nodeID); !ok {
+		c.JSON(http.StatusForbidden, gin.H{"error": msg})
 		return
 	}
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "database error"})
-		return
-	}
-	if ownerID != userID {
-		c.JSON(http.StatusForbidden, gin.H{"error": "not your node"})
-		return
+
+	// Try to stop via Message Bus first (works for all connected runtime nodes)
+	if h.Bus != nil {
+		ep := h.Bus.GetEndpoint("runtime://" + nodeID)
+		if ep != nil {
+			env := protocol.NewEnvelope("system://bus", "runtime://"+nodeID, protocol.MsgNodeStop, nil)
+			delivered := h.Bus.Deliver(env)
+			if delivered > 0 {
+				log.Printf("[StopNode] Sent stop command via bus to %s", nodeID)
+				c.JSON(http.StatusOK, gin.H{"status": "stopped", "method": "bus"})
+				return
+			}
+		}
 	}
 
 	runtimePath := findRuntimePath()
 
-	// Try graceful stop via binary first (uses PID file)
+	// Try graceful stop via binary (local node, uses PID file)
 	if runtimePath != "" {
 		cmd := exec.Command(runtimePath, "stop")
 		cmd.Stderr = os.Stderr
 		cmd.Stdout = os.Stdout
-		if err := cmd.Run(); err == nil {
+		err := cmd.Run()
+		if err == nil {
 			c.JSON(http.StatusOK, gin.H{"status": "stopped"})
 			return
 		}
@@ -1078,42 +1077,45 @@ func killAgentRuntimes() int {
 	return 0
 }
 
+// canControlNode checks whether the current user is allowed to control a node.
+// A user can control a node if they are the node owner, or if they are
+// a workspace admin (admin/owner) within the current workspace context.
+func (h *NodeHandler) canControlNode(c *gin.Context, nodeID string) (bool, string) {
+	userID, _ := c.Get("user_id")
+
+	// Case 1: Node owner → always allowed
+	var ownerID string
+	if err := h.DB.QueryRow(`SELECT user_id FROM nodes WHERE id = $1`, nodeID).Scan(&ownerID); err != nil {
+		return false, "node not found"
+	}
+	if sUserID, ok := userID.(string); ok && sUserID == ownerID {
+		return true, ""
+	}
+
+	// Case 2: Workspace admin (when workspace context exists)
+	wsID, _ := c.Get("validated_workspace_id")
+	if wsIDStr, ok := wsID.(string); ok && wsIDStr != "" {
+		role, _ := c.Get("workspace_role")
+		if roleStr, ok := role.(string); ok {
+			if middleware.RoleAtLeastByRole(roleStr, "admin") {
+				return true, ""
+			}
+		}
+		return false, "insufficient permissions: only admins and node owners can control nodes"
+	}
+
+	return false, "insufficient permissions: only node owners and workspace admins can control nodes"
+}
+
 // RemoveNode deletes a registered node and disconnects it from the bus.
 
 func (h *NodeHandler) RemoveNode(c *gin.Context) {
-
 	nodeID := c.Param("id")
 
-	userID, _ := c.Get("user_id")
-
-	// Verify ownership
-
-	var ownerID string
-
-	err := h.DB.QueryRow(`SELECT user_id FROM nodes WHERE id = $1`, nodeID).Scan(&ownerID)
-
-	if err == sql.ErrNoRows {
-
-		c.JSON(http.StatusNotFound, gin.H{"error": "node not found"})
-
+	// Permission check: node owner or workspace admin
+	if ok, msg := h.canControlNode(c, nodeID); !ok {
+		c.JSON(http.StatusForbidden, gin.H{"error": msg})
 		return
-
-	}
-
-	if err != nil {
-
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "database error"})
-
-		return
-
-	}
-
-	if ownerID != userID {
-
-		c.JSON(http.StatusForbidden, gin.H{"error": "not your node"})
-
-		return
-
 	}
 
 	// Disconnect from bus if connected
@@ -1125,7 +1127,7 @@ func (h *NodeHandler) RemoveNode(c *gin.Context) {
 
 	// Delete from DB (cascades to agents)
 
-	_, err = h.DB.Exec(`DELETE FROM nodes WHERE id = $1`, nodeID)
+	_, err := h.DB.Exec(`DELETE FROM nodes WHERE id = $1`, nodeID)
 
 	if err != nil {
 

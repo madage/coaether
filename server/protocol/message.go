@@ -34,6 +34,9 @@ const (
 	// Permission messages
 	MsgPermissionRequest  = "permission.request"
 	MsgPermissionResponse = "permission.response"
+
+	// Node management
+	MsgNodeStop = "node.stop"
 )
 
 // Envelope is the universal message wrapper for all bus communication.
