@@ -20,6 +20,7 @@ export function AddNodeDialog({ onClose }: AddNodeDialogProps) {
   const [status, setStatus] = useState<'idle' | 'waiting' | 'connected'>('idle');
   const [platform, setPlatform] = useState<Platform>('mac');
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const initialCount = useRef(0);
 
   // Cleanup polling on unmount
   useEffect(() => {
@@ -40,13 +41,18 @@ export function AddNodeDialog({ onClose }: AddNodeDialogProps) {
       setExpiresAt(res.expires_at);
       setStatus('waiting');
 
-      // Start polling for node connection (check node list for tok- prefix)
+      // Record current node count before polling (UUID-based nodes won't match old tok- prefix)
+      try {
+        const preList = await nodesApi.list();
+        initialCount.current = preList.nodes.length;
+      } catch { /* ignore */ }
+
       const deadline = new Date(res.expires_at).getTime();
       pollingRef.current = setInterval(async () => {
         try {
           const nodeList = await nodesApi.list();
-          const found = nodeList.nodes.some(n => n.id.startsWith('tok-'));
-          if (found) {
+          // Node connected if count increased (new UUID node added)
+          if (nodeList.nodes.length > initialCount.current) {
             setStatus('connected');
             if (pollingRef.current) clearInterval(pollingRef.current);
           }

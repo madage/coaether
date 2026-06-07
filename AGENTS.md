@@ -1,7 +1,7 @@
 <!-- codragraph:start -->
 # CodraGraph — Code Intelligence
 
-This project is indexed by CodraGraph as **superco** (1806 symbols, 4979 relationships, 124 execution flows). Use the CodraGraph MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by CodraGraph as **superco** (1945 symbols, 5301 relationships, 125 execution flows). Use the CodraGraph MCP tools to understand code, assess impact, and navigate safely.
 
 > If any CodraGraph tool warns the index is stale, run `npx @codragraph/cli analyze` in terminal first.
 

@@ -6,7 +6,6 @@ import (
 
 	"crypto/rand"
 
-	"crypto/sha256"
 
 	"database/sql"
 
@@ -20,7 +19,6 @@ import (
 
 	"path/filepath"
 
-	"strings"
 
 	"time"
 
@@ -61,28 +59,6 @@ type NodeHandler struct {
 func NewNodeHandler(db *sql.DB, bus *protocol.MessageBus) *NodeHandler {
 
 	return &NodeHandler{DB: db, Bus: bus}
-
-}
-
-
-
-// isBusNode checks if this is a bus-connected virtual node.
-
-// Returns the original endpoint ID (e.g., "runtime://runtime-default").
-
-func isBusNode(nodeID string) string {
-
-	if len(nodeID) > 4 && nodeID[:4] == "bus-" {
-
-		raw := nodeID[4:]
-
-		// Desanitize: runtime--runtime-default → runtime://runtime-default
-
-		return strings.ReplaceAll(raw, "--", "://")
-
-	}
-
-	return ""
 
 }
 
@@ -167,34 +143,25 @@ func (h *NodeHandler) Register(c *gin.Context) {
 func (h *NodeHandler) List(c *gin.Context) {
 
 	userID, _ := c.Get("user_id")
+	wsID, _ := c.Get("validated_workspace_id")
+	wsIDStr, _ := wsID.(string)
 
-
-
-	// Build set of currently active bus runtime node IDs
-
-	activeBusNodes := make(map[string]bool)
-
-	if h.Bus != nil {
-
-		for _, ep := range h.Bus.EndpointsByType(protocol.EndpointRuntime) {
-
-			nodeID := "bus-" + strings.ReplaceAll(ep.ID, "://", "--")
-
-			activeBusNodes[nodeID] = true
-
-		}
-
+	var rows *sql.Rows
+	var err error
+	if wsIDStr != "" {
+		rows, err = h.DB.Query(
+			`SELECT n.id, n.user_id, n.name, n.os, n.arch, n.status, n.version, n.ip, n.max_sessions, n.last_seen, n.created_at
+			 FROM nodes n
+			 JOIN workspace_members wm ON wm.user_id = n.user_id
+			 WHERE wm.workspace_id = $1
+			 ORDER BY n.last_seen DESC`, wsIDStr,
+		)
+	} else {
+		rows, err = h.DB.Query(
+			`SELECT id, user_id, name, os, arch, status, version, ip, max_sessions, last_seen, created_at
+			 FROM nodes WHERE user_id = $1 ORDER BY last_seen DESC`, userID,
+		)
 	}
-
-
-
-	rows, err := h.DB.Query(
-
-		`SELECT id, user_id, name, os, arch, status, version, ip, max_sessions, last_seen, created_at
-
-		 FROM nodes WHERE user_id = $1 ORDER BY last_seen DESC`, userID,
-
-	)
 
 	if err != nil {
 
@@ -205,8 +172,6 @@ func (h *NodeHandler) List(c *gin.Context) {
 	}
 
 	defer rows.Close()
-
-
 
 	var nodes []models.Node
 
@@ -220,23 +185,9 @@ func (h *NodeHandler) List(c *gin.Context) {
 
 		}
 
-		// Skip bus virtual nodes that have no active runtime connection.
-
-		// These are stale DB records — either marked offline from a past clean
-
-		// disconnect, or stuck "online" from a killed process.
-
-		if strings.HasPrefix(n.ID, "bus-") && !activeBusNodes[n.ID] {
-
-			continue
-
-		}
-
 		nodes = append(nodes, n)
 
 	}
-
-
 
 	if nodes == nil {
 
@@ -244,65 +195,9 @@ func (h *NodeHandler) List(c *gin.Context) {
 
 	}
 
-
-
-	// Inject active bus runtime endpoints that are not yet in the result
-
-	if h.Bus != nil {
-
-		existing := make(map[string]bool, len(nodes))
-
-		for _, n := range nodes {
-
-			existing[n.ID] = true
-
-		}
-
-		for _, ep := range h.Bus.EndpointsByType(protocol.EndpointRuntime) {
-
-			nodeID := "bus-" + strings.ReplaceAll(ep.ID, "://", "--")
-
-			if existing[nodeID] {
-
-				continue
-
-			}
-
-			nodes = append(nodes, models.Node{
-
-				ID:          nodeID,
-
-				UserID:      userID.(string),
-
-				Name:        "Runtime: " + ep.ID,
-
-				OS:          "unknown",
-
-				Status:      models.NodeStatusOnline,
-
-				Version:     "0.1.0",
-
-				IP:          "bus",
-
-				MaxSessions: 3,
-
-				LastSeen:    time.Now(),
-
-				CreatedAt:   time.Now(),
-
-			})
-
-		}
-
-	}
-
-
-
 	c.JSON(http.StatusOK, gin.H{"nodes": nodes})
 
 }
-
-
 
 func (h *NodeHandler) Heartbeat(c *gin.Context) {
 
@@ -390,9 +285,12 @@ func (h *NodeHandler) ListAgents(c *gin.Context) {
 
 
 
-	// For bus-connected virtual nodes, return runtime capabilities as agents
-
-	if epID := isBusNode(nodeID); epID != "" && h.Bus != nil {
+	// For UUID-based runtime nodes, return runtime capabilities
+	var epID string
+	if h.Bus != nil && h.Bus.GetEndpoint("runtime://"+nodeID) != nil {
+		epID = "runtime://" + nodeID
+	}
+	if epID != "" && h.Bus != nil {
 
 		ep := h.Bus.GetEndpoint(epID)
 
@@ -583,29 +481,7 @@ func (h *NodeHandler) GenerateToken(c *gin.Context) {
 
 
 
-	// Check if user already has an active (online) node
-
-	var activeCount int
-
-	h.DB.QueryRow(
-
-		`SELECT COUNT(1) FROM nodes WHERE user_id = $1 AND status = 'online' AND id NOT LIKE 'bus-%'`,
-
-		userID,
-
-	).Scan(&activeCount)
-
-	if activeCount > 0 {
-
-		c.JSON(http.StatusConflict, gin.H{"error": "already have an active node, remove it first"})
-
-		return
-
-	}
-
-
-
-	token := generateTokenHex()
+token := generateTokenHex()
 
 	expiresAt := time.Now().Add(tokenDuration)
 
@@ -808,6 +684,8 @@ fi
 cat > "$HOME/.superco/env" <<CONFEOF
 SERVER_URL=${SERVER_URL}
 NODE_TOKEN=${TOKEN}
+NODE_SECRET=
+NODE_ID=
 # Optional: set ANTHROPIC_API_KEY if you don't have Claude Code CLI installed
 # ANTHROPIC_API_KEY=your_key_here
 CONFEOF
@@ -843,6 +721,10 @@ cat > "$PLIST_PATH" <<PLISTEOF
         <string>${SERVER_URL}</string>
         <key>NODE_TOKEN</key>
         <string>${TOKEN}</string>
+        <key>NODE_SECRET</key>
+        <string></string>
+        <key>NODE_ID</key>
+        <string></string>
         <key>PATH</key>
         <string>/usr/local/bin:/opt/homebrew/bin:${HOME}/.npm-global/bin:${NPM_BIN}:/usr/bin:/bin</string>
     </dict>
@@ -963,6 +845,8 @@ if (-not $claude) {
 @"
 SERVER_URL=${SERVER_URL}
 NODE_TOKEN=${TOKEN}
+NODE_SECRET=
+NODE_ID=
 "@ | Out-File -FilePath "$DIR\env" -Encoding ascii
 
 # Create startup shortcut (CurrentUser Startup folder)
@@ -1101,21 +985,10 @@ func (h *NodeHandler) RemoveNode(c *gin.Context) {
 
 
 	// Disconnect from bus if connected
-
 	if h.Bus != nil {
-
-		// Check if this is a bus-connected node
-
-		if epID := isBusNode(nodeID); epID != "" {
-
-			if ep := h.Bus.GetEndpoint(epID); ep != nil {
-
-				h.Bus.Unregister(epID)
-
-			}
-
+		if ep := h.Bus.GetEndpoint("runtime://" + nodeID); ep != nil {
+			h.Bus.Unregister("runtime://" + nodeID)
 		}
-
 	}
 
 
@@ -1197,14 +1070,4 @@ func (h *NodeHandler) UseJoinToken(token string) error {
 }
 
 
-
-// HashToken creates a deterministic node ID from a token for bus identification.
-
-func HashToken(token string) string {
-
-	h := sha256.Sum256([]byte(token))
-
-	return "tok-" + hex.EncodeToString(h[:8])
-
-}
 

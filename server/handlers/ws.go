@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -99,10 +98,11 @@ func (h *DashboardHub) HandleDashboardWS(c *gin.Context) {
 	h.UserConns[userID][connID] = true
 	h.Mu.Unlock()
 
-	log.Printf("[Dashboard] Connected: %s (user: %s)", connID, userID)
+	workspaceID := c.Query("workspace_id")
+	log.Printf("[Dashboard] Connected: %s (user: %s, workspace: %s)", connID, userID, workspaceID)
 
 	// Send initial state
-	h.sendDashboardInit(nc, userID)
+	h.sendDashboardInit(nc, userID, workspaceID)
 
 	// Heartbeat
 	ticker := time.NewTicker(30 * time.Second)
@@ -140,70 +140,51 @@ func (h *DashboardHub) HandleDashboardWS(c *gin.Context) {
 	}
 }
 
-func (h *DashboardHub) sendDashboardInit(nc *DashboardConn, userID string) {
-	// Build set of currently active bus runtime node IDs
-	activeBusNodes := make(map[string]bool)
+func (h *DashboardHub) sendDashboardInit(nc *DashboardConn, userID string, workspaceID string) {
+	// Build set of currently active runtime endpoint node IDs
+	activeNodes := make(map[string]bool)
 	if h.Bus != nil {
 		for _, ep := range h.Bus.EndpointsByType(protocol.EndpointRuntime) {
-			nodeID := "bus-" + strings.ReplaceAll(ep.ID, "://", "--")
-			activeBusNodes[nodeID] = true
+			// Extract node ID from "runtime://<uuid>"
+			if len(ep.ID) > 9 && ep.ID[:9] == "runtime://" {
+				activeNodes[ep.ID[9:]] = true
+			}
 		}
 	}
 
-	// Fetch nodes for this user
+	// Fetch nodes — if workspaceID is set, show all workspace members' nodes
 	nodes := make([]models.Node, 0)
-	rows, err := h.DB.Query(
-		`SELECT id, user_id, name, os, arch, status, version, ip, last_seen, created_at
-		 FROM nodes WHERE user_id = $1 ORDER BY created_at DESC`, userID,
-	)
+	var rows *sql.Rows
+	var err error
+	if workspaceID != "" {
+		rows, err = h.DB.Query(
+			`SELECT n.id, n.user_id, n.name, n.os, n.arch, n.status, n.version, n.ip, n.last_seen, n.created_at
+			 FROM nodes n
+			 JOIN workspace_members wm ON wm.user_id = n.user_id
+			 WHERE wm.workspace_id = $1
+			 ORDER BY n.created_at DESC`, workspaceID,
+		)
+	} else {
+		rows, err = h.DB.Query(
+			`SELECT id, user_id, name, os, arch, status, version, ip, last_seen, created_at
+			 FROM nodes WHERE user_id = $1 ORDER BY created_at DESC`, userID,
+		)
+	}
 	if err == nil {
 		defer rows.Close()
 		for rows.Next() {
 			var n models.Node
 			if err := rows.Scan(&n.ID, &n.UserID, &n.Name, &n.OS, &n.Arch, &n.Status, &n.Version, &n.IP, &n.LastSeen, &n.CreatedAt); err == nil {
-				// Skip bus virtual nodes that have no active runtime connection.
-				if strings.HasPrefix(n.ID, "bus-") && !activeBusNodes[n.ID] {
-					continue
+				if activeNodes[n.ID] {
+					n.Status = models.NodeStatusOnline
+				} else if n.Status != models.NodeStatusOffline {
+					n.Status = models.NodeStatusOffline
 				}
 				nodes = append(nodes, n)
 			}
 		}
 	} else {
 		log.Printf("[Dashboard] Failed to query nodes for init: %v", err)
-	}
-
-	// Add bus-connected runtime endpoints as virtual nodes for dashboard visibility.
-	if h.Bus != nil {
-		existing := make(map[string]bool, len(nodes))
-		for _, n := range nodes {
-			existing[n.ID] = true
-		}
-		for _, ep := range h.Bus.EndpointsByType(protocol.EndpointRuntime) {
-			nodeID := "bus-" + strings.ReplaceAll(ep.ID, "://", "--")
-			if existing[nodeID] {
-				continue
-			}
-			getMeta := func(key, def string) string {
-				if v, ok := ep.Metadata[key]; ok {
-					if s, ok := v.(string); ok {
-						return s
-					}
-				}
-				return def
-			}
-			nodes = append(nodes, models.Node{
-				ID:          nodeID,
-				Name:        getMeta("name", ep.ID),
-				Status:      models.NodeStatusOnline,
-				OS:          getMeta("os", "unknown"),
-				Arch:        getMeta("arch", ""),
-				Version:     getMeta("version", ""),
-				IP:          "bus",
-				MaxSessions: 3,
-				LastSeen:    time.Now(),
-				CreatedAt:   time.Now(),
-			})
-		}
 	}
 
 	// Fetch sessions for this user

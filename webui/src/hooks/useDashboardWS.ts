@@ -43,7 +43,9 @@ export function useDashboardWS() {
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
-    const url = `${protocol}//${host}/ws/dashboard?token=${encodeURIComponent(token)}`;
+    const wsId = localStorage.getItem('workspace_id');
+    let url = `${protocol}//${host}/ws/dashboard?token=${encodeURIComponent(token)}`;
+    if (wsId) url += `&workspace_id=${encodeURIComponent(wsId)}`;
 
     const ws = new WebSocket(url);
     wsRef.current = ws;

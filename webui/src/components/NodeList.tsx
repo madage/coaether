@@ -14,6 +14,9 @@ export function NodeList({ nodes, onSelect }: NodeListProps) {
   const [agentMap, setAgentMap] = useState<Record<string, Agent[]>>({});
   const [scanning, setScanning] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
+  const [showOffline, setShowOffline] = useState(true);
+
+  const filteredNodes = showOffline ? nodes : nodes.filter(n => n.status === 'online' || n.status === 'busy');
 
   const handleRemove = useCallback(async (nodeID: string, nodeName: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -81,12 +84,27 @@ export function NodeList({ nodes, onSelect }: NodeListProps) {
   }
 
   return (
-    <div style={{
-      display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
-      gap: '20px',
-    }}>
-      {nodes.map((node) => {
+    <div>
+      {/* Filter toggle */}
+      <div style={{ marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <label style={{ fontSize: '0.85em', color: '#666', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={showOffline}
+            onChange={(e) => setShowOffline(e.target.checked)}
+          />
+          {t('showOffline')}
+        </label>
+        <span style={{ fontSize: '0.8em', color: '#999' }}>
+          {nodes.filter(n => n.status === 'online' || n.status === 'busy').length}/{nodes.length} online
+        </span>
+      </div>
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
+        gap: '20px',
+      }}>
+      {filteredNodes.map((node) => {
         const agents = agentMap[node.id];
         const isExpanded = expandedId === node.id;
 
@@ -128,6 +146,11 @@ export function NodeList({ nodes, onSelect }: NodeListProps) {
                     <div style={{ fontWeight: 600, color: '#1a1a2e', fontSize: '1em', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{node.name}</div>
                   </div>
                   <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+                    {node.status === 'offline' ? (
+                      <span style={{ fontSize: '0.75em', color: '#999', whiteSpace: 'nowrap' }}>
+                        {t('lastSeen')}: {new Date(node.last_seen).toLocaleString()}
+                      </span>
+                    ) : (
                     <button
                       onClick={(e) => handleScan(node.id, e)}
                       disabled={scanning === node.id}
@@ -144,6 +167,7 @@ export function NodeList({ nodes, onSelect }: NodeListProps) {
                     >
                       {scanning === node.id ? t('scanning') : t('scanAgents')}
                     </button>
+                    )}
                     <button
                       onClick={(e) => handleRemove(node.id, node.name, e)}
                       disabled={removing === node.id}
@@ -254,6 +278,7 @@ export function NodeList({ nodes, onSelect }: NodeListProps) {
           </div>
         );
       })}
+    </div>
     </div>
   );
 }

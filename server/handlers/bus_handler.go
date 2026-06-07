@@ -1,15 +1,18 @@
 package handlers
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"log"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/superco/server/protocol"
 )
@@ -108,43 +111,99 @@ func (h *BusHandler) HandleWS(c *gin.Context) {
 		metadata["user_id"] = userID
 
 	case "runtime":
-		token := c.Query("token")
-		if token == "" {
-			conn.Close()
-			c.JSON(http.StatusBadRequest, gin.H{"error": "missing token"})
-			return
-		}
+		// Path A: Reconnect using node_secret
+		secret := c.Query("secret")
+		if secret != "" {
+			secretHash := sha256.Sum256([]byte(secret))
+			secretHashHex := hex.EncodeToString(secretHash[:])
 
-		var nodeName, status string
-		var expiresAt time.Time
-		err := h.DB.QueryRow(
-			`SELECT user_id, node_name, status, expires_at FROM node_join_tokens WHERE token = $1`,
-			token,
-		).Scan(&tokenUserID, &nodeName, &status, &expiresAt)
-		if err != nil {
-			conn.Close()
-			log.Printf("[Bus] Token lookup failed: %v", err)
-			return
-		}
-		if status != "pending" {
-			conn.Close()
-			log.Printf("[Bus] Token already %s", status)
-			return
-		}
-		if time.Now().After(expiresAt) {
-			h.DB.Exec(`UPDATE node_join_tokens SET status = 'expired' WHERE token = $1`, token)
-			conn.Close()
-			log.Printf("[Bus] Token expired")
-			return
-		}
-		// Mark as used
-		h.DB.Exec(`UPDATE node_join_tokens SET status = 'used', used_at = NOW() WHERE token = $1`, token)
+			var nodeID, userID, nodeName string
+			err := h.DB.QueryRow(
+				`SELECT id, user_id, name FROM nodes WHERE node_secret_hash = $1`,
+				secretHashHex,
+			).Scan(&nodeID, &userID, &nodeName)
+			if err != nil {
+				conn.Close()
+				log.Printf("[Bus] Secret lookup failed: %v", err)
+				return
+			}
 
-		nodeID := HashToken(token)
-		endpointID = "runtime://" + nodeID
-		metadata["node_id"] = nodeID
-		metadata["user_id"] = tokenUserID
-		metadata["node_name"] = nodeName
+			endpointID = "runtime://" + nodeID
+			metadata["node_id"] = nodeID
+			metadata["user_id"] = userID
+			metadata["node_name"] = nodeName
+			tokenUserID = userID
+
+			h.DB.Exec(
+				`UPDATE nodes SET status = 'online', last_seen = NOW() WHERE id = $1`,
+				nodeID,
+			)
+		} else {
+			// Path B: First-time registration using token
+			token := c.Query("token")
+			if token == "" {
+				conn.Close()
+				c.JSON(http.StatusBadRequest, gin.H{"error": "missing token or secret"})
+				return
+			}
+
+			var nodeName, status string
+			var expiresAt time.Time
+			err := h.DB.QueryRow(
+				`SELECT user_id, node_name, status, expires_at FROM node_join_tokens WHERE token = $1`,
+				token,
+			).Scan(&tokenUserID, &nodeName, &status, &expiresAt)
+			if err != nil {
+				conn.Close()
+				log.Printf("[Bus] Token lookup failed: %v", err)
+				return
+			}
+			if status != "pending" {
+				conn.Close()
+				log.Printf("[Bus] Token already %s", status)
+				return
+			}
+			if time.Now().After(expiresAt) {
+				h.DB.Exec(`UPDATE node_join_tokens SET status = 'expired' WHERE token = $1`, token)
+				conn.Close()
+				log.Printf("[Bus] Token expired")
+				return
+			}
+			// Mark as used
+			h.DB.Exec(`UPDATE node_join_tokens SET status = 'used', used_at = NOW() WHERE token = $1`, token)
+
+			// Generate node_secret
+			secretBytes := make([]byte, 32)
+			rand.Read(secretBytes)
+			nodeSecret := hex.EncodeToString(secretBytes)
+			secretHash := sha256.Sum256([]byte(nodeSecret))
+			secretHashHex := hex.EncodeToString(secretHash[:])
+
+			// Create real UUID node record
+			nodeID := uuid.New().String()
+			endpointID = "runtime://" + nodeID
+			metadata["node_id"] = nodeID
+			metadata["user_id"] = tokenUserID
+			metadata["node_name"] = nodeName
+
+			h.DB.Exec(
+				`INSERT INTO nodes (id, user_id, name, os, arch, status, version, ip,
+					max_sessions, last_seen, created_at, node_secret_hash)
+				 VALUES ($1, $2, $3, $4, $5, 'online', $6, $7, $8, NOW(), NOW(), $9)`,
+				nodeID, tokenUserID, nodeName, "unknown", "unknown",
+				"0.1.0", "bus", 3, secretHashHex,
+			)
+
+			// Send registration message with node_secret to runtime
+			regPayload := &protocol.Payload{
+				Metadata: map[string]any{
+					"node_secret": nodeSecret,
+					"node_id":     nodeID,
+				},
+			}
+			regEnv := protocol.NewEnvelope("system://bus", "", "registration", regPayload)
+			h.writeJSON(conn, regEnv)
+		}
 
 	default:
 		conn.Close()
@@ -155,22 +214,16 @@ func (h *BusHandler) HandleWS(c *gin.Context) {
 	// Register with the bus and set custom delivery function
 	h.Bus.Register(endpointID, conn, metadata)
 	log.Printf("[Bus] Connected: %s", endpointID)
-	// Upsert bus node in DB and broadcast to dashboards
-	if epType == "runtime" && h.Hub != nil {
-		sanID := "bus-" + strings.ReplaceAll(endpointID, "://", "--")
-				h.Hub.DB.Exec(
-					`INSERT INTO nodes (id, user_id, name, os, status, version, ip, max_sessions, last_seen, created_at)
-					 VALUES ($1, $2, $3, $4, 'online', $5, $6, $7, NOW(), NOW())
-					 ON CONFLICT (id) DO UPDATE SET status = 'online', last_seen = NOW()`,
-					sanID, tokenUserID, "Runtime: "+endpointID, "unknown", "0.1.0", "bus", 3,
-				)
-		h.Hub.BroadcastToDashboards("node_status", map[string]interface{}{
-			"node_id": sanID,
-			"name":    endpointID,
-			"status":  "online",
-		})
-	}
-
+		// Broadcast online status to dashboards (node record already created/updated above)
+		if epType == "runtime" && h.Hub != nil {
+			nodeID := metadata["node_id"].(string)
+			nodeName := metadata["node_name"].(string)
+			h.Hub.BroadcastToDashboards("node_status", map[string]interface{}{
+				"node_id": nodeID,
+				"name":    nodeName,
+				"status":  "online",
+			})
+		}
 	// Set up bus delivery for this connection using our safe writer
 	h.Bus.SetEndpointDeliver(conn, func(env *protocol.Envelope) error {
 		return h.writeJSON(conn, env)
@@ -222,13 +275,14 @@ func (h *BusHandler) HandleWS(c *gin.Context) {
 
 	// Update DB and broadcast to dashboards
 	if epType == "runtime" && h.Hub != nil {
-		sanID := "bus-" + strings.ReplaceAll(endpointID, "://", "--")
-		h.Hub.DB.Exec("UPDATE nodes SET status = 'offline', last_seen = NOW() WHERE id = $1", sanID)
-		h.Hub.BroadcastToDashboards("node_status", map[string]interface{}{
-			"node_id": sanID,
-			"name":    endpointID,
-			"status":  "offline",
-		})
+		nodeID, _ := metadata["node_id"].(string)
+		if nodeID != "" {
+			h.Hub.DB.Exec("UPDATE nodes SET status = 'offline', last_seen = NOW() WHERE id = $1", nodeID)
+			h.Hub.BroadcastToDashboards("node_status", map[string]interface{}{
+				"node_id": nodeID,
+				"status":  "offline",
+			})
+		}
 	}
 }
 

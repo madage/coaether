@@ -25,6 +25,7 @@ type Runtime struct {
 	NodeID    string
 	Name      string
 	Token     string
+	Secret    string
 
 	conn      *websocket.Conn
 	connMu    sync.Mutex
@@ -33,12 +34,13 @@ type Runtime struct {
 }
 
 // NewRuntime creates a new Runtime.
-func NewRuntime(serverURL, nodeID, name, token string) *Runtime {
+func NewRuntime(serverURL, nodeID, name, token, secret string) *Runtime {
 	return &Runtime{
 		ServerURL: serverURL,
 		NodeID:    nodeID,
 		Name:      name,
 		Token:     token,
+		Secret:    secret,
 		backends:  make(map[string]Backend),
 		endpoint:  "runtime://" + nodeID,
 	}
@@ -53,11 +55,18 @@ func (r *Runtime) RegisterBackend(agentID string, backend Backend) {
 // Run connects to the Message Bus and starts the message loop.
 func (r *Runtime) Run() error {
 	q := url.Values{
-		"type":    {"runtime"},
-		"node_id": {r.NodeID},
+		"type": {"runtime"},
 	}
-	if r.Token != "" {
+	if r.Secret != "" {
+		// Reconnect path: use persistent node_secret
+		q.Set("secret", r.Secret)
+		if r.NodeID != "" {
+			q.Set("node_id", r.NodeID)
+		}
+	} else if r.Token != "" {
+		// First-time registration path: use one-time token
 		q.Set("token", r.Token)
+		q.Set("node_id", r.NodeID)
 	}
 	u := url.URL{
 		Scheme:   "ws",
@@ -135,6 +144,18 @@ func (r *Runtime) sendPing() {
 
 func (r *Runtime) handleMessage(env *protocol.Envelope) {
 	switch env.Type {
+	case "registration":
+		log.Printf("[Runtime] Registration received")
+		if env.Payload != nil {
+			if nodeID, ok := env.Payload.Metadata["node_id"]; ok {
+				r.NodeID = nodeID.(string)
+				r.endpoint = "runtime://" + nodeID.(string)
+			}
+			if secret, ok := env.Payload.Metadata["node_secret"]; ok {
+				r.saveNodeSecret(secret.(string))
+			}
+		}
+
 	case protocol.MsgPong:
 		// heartbeat ok
 
@@ -219,6 +240,48 @@ type Backend interface {
 }
 
 // loadConfig reads ~/.superco/env and sets env vars if not already set.
+
+// saveNodeSecret persists the node_secret to ~/.superco/env (and optionally node_id).
+func (r *Runtime) saveNodeSecret(secret string) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		log.Printf("[Runtime] Cannot save node secret: %v", err)
+		return
+	}
+	envPath := filepath.Join(homeDir, ".superco", "env")
+	data, err := os.ReadFile(envPath)
+	if err != nil {
+		data = []byte("SERVER_URL=" + r.ServerURL + "\nNODE_TOKEN=\nNODE_SECRET=\nRUNTIME_NAME=\n")
+	}
+	lines := strings.Split(string(data), "\n")
+	secretFound := false
+	for i, line := range lines {
+		if strings.HasPrefix(line, "NODE_SECRET=") {
+			lines[i] = "NODE_SECRET=" + secret
+			secretFound = true
+			break
+		}
+	}
+	if !secretFound {
+		lines = append(lines, "NODE_SECRET="+secret)
+	}
+	if r.NodeID != "" {
+		idFound := false
+		for i, line := range lines {
+			if strings.HasPrefix(line, "NODE_ID=") {
+				lines[i] = "NODE_ID=" + r.NodeID
+				idFound = true
+				break
+			}
+		}
+		if !idFound {
+			lines = append(lines, "NODE_ID="+r.NodeID)
+		}
+	}
+	os.WriteFile(envPath, []byte(strings.Join(lines, "\n")), 0644)
+	log.Printf("[Runtime] Node secret saved to %s", envPath)
+}
+
 func loadConfig() {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -247,7 +310,6 @@ func loadConfig() {
 }
 
 func main() {
-	// Load config from ~/.superco/env (set by install script)
 	loadConfig()
 
 	serverURL := os.Getenv("SERVER_URL")
@@ -255,43 +317,56 @@ func main() {
 		serverURL = "localhost:8088"
 	}
 
-	nodeToken := os.Getenv("NODE_TOKEN")
-	if nodeToken == "" {
-		log.Fatal("[Runtime] NODE_TOKEN is required. Generate a token via the Superco Web UI (Nodes -> Add Node).")
-	}
-
-	// Derive deterministic node ID from token (matches server-side HashToken)
-	h := sha256.Sum256([]byte(nodeToken))
-	nodeID := "tok-" + hex.EncodeToString(h[:8])
-
 	name := os.Getenv("RUNTIME_NAME")
 	if name == "" {
 		name, _ = os.Hostname()
 	}
 
-	log.Printf("[Runtime] Starting on node %s, connecting to %s", nodeID, serverURL)
-
-	rt := NewRuntime(serverURL, nodeID, name, nodeToken)
-
-	// Register backends
-	// 1. Try Claude CLI (stream-json) — persistent, full tool support
-	if cli := backends.NewClaudeCLIBackend(""); cli != nil {
-		cli.SetSendFunc(rt.send)
-		rt.RegisterBackend("claude", cli)
-		log.Println("[Runtime] Claude CLI backend enabled (stream-json)")
-	} else if api := backends.NewClaudeBackend(); api != nil {
-		// 2. Fallback to Claude API (direct Anthropic API call)
-		rt.RegisterBackend("claude", api)
-		log.Println("[Runtime] Claude API backend enabled")
-	} else {
-		// 3. Fallback: echo backend for testing
-		rt.RegisterBackend("echo", backends.NewEchoBackend())
-		log.Println("[Runtime] No claude CLI or API key, using echo backend")
+	// Prefer persistent node_secret over one-time token
+	nodeSecret := os.Getenv("NODE_SECRET")
+	if nodeSecret != "" {
+		nodeID := os.Getenv("NODE_ID")
+		log.Printf("[Runtime] Reconnecting with persistent secret, node=%s", nodeID)
+		rt := NewRuntime(serverURL, nodeID, name, "", nodeSecret)
+		rt.registerBackends()
+		rt.runLoop()
+		return
 	}
 
+	nodeToken := os.Getenv("NODE_TOKEN")
+	if nodeToken == "" {
+		log.Fatal("[Runtime] NODE_TOKEN or NODE_SECRET is required. Generate a token via the Superco Web UI (Nodes -> Add Node).")
+	}
+
+	// Derive deterministic node ID from token (matches old server-side HashToken)
+	h := sha256.Sum256([]byte(nodeToken))
+	nodeID := "tok-" + hex.EncodeToString(h[:8])
+
+	log.Printf("[Runtime] First-time registration with token, node=%s, server=%s", nodeID, serverURL)
+
+	rt := NewRuntime(serverURL, nodeID, name, nodeToken, "")
+	rt.registerBackends()
+	rt.runLoop()
+}
+
+func (r *Runtime) registerBackends() {
+	if cli := backends.NewClaudeCLIBackend(""); cli != nil {
+		cli.SetSendFunc(r.send)
+		r.RegisterBackend("claude", cli)
+		log.Println("[Runtime] Claude CLI backend enabled (stream-json)")
+	} else if api := backends.NewClaudeBackend(); api != nil {
+		r.RegisterBackend("claude", api)
+		log.Println("[Runtime] Claude API backend enabled")
+	} else {
+		r.RegisterBackend("echo", backends.NewEchoBackend())
+		log.Println("[Runtime] No claude CLI or API key, using echo backend")
+	}
+}
+
+func (r *Runtime) runLoop() {
 	go func() {
 		for {
-			err := rt.Run()
+			err := r.Run()
 			if err != nil {
 				log.Printf("[Runtime] Connection error: %v (retry in 3s)", err)
 				time.Sleep(3 * time.Second)

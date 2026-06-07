@@ -406,6 +406,8 @@ func Migrate() error {
 
 		"CREATE INDEX IF NOT EXISTS idx_agent_profiles_workspace_id ON agent_profiles(workspace_id)",
 
+		"ALTER TABLE nodes ADD COLUMN IF NOT EXISTS node_secret_hash VARCHAR(128)",
+
 	}
 
 	for _, a := range alterations {
@@ -453,30 +455,6 @@ func Migrate() error {
 		if n, _ := staleResult.RowsAffected(); n > 0 {
 
 			log.Printf("[DB] Marked %d stale session(s) as failed (server restart)", n)
-
-		}
-
-	}
-
-
-
-	// Clean up offline bus virtual nodes
-
-	cleanResult, err := DB.Exec(
-
-		`DELETE FROM nodes WHERE status = 'offline' AND id LIKE 'bus-%'`,
-
-	)
-
-	if err != nil {
-
-		log.Printf("[DB] Bus node cleanup warning: %v", err)
-
-	} else {
-
-		if n, _ := cleanResult.RowsAffected(); n > 0 {
-
-			log.Printf("[DB] Cleaned up %d offline bus node(s)", n)
 
 		}
 

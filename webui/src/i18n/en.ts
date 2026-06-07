@@ -50,6 +50,7 @@ export const en = {
 
   refresh: 'Refresh',
 
+  showOffline: 'Show offline',
   lastSeen: 'Last seen',
 
   nodeOnline: 'online',

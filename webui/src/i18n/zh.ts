@@ -50,6 +50,7 @@ export const zh = {
 
   refresh: '刷新',
 
+  showOffline: '显示离线节点',
   lastSeen: '最后在线',
 
   nodeOnline: '在线',
