@@ -20,8 +20,6 @@ export function LangProvider({ children }: { children: ReactNode }) {
   const [lang, setLangState] = useState<Lang>(() => {
     const stored = localStorage.getItem('lang');
     if (stored === 'zh' || stored === 'en') return stored;
-    // Default to Chinese for zh-CN browsers
-    if (navigator.language?.startsWith?.('zh')) return 'zh';
     return 'en';
   });
 
