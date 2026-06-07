@@ -1,3 +1,22 @@
+// === Plugin Types ===
+export interface PluginInfo {
+  name: string;
+  version: string;
+  type: string;
+  state: string;
+  label?: Record<string, string>;
+  description?: Record<string, string>;
+  author?: string;
+  pid: number;
+  port: number;
+  error?: string;
+  permissions?: string[];
+  hooks?: string[];
+  api_routes?: string[];
+  frontend_slots?: Record<string, string>;
+  uptime_seconds?: number;
+}
+
 // === Agent Types ===
 export interface Agent {
   id: string;

@@ -380,6 +380,78 @@ export const zh = {
 
 
 
+  // Plugins
+
+  navPlugins: '插件',
+
+  plugins: '插件管理',
+
+  pluginLoading: '加载插件中...',
+
+  noPlugins: '暂未安装插件。',
+
+  pluginRunning: '运行中',
+
+  pluginStopped: '已停止',
+
+  pluginError: '错误',
+
+  pluginStarting: '启动中',
+
+  pluginStopping: '停止中',
+
+  pluginStart: '启动',
+
+  pluginStop: '停止',
+
+  pluginReload: '重载',
+
+  pluginVersion: '版本',
+
+  pluginAuthor: '作者',
+
+  pluginPermissions: '权限',
+
+  pluginHooks: '钩子',
+
+  pluginRoutes: 'API 路由',
+
+  pluginUptime: '运行时间',
+
+  pluginPort: '端口',
+
+  pluginPid: '进程 ID',
+
+  pluginNoPerms: '未声明',
+
+  pluginNoHooks: '无',
+
+  pluginNoRoutes: '无',
+
+  pluginNoError: '无错误',
+
+  pluginConfirmStop: '确定要停止 {name} 吗？',
+
+  pluginConfirmReload: '确定要重载 {name} 吗？',
+
+  pluginInstall: '安装插件',
+  pluginInstallUpload: '上传 ZIP',
+  pluginInstallGit: 'Git 仓库',
+  pluginInstallUploadHint: '选择插件 ZIP 文件进行上传安装。',
+  pluginInstallGitHint: '从远程 Git 仓库克隆插件。',
+  pluginInstallUrl: 'Git 地址',
+  pluginInstallUrlPlaceholder: 'https://github.com/user/plugin.git',
+  pluginInstallBranch: '分支（可选）',
+  pluginInstallBranchPlaceholder: 'main',
+  pluginInstallButton: '安装',
+  pluginInstalling: '安装中...',
+  pluginInstallSuccess: '插件 {name} v{version} 安装成功',
+  pluginInstallError: '安装失败',
+  pluginRemove: '删除',
+  pluginRemoveConfirm: '确定要删除插件 {name} 吗？',
+
+
+
   // Remote Nodes
 
   addNode: '添加节点',

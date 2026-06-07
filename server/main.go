@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 
 	"github.com/gin-gonic/gin"
@@ -346,7 +347,7 @@ func main() {
 	}
 
 	// Auto-start discovered plugins
-	started := pluginMgr.StartAll(nil)
+	started := pluginMgr.StartAll(context.Background())
 	if len(started) > 0 {
 		log.Printf("[Server] Auto-started plugins: %v", started)
 	}

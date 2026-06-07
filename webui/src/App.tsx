@@ -6,6 +6,7 @@ import { AgentList } from './components/AgentList';
 import { TaskBoard } from './components/TaskBoard';
 import { ProjectList } from './components/ProjectList';
 import { TrashView } from './components/TrashView';
+import { PluginList } from './components/PluginList';
 import { FloatingChat } from './components/FloatingChat';
 import { LangSwitcher } from './components/LangSwitcher';
 import WorkspaceMembers from './components/WorkspaceMembers';
@@ -18,7 +19,7 @@ import type { Node, Session, AuthState, Workspace, WorkspaceRole, WorkspaceMembe
 import WorkspaceContext from './hooks/WorkspaceContext';
 import { pluginClient } from './plugin/PluginClient';
 
-type Page = 'nodes' | 'tasks' | 'projects' | 'agents' | 'trash';
+type Page = 'nodes' | 'tasks' | 'projects' | 'agents' | 'plugins' | 'trash';
 
 function App() {
   const { t, lang } = useLang();
@@ -523,7 +524,7 @@ function App() {
         </div>
 
         <nav style={{ display: 'flex', flexDirection: 'column', padding: '8px' }}>
-          {(['nodes', 'tasks', 'projects', 'agents', 'trash'] as Page[]).map((p) => (
+          {(['nodes', 'tasks', 'projects', 'agents', ...(auth.workspace_role === 'owner' || auth.workspace_role === 'admin' ? ['plugins'] : []), 'trash'] as Page[]).map((p) => (
             <button
               key={p}
               onClick={() => setPage(p)}
@@ -541,9 +542,9 @@ function App() {
               }}
             >
               <span style={{ display: 'inline-block', width: '24px', textAlign: 'center', marginRight: '4px' }}>
-                {p === 'nodes' ? '📡' : p === 'tasks' ? '📋' : p === 'projects' ? '📁' : p === 'agents' ? '🤖' : '🗑'}
+                {p === 'nodes' ? '📡' : p === 'tasks' ? '📋' : p === 'projects' ? '📁' : p === 'agents' ? '🤖' : p === 'plugins' ? '🧩' : '🗑'}
               </span>
-              {p === 'nodes' ? t('navNodes') : p === 'tasks' ? t('navTasks') : p === 'projects' ? t('navProjects') : p === 'agents' ? t('agents') : t('navTrash')}
+              {p === 'nodes' ? t('navNodes') : p === 'tasks' ? t('navTasks') : p === 'projects' ? t('navProjects') : p === 'agents' ? t('agents') : p === 'plugins' ? t('navPlugins') : t('navTrash')}
             </button>
           ))}
         </nav>
@@ -633,6 +634,11 @@ function App() {
         {/* Projects page */}
         <div style={{ display: page === 'projects' ? 'block' : 'none', height: '100%', overflow: 'auto' }}>
           <ProjectList key={workspaceKey} />
+        </div>
+
+        {/* Plugins page */}
+        <div style={{ display: page === 'plugins' ? 'block' : 'none', height: '100%', overflow: 'auto' }}>
+          <PluginList key={workspaceKey} />
         </div>
 
         {/* Trash page */}

@@ -145,8 +145,10 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 		return err
 	}
 
-	// Start the plugin process
-	cmd := exec.CommandContext(ctx, binaryPath)
+	// Start the plugin process (use Command, not CommandContext, so the process
+	// outlives the HTTP request that triggered it). The ctx is only used for
+	// handshake/init timeout via the select below.
+	cmd := exec.Command(binaryPath)
 	cmd.Dir = filepath.Dir(binaryPath)
 	cmd.Env = append(os.Environ(),
 		fmt.Sprintf("%s=%d", handshakePortEnv, inst.Manifest.Capabilities.HTTPPort),
@@ -321,6 +323,48 @@ func (m *Manager) ShutdownAll() {
 	}
 }
 
+// BuildBinary attempts to build a plugin's binary from source.
+// Returns nil if a binary already exists or the build succeeds.
+func (m *Manager) BuildBinary(name string) error {
+	m.mu.RLock()
+	inst, ok := m.plugins[name]
+	m.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("plugin %q not registered", name)
+	}
+
+	pluginDir := m.absPluginDir(inst)
+
+	// Check if a pre-compiled binary already exists
+	candidates := []string{name, name + ".exe", "plugin", "plugin.exe", "main", "main.exe"}
+	for _, c := range candidates {
+		path := filepath.Join(pluginDir, c)
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			return nil // binary exists
+		}
+	}
+
+	// Check if source code is available
+	mainGo := filepath.Join(pluginDir, "main.go")
+	if _, err := os.Stat(mainGo); err != nil {
+		return fmt.Errorf("no pre-built binary and no main.go to compile in %s", pluginDir)
+	}
+
+	// Remove stale artifact (file or directory) so -o produces a clean binary
+	binaryName := name + ".exe"
+	os.RemoveAll(filepath.Join(pluginDir, name))
+	os.RemoveAll(filepath.Join(pluginDir, binaryName))
+
+	cmd := exec.Command("go", "build", "-o", binaryName, ".")
+	cmd.Dir = pluginDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("go build failed: %w\n%s", err, string(out))
+	}
+
+	m.logger.Printf("[INFO] Built plugin binary: %s", name)
+	return nil
+}
+
 // ==================== Health ====================
 
 // CheckHealth runs health checks on a specific plugin.
@@ -419,6 +463,42 @@ func (m *Manager) List() []*PluginInstance {
 	return result
 }
 
+// Remove stops a plugin (if running) and removes it from the manager and disk.
+func (m *Manager) Remove(name string) error {
+	m.mu.Lock()
+	inst, ok := m.plugins[name]
+	if !ok {
+		m.mu.Unlock()
+		return fmt.Errorf("plugin %q not registered", name)
+	}
+	if inst.State == StateRunning {
+		m.mu.Unlock()
+		if err := m.Stop(name); err != nil {
+			return err
+		}
+		m.mu.Lock()
+		inst, ok = m.plugins[name] // re-fetch after releasing lock
+		if !ok {
+			m.mu.Unlock()
+			return nil
+		}
+	}
+	pluginDir := m.absPluginDir(inst)
+	delete(m.plugins, name)
+	m.mu.Unlock()
+
+	// Remove from disk
+	if err := os.RemoveAll(pluginDir); err != nil {
+		m.logger.Printf("[WARN] Remove plugin %s disk cleanup: %v", name, err)
+	}
+
+	m.logger.Printf("[INFO] Removed plugin: %s", name)
+	return nil
+}
+
+// BaseDir returns the root directory containing the plugins/ folder.
+func (m *Manager) BaseDir() string { return m.baseDir }
+
 // ProxyURL returns the base URL for proxying to this plugin's HTTP server.
 func (m *Manager) ProxyURL(name string) string {
 	m.mu.RLock()
@@ -440,7 +520,7 @@ func (m *Manager) findBinary(name string) string {
 		return ""
 	}
 
-	pluginDir := filepath.Join(m.baseDir, pluginDir, inst.Manifest.PluginDir())
+	pluginDir := m.absPluginDir(inst)
 
 	// Common binary names for the plugin
 	candidates := []string{
@@ -469,14 +549,32 @@ func (m *Manager) findBinary(name string) string {
 }
 
 func buildPlugin(dir, name string) string {
-	output := filepath.Join(dir, name)
-	cmd := exec.Command("go", "build", "-o", output, ".")
+	binaryName := name + ".exe"
+	// Remove stale artifact so -o produces a clean binary
+	os.RemoveAll(filepath.Join(dir, name))
+	os.RemoveAll(filepath.Join(dir, binaryName))
+
+	cmd := exec.Command("go", "build", "-o", binaryName, ".")
 	cmd.Dir = dir
 	if err := cmd.Run(); err != nil {
 		log.Printf("[PluginManager] Build plugin %s: %v", name, err)
 		return ""
 	}
-	return output
+	path := filepath.Join(dir, binaryName)
+	if info, err := os.Stat(path); err == nil && !info.IsDir() {
+		return path
+	}
+	return filepath.Join(dir, name) // fallback for non-Windows
+}
+
+// absPluginDir returns the absolute path to a plugin's directory on disk.
+func (m *Manager) absPluginDir(inst *PluginInstance) string {
+	rel := filepath.Join(m.baseDir, pluginDir, inst.Manifest.PluginDir())
+	abs, err := filepath.Abs(rel)
+	if err != nil {
+		return rel // fallback to relative (will likely fail later)
+	}
+	return abs
 }
 
 func (m *Manager) callInit(ctx context.Context, inst *PluginInstance) error {

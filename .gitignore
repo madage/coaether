@@ -76,6 +76,9 @@ documents/
 build/
 server/store/
 
+# === Archives ===
+*.zip
+
 # Logs
 logs
 npm-debug.log*

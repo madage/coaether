@@ -8,18 +8,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// managementRoutes returns the set of known management sub-paths.
-// Used by the combined plugin router to distinguish management calls from proxied calls.
-var managementRoutes = map[string]bool{
-	"":       true, // GET /plugins/:id (detail)
-	"start":  true,
-	"stop":   true,
-	"reload": true,
-	"health": true,
-}
-
-// CombinedPluginHandler registers both management and proxy routes for plugins.
-// Management routes are registered explicitly; everything else is proxied.
+// RegisterPluginRoutes registers plugin management and reverse proxy routes.
+// Management routes are handled explicitly; all other paths are proxied to plugins.
 func RegisterPluginRoutes(
 	r *gin.RouterGroup,
 	mgr *Manager,
@@ -30,40 +20,73 @@ func RegisterPluginRoutes(
 		Start(c *gin.Context)
 		Stop(c *gin.Context)
 		Reload(c *gin.Context)
+		Remove(c *gin.Context)
 		HealthCheck(c *gin.Context)
+		InstallUpload(c *gin.Context)
+		InstallGit(c *gin.Context)
 	},
 ) {
-	// Management API (explicit routes take priority)
+	// Plugin list — no conflict with param routes
 	r.GET("/plugins", h.List)
-	r.GET("/plugins/:id", h.Get)
-	r.POST("/plugins/:id/start", h.Start)
-	r.POST("/plugins/:id/stop", h.Stop)
-	r.POST("/plugins/:id/reload", h.Reload)
-	r.GET("/plugins/:id/health", h.HealthCheck)
 
 	// Plugin host internal API
 	hostSvc.RegisterRoutes(r)
 
-	// Plugin reverse proxy: everything under /api/plugins/{name}/ that
-	// isn't a management route gets forwarded to the plugin's HTTP server.
-	r.Any("/plugins/:name/*proxyPath", reverseProxyHandler(mgr))
+	// Combined management + proxy handler.
+	// Gin cannot register both explicit param routes and a catch-all at the same
+	// prefix (e.g. /plugins/:name + /plugins/:name/*proxyPath). This single handler
+	// manually dispatches management actions and proxies everything else.
+	// Install actions (upload/git) are also dispatched here since Gin's tree does
+	// not always prioritize static routes over a param+catch-all at the same level.
+	r.Any("/plugins/:name/*proxyPath", combinedHandler(mgr, h))
 }
 
-func reverseProxyHandler(mgr *Manager) gin.HandlerFunc {
+func combinedHandler(
+	mgr *Manager,
+	h interface {
+		Get(c *gin.Context)
+		Start(c *gin.Context)
+		Stop(c *gin.Context)
+		Reload(c *gin.Context)
+		Remove(c *gin.Context)
+		HealthCheck(c *gin.Context)
+		InstallUpload(c *gin.Context)
+		InstallGit(c *gin.Context)
+	},
+) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		name := c.Param("name")
 		proxyPath := c.Param("proxyPath")
-
-		// If the "action" part of the path is a known management route, skip proxying.
-		// Gin's router handles this naturally for specific routes, but this catch-all
-		// also matches GET /plugins/:name without a sub-path. Only proxy if there's
-		// a sub-path that isn't a management route.
 		action := strings.TrimPrefix(proxyPath, "/")
-		if managementRoutes[action] {
-			c.Next() // skip — let the registered management handler handle it
+
+		switch action {
+		case "":
+			h.Get(c)
+			return
+		case "start":
+			h.Start(c)
+			return
+		case "stop":
+			h.Stop(c)
+			return
+		case "reload":
+			h.Reload(c)
+			return
+		case "remove":
+			h.Remove(c)
+			return
+		case "health":
+			h.HealthCheck(c)
+			return
+		case "upload":
+			h.InstallUpload(c)
+			return
+		case "git":
+			h.InstallGit(c)
 			return
 		}
 
+		// Not a management action — proxy to plugin
 		targetURL := mgr.ProxyURL(name)
 		if targetURL == "" {
 			c.JSON(502, gin.H{"error": "plugin not available or not running"})
@@ -80,7 +103,6 @@ func reverseProxyHandler(mgr *Manager) gin.HandlerFunc {
 
 		proxy := httputil.NewSingleHostReverseProxy(target)
 
-		// Rewrite path: the proxy path already starts with /
 		c.Request.URL.Path = proxyPath
 		c.Request.URL.RawPath = proxyPath
 		c.Request.Header.Set("X-Plugin-Id", name)
