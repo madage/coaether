@@ -6,6 +6,7 @@ import { useWorkspace } from '../hooks/WorkspaceContext';
 import { TaskCard } from './TaskCard';
 import { TaskForm } from './TaskForm';
 import { TaskDetail } from './TaskDetail';
+import { MathConfirmDialog } from './MathConfirmDialog';
 import type { Task, TaskStatus, Project, UpdateTaskReq, Priority, AssigneeType } from '../types';
 
 const columns: TaskStatus[] = ['todo', 'in_progress', 'blocked', 'review', 'done'];
@@ -55,12 +56,7 @@ export function TaskBoard({ initialTaskId, onTaskOpened }: { initialTaskId?: str
   const [subtaskCounts, setSubtaskCounts] = useState<Record<string, number>>({});
   const [assigneeNames, setAssigneeNames] = useState<Record<string, string>>({});
 
-  // Delete verification state
-  const [deleteVerify, setDeleteVerify] = useState<{
-    taskId: string; a: number; b: number; op: '+' | '-'; answer: number;
-  } | null>(null);
-  const [verifyInput, setVerifyInput] = useState('');
-  const [verifyError, setVerifyError] = useState(false);
+  const [deleteTaskId, setDeleteTaskId] = useState<string | null>(null);
 
   const fetchTasks = useCallback(async (params?: { projectId?: string; priority?: string; tag?: string; assigneeId?: string; delegatedAssigneeId?: string }) => {
     try {
@@ -159,10 +155,22 @@ export function TaskBoard({ initialTaskId, onTaskOpened }: { initialTaskId?: str
     }
   }, [fetchTasks]);
 
-  const handleDetailDelete = useCallback(async (id: string) => {
+  const handleDetailDelete = useCallback((id: string) => {
+    setDeleteTaskId(id);
+  }, []);
+
+  const handleDelete = useCallback((id: string) => {
+    setDeleteTaskId(id);
+  }, []);
+
+  const handleDeleteConfirm = useCallback(async () => {
+    if (!deleteTaskId) return;
+    const id = deleteTaskId;
+    setDeleteTaskId(null);
     try {
       await tasksApi.delete(id);
       setEditingTask(null);
+      setTaskList((prev) => prev.filter((t) => t.id !== id));
       fetchTasks({
         projectId: filterProjectId || undefined,
         priority: filterPriority || undefined,
@@ -173,36 +181,7 @@ export function TaskBoard({ initialTaskId, onTaskOpened }: { initialTaskId?: str
     } catch {
       alert('Failed to delete task');
     }
-  }, [fetchTasks, filterProjectId, filterPriority, filterTag, filterAssigneeId, filterDelegatedId]);
-
-  const handleDelete = useCallback(async (id: string) => {
-    const a = Math.floor(Math.random() * 20) + 1;
-    const b = Math.floor(Math.random() * 20) + 1;
-    const op = Math.random() > 0.5 ? '+' : '-';
-    const answer = op === '+' ? a + b : Math.max(a, b) - Math.min(a, b);
-    const [na, nb] = op === '+' ? [a, b] : [Math.max(a, b), Math.min(a, b)];
-    setDeleteVerify({ taskId: id, a: na, b: nb, op, answer });
-    setVerifyInput('');
-    setVerifyError(false);
-  }, []);
-
-  const handleDeleteConfirm = useCallback(async () => {
-    if (!deleteVerify) return;
-    const userAnswer = parseInt(verifyInput, 10);
-    if (isNaN(userAnswer) || userAnswer !== deleteVerify.answer) {
-      setVerifyError(true);
-      return;
-    }
-    try {
-      await tasksApi.delete(deleteVerify.taskId);
-      setTaskList((prev) => prev.filter((t) => t.id !== deleteVerify.taskId));
-      setDeleteVerify(null);
-      setVerifyInput('');
-      setVerifyError(false);
-    } catch {
-      alert('Failed to delete task');
-    }
-  }, [deleteVerify, verifyInput]);
+  }, [deleteTaskId, fetchTasks, filterProjectId, filterPriority, filterTag, filterAssigneeId, filterDelegatedId]);
 
   const handleStatusChange = useCallback(async (id: string, status: TaskStatus) => {
     try {
@@ -448,50 +427,14 @@ export function TaskBoard({ initialTaskId, onTaskOpened }: { initialTaskId?: str
         </div>
       )}
 
-      {/* Delete verification modal */}
-      {deleteVerify && (
-        <div onClick={() => { setDeleteVerify(null); setVerifyError(false); }}
-          style={{
-            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
-            display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000,
-          }}
-        >
-          <div onClick={(e) => e.stopPropagation()}
-            style={{
-              background: '#fff', borderRadius: '12px', padding: '28px',
-              width: '360px', maxWidth: '90vw', boxShadow: '0 8px 32px rgba(0,0,0,0.2)', textAlign: 'center',
-            }}
-          >
-            <h3 style={{ margin: '0 0 8px', color: '#333' }}>{t('taskConfirmDelete')}</h3>
-            <p style={{ color: '#666', fontSize: '0.9em', marginBottom: '20px' }}>
-              {t('deleteVerifyPrompt')}
-            </p>
-            <div style={{ fontSize: '1.4em', fontWeight: 700, color: '#333', marginBottom: '16px' }}>
-              {deleteVerify.a} {deleteVerify.op} {deleteVerify.b} = ?
-            </div>
-            <input value={verifyInput} onChange={(e) => { setVerifyInput(e.target.value); setVerifyError(false); }}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleDeleteConfirm(); }}
-              style={{
-                width: '100%', padding: '10px', borderRadius: '6px',
-                border: verifyError ? '1px solid #c62828' : '1px solid #ddd',
-                fontSize: '1.1em', textAlign: 'center', boxSizing: 'border-box', outline: 'none', marginBottom: '8px',
-              }} autoFocus />
-            {verifyError && (
-              <div style={{ color: '#c62828', fontSize: '0.85em', marginBottom: '8px' }}>
-                {t('deleteVerifyWrong')}
-              </div>
-            )}
-            <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginTop: '12px' }}>
-              <button onClick={() => { setDeleteVerify(null); setVerifyError(false); }} style={btnSecondaryStyle}>
-                {t('cancel')}
-              </button>
-              <button onClick={handleDeleteConfirm} style={{ ...btnPrimaryStyle, background: '#c62828' }}>
-                {t('taskDelete')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <MathConfirmDialog
+        open={deleteTaskId !== null}
+        title={t('taskConfirmDelete')}
+        description={t('deleteVerifyPrompt')}
+        confirmLabel={t('taskDelete')}
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => setDeleteTaskId(null)}
+      />
 
       {/* Create form */}
       {showForm && (

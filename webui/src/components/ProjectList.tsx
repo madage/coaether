@@ -7,6 +7,7 @@ import { ProjectForm } from './ProjectForm';
 import { ProjectDetail } from './ProjectDetail';
 import { TaskCard } from './TaskCard';
 import { TaskDetail } from './TaskDetail';
+import { MathConfirmDialog } from './MathConfirmDialog';
 import type { Project, Task, TaskStatus, ProjectStatus, CreateProjectReq, UpdateProjectReq, AssigneeType } from '../types';
 import { useWorkspace } from '../hooks/WorkspaceContext';
 
@@ -25,6 +26,7 @@ export function ProjectList() {
   const [unassignedTasks, setUnassignedTasks] = useState<Task[]>([]);
   const [unassignedCount, setUnassignedCount] = useState(0);
   const [editingUnassignedTask, setEditingUnassignedTask] = useState<Task | null>(null);
+  const [deleteProjectId, setDeleteProjectId] = useState<string | null>(null);
 
   const fetchProjects = useCallback(async (status?: string) => {
     try {
@@ -89,7 +91,14 @@ export function ProjectList() {
     }
   }, [fetchProjects, filterStatus]);
 
-  const handleDelete = useCallback(async (id: string) => {
+  const handleDelete = useCallback((id: string) => {
+    setDeleteProjectId(id);
+  }, []);
+
+  const handleDeleteConfirm = useCallback(async () => {
+    if (!deleteProjectId) return;
+    const id = deleteProjectId;
+    setDeleteProjectId(null);
     try {
       await projectsApi.delete(id);
       setDetailProject(null);
@@ -97,7 +106,7 @@ export function ProjectList() {
     } catch {
       alert('Failed to delete project');
     }
-  }, [fetchProjects, filterStatus]);
+  }, [deleteProjectId, fetchProjects, filterStatus]);
 
   const handleNoProjectClick = useCallback(async () => {
     try {
@@ -288,6 +297,14 @@ export function ProjectList() {
           }}
         />
       )}
+      <MathConfirmDialog
+        open={deleteProjectId !== null}
+        title={t('taskDelete')}
+        description={lang === 'zh' ? '确定要删除该项目吗？' : 'Are you sure you want to delete this project?'}
+        confirmLabel={t('taskDelete')}
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => setDeleteProjectId(null)}
+      />
     </div>
   );
 }

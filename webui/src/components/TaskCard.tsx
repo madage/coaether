@@ -80,6 +80,7 @@ export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap, 
         gap: '6px',
         cursor: 'pointer',
         position: 'relative',
+        zIndex: menuOpen ? 1 : undefined,
       }}
       onClick={() => onEdit(task)}
       onMouseEnter={(e) => {
@@ -109,7 +110,7 @@ export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap, 
           {menuOpen && (
             <div
               style={{
-                position: 'absolute', top: '100%', left: 0, zIndex: 100,
+                position: 'absolute', top: '100%', left: 0, zIndex: 3000,
                 background: '#fff', borderRadius: '8px',
                 boxShadow: '0 4px 16px rgba(0,0,0,0.15)', minWidth: '140px',
                 padding: '4px 0', border: '1px solid #eee',

@@ -482,6 +482,8 @@ export const en = {
 
   nodeRemoveConfirm: 'Are you sure you want to remove this node?',
 
+  nodeStopConfirm: 'Complete the verification to stop this node:',
+  nodeStopConfirmWrong: 'Incorrect answer, please try again',
   nodeNoPermission: 'You do not have permission to control this node',
   nodeStart: 'Start',
   nodeStop: 'Stop',

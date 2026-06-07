@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useLang } from '../i18n/context';
 import { agents as agentsApi, nodes as nodesApi } from '../api/client';
 import type { Node, Agent } from '../types';
+import { MathConfirmDialog } from './MathConfirmDialog';
 
 interface NodeListProps {
   nodes: Node[];
@@ -18,20 +19,14 @@ export function NodeList({ nodes, onSelect }: NodeListProps) {
   const [showOffline, setShowOffline] = useState(true);
   const [errorDialog, setErrorDialog] = useState<string | null>(null);
   const [commandDialog, setCommandDialog] = useState<{command: string; command_ps1: string} | null>(null);
+  const [mathConfirmAction, setMathConfirmAction] = useState<{ type: 'stop' | 'remove'; nodeID: string } | null>(null);
 
   const filteredNodes = showOffline ? nodes : nodes.filter(n => n.status === 'online' || n.status === 'busy');
 
-  const handleRemove = useCallback(async (nodeID: string, nodeName: string, e: React.MouseEvent) => {
+  const handleRemove = useCallback((nodeID: string, _nodeName: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!window.confirm(t('nodeRemoveConfirm'))) return;
-    setRemoving(nodeID);
-    try {
-      await nodesApi.remove(nodeID);
-    } catch (err) {
-      setErrorDialog(err instanceof Error ? err.message : t('nodeNoPermission'));
-      setRemoving(null);
-    }
-  }, [t]);
+    setMathConfirmAction({ type: 'remove', nodeID });
+  }, []);
 
   const statusLabel: Record<string, string> = {
     online: t('nodeOnline'),
@@ -82,18 +77,34 @@ export function NodeList({ nodes, onSelect }: NodeListProps) {
     }
   }, [t]);
 
-  const handleStop = useCallback(async (nodeID: string, e: React.MouseEvent) => {
+  const handleStop = useCallback((nodeID: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    const key = `stop:${nodeID}`;
-    setManaging(key);
-    try {
-      await nodesApi.stop(nodeID);
-      // Leave button showing "停止中..." until WebSocket updates node status
-    } catch (err) {
-      setErrorDialog(err instanceof Error ? err.message : t('nodeNoPermission'));
-      setManaging(null);
+    setMathConfirmAction({ type: 'stop', nodeID });
+  }, []);
+
+  const handleMathConfirm = useCallback(async () => {
+    if (!mathConfirmAction) return;
+    const { type, nodeID } = mathConfirmAction;
+    setMathConfirmAction(null);
+    if (type === 'stop') {
+      const key = `stop:${nodeID}`;
+      setManaging(key);
+      try {
+        await nodesApi.stop(nodeID);
+      } catch (err) {
+        setErrorDialog(err instanceof Error ? err.message : t('nodeNoPermission'));
+        setManaging(null);
+      }
+    } else {
+      setRemoving(nodeID);
+      try {
+        await nodesApi.remove(nodeID);
+      } catch (err) {
+        setErrorDialog(err instanceof Error ? err.message : t('nodeNoPermission'));
+        setRemoving(null);
+      }
     }
-  }, [t]);
+  }, [mathConfirmAction, t]);
 
   const handleToggleAgent = useCallback(async (agent: Agent, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -248,6 +259,15 @@ export function NodeList({ nodes, onSelect }: NodeListProps) {
           </div>
         </div>
       )}
+      {/* Math confirm dialog */}
+      <MathConfirmDialog
+        open={mathConfirmAction !== null}
+        title={mathConfirmAction?.type === 'stop' ? t('nodeStop') : t('nodeRemove')}
+        description={mathConfirmAction?.type === 'stop' ? t('nodeStopConfirm') : t('nodeRemoveConfirm')}
+        confirmLabel={mathConfirmAction?.type === 'stop' ? t('nodeStop') : t('nodeRemove')}
+        onConfirm={handleMathConfirm}
+        onCancel={() => setMathConfirmAction(null)}
+      />
       {/* Filter toggle */}
       <div style={{ marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
         <label style={{ fontSize: '0.85em', color: '#666', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>

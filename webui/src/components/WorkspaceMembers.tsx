@@ -3,6 +3,7 @@ import { useLang } from '../i18n/context';
 import { workspaceMembers, invitations as invitationsApi } from '../api/client';
 import { useWorkspace } from '../hooks/WorkspaceContext';
 import type { WorkspaceMember, WorkspaceRole, PendingInvitation } from '../types';
+import { MathConfirmDialog } from './MathConfirmDialog';
 
 interface Props {
   workspaceId: string;
@@ -19,6 +20,7 @@ function WorkspaceMembers({ workspaceId }: Props) {
   const [error, setError] = useState('');
   const [inviteLink, setInviteLink] = useState('');
   const [activeTab, setActiveTab] = useState<'members' | 'invitations'>('members');
+  const [confirmRemoveUserId, setConfirmRemoveUserId] = useState<string | null>(null);
 
   const canManage = role === 'admin' || role === 'owner';
 
@@ -59,15 +61,20 @@ function WorkspaceMembers({ workspaceId }: Props) {
     }
   }, [inviteEmail, inviteRole, workspaceId, fetchData]);
 
-  const handleRemove = useCallback(async (userId: string) => {
-    if (!window.confirm(lang === 'zh' ? '确定移除该成员？' : 'Remove this member?')) return;
+  const handleRemove = useCallback((userId: string) => {
+    setConfirmRemoveUserId(userId);
+  }, []);
+
+  const handleRemoveConfirm = useCallback(async () => {
+    if (!confirmRemoveUserId) return;
+    setConfirmRemoveUserId(null);
     try {
-      await workspaceMembers.remove(workspaceId, userId);
+      await workspaceMembers.remove(workspaceId, confirmRemoveUserId);
       await fetchData();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to remove member');
     }
-  }, [workspaceId, fetchData, lang]);
+  }, [workspaceId, fetchData, confirmRemoveUserId]);
 
   const handleRoleChange = useCallback(async (userId: string, newRole: WorkspaceRole) => {
     try {
@@ -308,6 +315,14 @@ function WorkspaceMembers({ workspaceId }: Props) {
           {lang === 'zh' ? '仅管理员和拥有者可管理成员' : 'Only admins and owners can manage members'}
         </div>
       )}
+      <MathConfirmDialog
+        open={confirmRemoveUserId !== null}
+        title={lang === 'zh' ? '移除成员' : 'Remove Member'}
+        description={lang === 'zh' ? '确定要移除该成员吗？' : 'Are you sure you want to remove this member?'}
+        confirmLabel={lang === 'zh' ? '移除' : 'Remove'}
+        onConfirm={handleRemoveConfirm}
+        onCancel={() => setConfirmRemoveUserId(null)}
+      />
     </div>
   );
 }

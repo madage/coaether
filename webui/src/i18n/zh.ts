@@ -482,6 +482,8 @@ export const zh = {
 
   nodeRemoveConfirm: '确定要移除这个节点吗？',
 
+  nodeStopConfirm: '请完成以下验证以确认停止节点：',
+  nodeStopConfirmWrong: '计算结果不正确，请重试',
   nodeNoPermission: '你没有权限操作该节点',
   nodeStart: '启动',
   nodeStop: '停止',

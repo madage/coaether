@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { plugins as pluginsApi } from '../api/client';
 import { useLang } from '../i18n/context';
 import type { PluginInfo } from '../types';
+import { MathConfirmDialog } from './MathConfirmDialog';
 
 function formatUptime(seconds?: number): string {
   if (!seconds && seconds !== 0) return '-';
@@ -42,6 +43,7 @@ export function PluginList() {
   const [gitBranch, setGitBranch] = useState('');
   const [installing, setInstalling] = useState(false);
   const [installError, setInstallError] = useState<string | null>(null);
+  const [confirmAction, setConfirmAction] = useState<{ name: string; action: 'stop' | 'reload' | 'remove' } | null>(null);
 
   const fetchPlugins = useCallback(async () => {
     try {
@@ -59,11 +61,15 @@ export function PluginList() {
     fetchPlugins();
   }, [fetchPlugins]);
 
-  const handleAction = async (name: string, action: 'start' | 'stop' | 'reload' | 'remove') => {
-    if (action === 'stop' && !window.confirm(t('pluginConfirmStop').replace('{name}', name))) return;
-    if (action === 'reload' && !window.confirm(t('pluginConfirmReload').replace('{name}', name))) return;
-    if (action === 'remove' && !window.confirm(t('pluginRemoveConfirm').replace('{name}', name))) return;
+  const handleAction = (name: string, action: 'start' | 'stop' | 'reload' | 'remove') => {
+    if (action === 'start') {
+      executeAction(name, action);
+    } else {
+      setConfirmAction({ name, action });
+    }
+  };
 
+  const executeAction = async (name: string, action: string) => {
     setActionLoading(`${name}:${action}`);
     try {
       if (action === 'start') await pluginsApi.start(name);
@@ -76,6 +82,13 @@ export function PluginList() {
     } finally {
       setActionLoading(null);
     }
+  };
+
+  const handlePluginConfirm = () => {
+    if (!confirmAction) return;
+    const { name, action } = confirmAction;
+    setConfirmAction(null);
+    executeAction(name, action);
   };
 
   const handleInstall = async () => {
@@ -125,6 +138,7 @@ export function PluginList() {
   }
 
   return (
+    <>
     <div style={{ padding: '24px', maxWidth: '900px', height: '100%', overflow: 'auto' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
         <h2 style={{ margin: 0 }}>{t('plugins')}</h2>
@@ -337,5 +351,17 @@ export function PluginList() {
         </div>
       ))}
     </div>
+      {confirmAction && (
+        <MathConfirmDialog
+          open
+          title={t(('plugin' + (confirmAction.action === 'stop' ? 'Stop' : confirmAction.action === 'reload' ? 'Reload' : 'Remove')) as any)}
+          description={t(('pluginConfirm' + (confirmAction.action === 'stop' ? 'Stop' : confirmAction.action === 'reload' ? 'Reload' : 'Remove')) as any).replace('{name}', confirmAction.name)}
+          confirmLabel={t((confirmAction.action === 'stop' ? 'pluginStop' : confirmAction.action === 'reload' ? 'pluginReload' : 'pluginRemove') as any)}
+          onConfirm={handlePluginConfirm}
+          onCancel={() => setConfirmAction(null)}
+        />
+      )}
+    </>
   );
 }
+
