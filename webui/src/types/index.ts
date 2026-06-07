@@ -287,6 +287,20 @@ export interface CreateCommentReq {
   agent_profile_id?: string;
 }
 
+// === Notification Types ===
+export type NotificationType = 'task_assigned' | 'task_status_changed' | 'task_comment';
+
+export interface AppNotification {
+  id: string;
+  user_id: string;
+  type: NotificationType;
+  title: string;
+  message: string;
+  task_id?: string | null;
+  is_read: boolean;
+  created_at: string;
+}
+
 // === User Management ===
 export interface UserSummary {
   id: string;

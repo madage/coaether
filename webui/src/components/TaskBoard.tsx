@@ -33,7 +33,7 @@ const columnColors: Record<TaskStatus, string> = {
   done: '#c8e6c9',
 };
 
-export function TaskBoard() {
+export function TaskBoard({ initialTaskId, onTaskOpened }: { initialTaskId?: string | null; onTaskOpened?: () => void }) {
   const { t } = useLang();
   const { role, workspaceId } = useWorkspace();
   const isObserver = role === 'observer';
@@ -49,6 +49,7 @@ export function TaskBoard() {
   const [filterPriority, setFilterPriority] = useState<string>("");
   const [filterTag, setFilterTag] = useState<string>("");
   const [filterAssigneeId, setFilterAssigneeId] = useState<string>("");
+  const [filterDelegatedId, setFilterDelegatedId] = useState<string>("");
 
   // Subtask counts & assignee names (simple approach: compute client-side)
   const [subtaskCounts, setSubtaskCounts] = useState<Record<string, number>>({});
@@ -61,13 +62,14 @@ export function TaskBoard() {
   const [verifyInput, setVerifyInput] = useState('');
   const [verifyError, setVerifyError] = useState(false);
 
-  const fetchTasks = useCallback(async (params?: { projectId?: string; priority?: string; tag?: string; assigneeId?: string }) => {
+  const fetchTasks = useCallback(async (params?: { projectId?: string; priority?: string; tag?: string; assigneeId?: string; delegatedAssigneeId?: string }) => {
     try {
       const res = await tasksApi.list({
         projectId: params?.projectId,
         priority: params?.priority || undefined,
         tag: params?.tag || undefined,
         assigneeId: params?.assigneeId || undefined,
+        delegatedAssigneeId: params?.delegatedAssigneeId || undefined,
       });
       setTaskList(res.tasks);
       // Compute subtask counts
@@ -91,8 +93,19 @@ export function TaskBoard() {
       priority: filterPriority || undefined,
       tag: filterTag || undefined,
       assigneeId: filterAssigneeId || undefined,
+      delegatedAssigneeId: filterDelegatedId || undefined,
     });
-  }, [filterProjectId, filterPriority, filterTag, filterAssigneeId, fetchTasks]);
+  }, [filterProjectId, filterPriority, filterTag, filterAssigneeId, filterDelegatedId, fetchTasks]);
+
+  useEffect(() => {
+    if (initialTaskId && taskList.length > 0) {
+      const task = taskList.find((t) => t.id === initialTaskId);
+      if (task) {
+        setEditingTask(task);
+        onTaskOpened?.();
+      }
+    }
+  }, [initialTaskId, taskList, onTaskOpened]);
 
   useEffect(() => {
     projectsApi.list().then((res) => setProjects(res.projects)).catch(() => {});
@@ -114,6 +127,7 @@ export function TaskBoard() {
     priority: filterPriority || undefined,
     tag: filterTag || undefined,
     assigneeId: filterAssigneeId || undefined,
+    delegatedAssigneeId: filterDelegatedId || undefined,
   }));
 
   const grouped = taskList.reduce(
@@ -154,11 +168,12 @@ export function TaskBoard() {
         priority: filterPriority || undefined,
         tag: filterTag || undefined,
         assigneeId: filterAssigneeId || undefined,
+        delegatedAssigneeId: filterDelegatedId || undefined,
       });
     } catch {
       alert('Failed to delete task');
     }
-  }, [fetchTasks, filterProjectId, filterPriority, filterTag, filterAssigneeId]);
+  }, [fetchTasks, filterProjectId, filterPriority, filterTag, filterAssigneeId, filterDelegatedId]);
 
   const handleDelete = useCallback(async (id: string) => {
     const a = Math.floor(Math.random() * 20) + 1;
@@ -235,6 +250,22 @@ export function TaskBoard() {
             onChange={(e) => setFilterTag(e.target.value)}
             style={{ ...filterSelectStyle, maxWidth: '100px' }}
           />
+
+          {/* Assignee filter */}
+          <select value={filterAssigneeId} onChange={(e) => setFilterAssigneeId(e.target.value)} style={{ ...filterSelectStyle, maxWidth: '120px' }}>
+            <option value="">{t('taskDetailAssignee')}</option>
+            {Object.entries(assigneeNames).map(([id, name]) => (
+              <option key={id} value={id}>{name}</option>
+            ))}
+          </select>
+
+          {/* Delegated assignee filter */}
+          <select value={filterDelegatedId} onChange={(e) => setFilterDelegatedId(e.target.value)} style={{ ...filterSelectStyle, maxWidth: '120px' }}>
+            <option value="">{t('taskDelegated')}</option>
+            {Object.entries(assigneeNames).map(([id, name]) => (
+              <option key={id} value={id}>{name}</option>
+            ))}
+          </select>
 
           {/* View toggle */}
           <div style={{ display: 'flex', borderRadius: '6px', overflow: 'hidden', border: '1px solid #ddd' }}>

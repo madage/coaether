@@ -1,43 +1,79 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useLang } from '../i18n/context';
 import { useResourceSync } from '../hooks/useResourceSync';
-import { invitations as invitationsApi, workspaces as workspacesApi } from '../api/client';
-import type { PendingInvitation } from '../types';
+import { notifications as notificationsApi, invitations as invitationsApi } from '../api/client';
+import type { AppNotification, PendingInvitation } from '../types';
 
 interface Props {
   onWorkspaceChange?: () => void;
+  onOpenTask?: (taskId: string) => void;
 }
 
-export default function NotificationBell({ onWorkspaceChange }: Props) {
+function timeAgo(dateStr: string, lang: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return lang === 'zh' ? '刚刚' : 'just now';
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d`;
+  return new Date(dateStr).toLocaleDateString(lang === 'zh' ? 'zh-CN' : 'en-US', { month: 'short', day: 'numeric' });
+}
+
+const notifTypeIcons: Record<string, string> = {
+  task_assigned: '📋',
+  task_status_changed: '🔄',
+  task_comment: '💬',
+};
+
+export default function NotificationBell({ onWorkspaceChange, onOpenTask }: Props) {
   const { t, lang } = useLang();
+  const [notifList, setNotifList] = useState<AppNotification[]>([]);
   const [invitations, setInvitations] = useState<PendingInvitation[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
   const [open, setOpen] = useState(false);
+  const [tab, setTab] = useState<'notifications' | 'invitations'>('notifications');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const bellRef = useRef<HTMLButtonElement>(null);
 
-  const fetchPending = useCallback(async () => {
-    setLoading(true);
+  const fetchNotifications = useCallback(async () => {
+    try {
+      const [listRes, countRes] = await Promise.all([
+        notificationsApi.list(),
+        notificationsApi.unreadCount(),
+      ]);
+      setNotifList(listRes.notifications || []);
+      setUnreadCount(countRes.count);
+    } catch {
+      // silently fail
+    }
+  }, []);
+
+  const fetchInvitations = useCallback(async () => {
     try {
       const res = await invitationsApi.pending();
       setInvitations(res.invitations || []);
     } catch {
       // silently fail
-    } finally {
-      setLoading(false);
     }
   }, []);
 
-  // Fetch on mount
+  const fetchAll = useCallback(async () => {
+    setLoading(true);
+    await Promise.all([fetchNotifications(), fetchInvitations()]);
+    setLoading(false);
+  }, [fetchNotifications, fetchInvitations]);
+
   useEffect(() => {
-    fetchPending();
-  }, [fetchPending]);
+    fetchAll();
+  }, [fetchAll]);
 
-  // Real-time push via dashboard WebSocket
-  useResourceSync('invitations', fetchPending);
+  useResourceSync('notifications', fetchNotifications);
+  useResourceSync('invitations', fetchInvitations);
 
-  // Close dropdown on outside click
   useEffect(() => {
     if (!open) return;
     const handleClick = (e: MouseEvent) => {
@@ -53,6 +89,32 @@ export default function NotificationBell({ onWorkspaceChange }: Props) {
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, [open]);
+
+  const handleNotifClick = async (n: AppNotification) => {
+    if (!n.is_read) {
+      try {
+        await notificationsApi.markRead(n.id);
+        setUnreadCount((c) => Math.max(0, c - 1));
+        setNotifList((prev) => prev.map((x) => (x.id === n.id ? { ...x, is_read: true } : x)));
+      } catch {}
+    }
+    setOpen(false);
+    if (n.task_id && onOpenTask) {
+      onOpenTask(n.task_id);
+    }
+  };
+
+  const handleMarkAllRead = async () => {
+    try {
+      const res = await notificationsApi.markAllRead();
+      setUnreadCount(0);
+      setNotifList((prev) => prev.map((n) => ({ ...n, is_read: true })));
+      if (res.count > 0) {
+        setMessage(t('notifMarkAllRead'));
+        setTimeout(() => setMessage(null), 3000);
+      }
+    } catch {}
+  };
 
   const handleAccept = async (inv: PendingInvitation) => {
     try {
@@ -82,12 +144,14 @@ export default function NotificationBell({ onWorkspaceChange }: Props) {
     }
   };
 
+  const totalBadge = unreadCount + invitations.length;
+
   return (
     <div style={{ position: 'relative', display: 'inline-block' }}>
       <button
         ref={bellRef}
         onClick={() => setOpen(!open)}
-        title={t('pendingInvitations')}
+        title={t('notifInbox')}
         style={{
           background: 'none',
           border: 'none',
@@ -100,7 +164,7 @@ export default function NotificationBell({ onWorkspaceChange }: Props) {
         }}
       >
         🔔
-        {invitations.length > 0 && (
+        {totalBadge > 0 && (
           <span
             style={{
               position: 'absolute',
@@ -119,7 +183,7 @@ export default function NotificationBell({ onWorkspaceChange }: Props) {
               lineHeight: 1,
             }}
           >
-            {invitations.length > 9 ? '9+' : invitations.length}
+            {totalBadge > 9 ? '9+' : totalBadge}
           </span>
         )}
       </button>
@@ -149,88 +213,190 @@ export default function NotificationBell({ onWorkspaceChange }: Props) {
             position: 'absolute',
             left: '36px',
             top: '-8px',
-            width: '320px',
-            maxHeight: '400px',
-            overflow: 'auto',
+            width: '380px',
+            maxHeight: '480px',
+            display: 'flex',
+            flexDirection: 'column',
             background: '#fff',
             borderRadius: '10px',
             boxShadow: '0 8px 32px rgba(0,0,0,0.2)',
             zIndex: 3000,
             color: '#333',
+            overflow: 'hidden',
           }}
         >
-          <div style={{
-            padding: '12px 16px',
-            borderBottom: '1px solid #eee',
-            fontWeight: 600,
-            fontSize: '0.9em',
-            color: '#666',
-          }}>
-            {t('pendingInvitations')}
+          {/* Tabs */}
+          <div style={{ display: 'flex', borderBottom: '1px solid #eee' }}>
+            <button
+              onClick={() => setTab('notifications')}
+              style={{
+                flex: 1, padding: '10px', border: 'none', background: 'none',
+                cursor: 'pointer', fontSize: '0.85em', fontWeight: tab === 'notifications' ? 600 : 400,
+                color: tab === 'notifications' ? '#1976d2' : '#999',
+                borderBottom: tab === 'notifications' ? '2px solid #1976d2' : '2px solid transparent',
+              }}
+            >
+              {t('notifInbox')}
+              {unreadCount > 0 && (
+                <span style={{ marginLeft: '6px', background: '#f44336', color: '#fff', borderRadius: '10px', padding: '0 6px', fontSize: '0.8em' }}>
+                  {unreadCount}
+                </span>
+              )}
+            </button>
+            <button
+              onClick={() => setTab('invitations')}
+              style={{
+                flex: 1, padding: '10px', border: 'none', background: 'none',
+                cursor: 'pointer', fontSize: '0.85em', fontWeight: tab === 'invitations' ? 600 : 400,
+                color: tab === 'invitations' ? '#1976d2' : '#999',
+                borderBottom: tab === 'invitations' ? '2px solid #1976d2' : '2px solid transparent',
+              }}
+            >
+              {t('notifInvitations')}
+              {invitations.length > 0 && (
+                <span style={{ marginLeft: '6px', background: '#f44336', color: '#fff', borderRadius: '10px', padding: '0 6px', fontSize: '0.8em' }}>
+                  {invitations.length}
+                </span>
+              )}
+            </button>
           </div>
 
-          {loading && invitations.length === 0 ? (
-            <div style={{ padding: '24px', textAlign: 'center', color: '#999', fontSize: '0.85em' }}>
-              {t('loading')}...
-            </div>
-          ) : invitations.length === 0 ? (
-            <div style={{ padding: '24px', textAlign: 'center', color: '#999', fontSize: '0.85em' }}>
-              {t('noPendingInvitations')}
-            </div>
-          ) : (
-            invitations.map((inv) => (
-              <div key={inv.id} style={{
-                padding: '12px 16px',
-                borderBottom: '1px solid #f5f5f5',
-              }}>
-                <div style={{ fontSize: '0.85em', marginBottom: '8px', lineHeight: 1.4 }}>
-                  <span style={{ fontWeight: 500 }}>{inv.inviter_name}</span>
-                  {lang === 'zh' ? ' 邀请你加入工作区 ' : ' invited you to '}
-                  <span style={{ fontWeight: 500 }}>{inv.workspace_name}</span>
-                </div>
-                <div style={{ fontSize: '0.75em', color: '#999', marginBottom: '8px' }}>
-                  {new Date(inv.created_at).toLocaleDateString(lang === 'zh' ? 'zh-CN' : 'en-US', {
-                    month: 'short',
-                    day: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })}
-                </div>
-                <div style={{ display: 'flex', gap: '8px' }}>
+          {/* Notifications tab */}
+          {tab === 'notifications' && (
+            <>
+              {/* Mark all read button */}
+              {unreadCount > 0 && (
+                <div style={{ padding: '8px 12px', borderBottom: '1px solid #f5f5f5', textAlign: 'right' }}>
                   <button
-                    onClick={() => handleAccept(inv)}
+                    onClick={handleMarkAllRead}
                     style={{
-                      flex: 1,
-                      padding: '6px 12px',
-                      borderRadius: '6px',
-                      border: 'none',
-                      background: '#1976d2',
-                      color: '#fff',
-                      cursor: 'pointer',
-                      fontSize: '0.82em',
-                      fontWeight: 600,
+                      background: 'none', border: 'none', color: '#1976d2',
+                      cursor: 'pointer', fontSize: '0.78em', fontWeight: 500,
                     }}
                   >
-                    {t('accept')}
-                  </button>
-                  <button
-                    onClick={() => handleDecline(inv)}
-                    style={{
-                      flex: 1,
-                      padding: '6px 12px',
-                      borderRadius: '6px',
-                      border: '1px solid #ddd',
-                      background: '#fff',
-                      color: '#666',
-                      cursor: 'pointer',
-                      fontSize: '0.82em',
-                    }}
-                  >
-                    {t('decline')}
+                    {t('notifMarkAllRead')}
                   </button>
                 </div>
+              )}
+
+              <div style={{ overflow: 'auto', flex: 1 }}>
+                {loading && notifList.length === 0 ? (
+                  <div style={{ padding: '32px', textAlign: 'center', color: '#999', fontSize: '0.85em' }}>
+                    {t('loading')}...
+                  </div>
+                ) : notifList.length === 0 ? (
+                  <div style={{ padding: '32px', textAlign: 'center', color: '#999', fontSize: '0.85em' }}>
+                    {t('notifEmpty')}
+                  </div>
+                ) : (
+                  notifList.map((n) => (
+                    <div
+                      key={n.id}
+                      onClick={() => handleNotifClick(n)}
+                      style={{
+                        padding: '10px 14px',
+                        borderBottom: '1px solid #f5f5f5',
+                        cursor: 'pointer',
+                        background: n.is_read ? '#fff' : '#f0f7ff',
+                        transition: 'background 0.15s',
+                        display: 'flex',
+                        gap: '10px',
+                        alignItems: 'flex-start',
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = '#f5f5f5'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = n.is_read ? '#fff' : '#f0f7ff'; }}
+                    >
+                      <span style={{ fontSize: '1.1em', flexShrink: 0, marginTop: '1px' }}>
+                        {notifTypeIcons[n.type] || '🔔'}
+                      </span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: n.is_read ? 400 : 600, fontSize: '0.85em', color: '#333', marginBottom: '2px' }}>
+                          {n.title}
+                        </div>
+                        <div style={{ fontSize: '0.8em', color: '#888', lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {n.message}
+                        </div>
+                        <div style={{ fontSize: '0.72em', color: '#aaa', marginTop: '4px' }}>
+                          {timeAgo(n.created_at, lang)}
+                        </div>
+                      </div>
+                      {!n.is_read && (
+                        <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#1976d2', flexShrink: 0, marginTop: '6px' }} />
+                      )}
+                    </div>
+                  ))
+                )}
               </div>
-            ))
+            </>
+          )}
+
+          {/* Invitations tab */}
+          {tab === 'invitations' && (
+            <div style={{ overflow: 'auto', flex: 1 }}>
+              {loading && invitations.length === 0 ? (
+                <div style={{ padding: '32px', textAlign: 'center', color: '#999', fontSize: '0.85em' }}>
+                  {t('loading')}...
+                </div>
+              ) : invitations.length === 0 ? (
+                <div style={{ padding: '32px', textAlign: 'center', color: '#999', fontSize: '0.85em' }}>
+                  {t('noPendingInvitations')}
+                </div>
+              ) : (
+                invitations.map((inv) => (
+                  <div key={inv.id} style={{
+                    padding: '12px 16px',
+                    borderBottom: '1px solid #f5f5f5',
+                  }}>
+                    <div style={{ fontSize: '0.85em', marginBottom: '8px', lineHeight: 1.4 }}>
+                      <span style={{ fontWeight: 500 }}>{inv.inviter_name}</span>
+                      {lang === 'zh' ? ' 邀请你加入工作区 ' : ' invited you to '}
+                      <span style={{ fontWeight: 500 }}>{inv.workspace_name}</span>
+                    </div>
+                    <div style={{ fontSize: '0.75em', color: '#999', marginBottom: '8px' }}>
+                      {new Date(inv.created_at).toLocaleDateString(lang === 'zh' ? 'zh-CN' : 'en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button
+                        onClick={() => handleAccept(inv)}
+                        style={{
+                          flex: 1,
+                          padding: '6px 12px',
+                          borderRadius: '6px',
+                          border: 'none',
+                          background: '#1976d2',
+                          color: '#fff',
+                          cursor: 'pointer',
+                          fontSize: '0.82em',
+                          fontWeight: 600,
+                        }}
+                      >
+                        {t('accept')}
+                      </button>
+                      <button
+                        onClick={() => handleDecline(inv)}
+                        style={{
+                          flex: 1,
+                          padding: '6px 12px',
+                          borderRadius: '6px',
+                          border: '1px solid #ddd',
+                          background: '#fff',
+                          color: '#666',
+                          cursor: 'pointer',
+                          fontSize: '0.82em',
+                        }}
+                      >
+                        {t('decline')}
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
           )}
         </div>
       )}

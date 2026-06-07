@@ -85,6 +85,8 @@ func main() {
 	taskH := handlers.NewTaskHandler(database.DB)
 
 	taskH.Hub = dashHub
+	notifH := handlers.NewNotificationHandler(database.DB, dashHub)
+	taskH.Notifier = notifH
 
 	projectH := handlers.NewProjectHandler(database.DB)
 
@@ -308,6 +310,12 @@ func main() {
 		api.GET("/users", userH.List)
 
 		api.DELETE("/users/:id", userH.Delete)
+		// Notifications
+		api.GET("/notifications", notifH.List)
+		api.GET("/notifications/unread-count", notifH.UnreadCount)
+		api.PATCH("/notifications/:id/read", notifH.MarkRead)
+		api.PATCH("/notifications/read-all", notifH.MarkAllRead)
+		api.DELETE("/notifications/:id", notifH.Delete)
 
 		api.POST("/sessions", sessionH.Create)
 

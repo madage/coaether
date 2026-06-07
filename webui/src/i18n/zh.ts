@@ -506,6 +506,15 @@ export const zh = {
 
   // Notifications
 
+  notifInbox: '通知',
+  notifInvitations: '邀请',
+  notifEmpty: '暂无通知',
+  notifMarkAllRead: '全部标为已读',
+  notifTaskAssigned: '任务委派',
+  notifTaskStatusChanged: '状态变更',
+  notifTaskComment: '新评论',
+  notifTimeAgo: '{time}前',
+
   pendingInvitations: '待处理的邀请',
 
   invitationFrom: '{name} 邀请你加入 {workspace}',

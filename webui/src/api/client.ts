@@ -1,4 +1,4 @@
-import type { Node, Session, CreateSessionReq, Agent, AgentProfile, RuntimeEntity, Task, CreateTaskReq, UpdateTaskReq, TaskStatus, TaskAssignee, AddAssigneeReq, Priority, Project, CreateProjectReq, UpdateProjectReq, ProjectStatus, Workspace, CreateWorkspaceReq, UpdateWorkspaceReq, WorkspaceMember, AddMemberReq, UpdateMemberRoleReq, PendingInvitation, InviteMemberReq, UserSummary, Comment, CreateCommentReq, PluginInfo } from '../types';
+import type { Node, Session, CreateSessionReq, Agent, AgentProfile, RuntimeEntity, Task, CreateTaskReq, UpdateTaskReq, TaskStatus, TaskAssignee, AddAssigneeReq, Priority, Project, CreateProjectReq, UpdateProjectReq, ProjectStatus, Workspace, CreateWorkspaceReq, UpdateWorkspaceReq, WorkspaceMember, AddMemberReq, UpdateMemberRoleReq, PendingInvitation, InviteMemberReq, UserSummary, Comment, CreateCommentReq, PluginInfo, AppNotification } from '../types';
 
 
 
@@ -298,11 +298,12 @@ export const sessions = {
 
 export const tasks = {
 
-  list: (params?: { projectId?: string; parentId?: string; assigneeId?: string; priority?: string; tag?: string }) => {
+  list: (params?: { projectId?: string; parentId?: string; assigneeId?: string; delegatedAssigneeId?: string; priority?: string; tag?: string }) => {
     const query = new URLSearchParams();
     if (params?.projectId) query.set('project_id', params.projectId);
     if (params?.parentId) query.set('parent_id', params.parentId);
     if (params?.assigneeId) query.set('assignee_id', params.assigneeId);
+    if (params?.delegatedAssigneeId) query.set('delegated_assignee_id', params.delegatedAssigneeId);
     if (params?.priority) query.set('priority', params.priority);
     if (params?.tag) query.set('tag', params.tag);
     const qs = query.toString();
@@ -533,6 +534,22 @@ export const comments = {
 
   delete: (taskId: string, commentId: string) =>
     request<{ status: string }>(`/tasks/${taskId}/comments/${commentId}`, { method: 'DELETE' }),
+};
+
+// Notifications
+
+export const notifications = {
+  list: (before?: string) => {
+    const qs = before ? `?before=${before}` : '';
+    return request<{ notifications: AppNotification[] }>(`/notifications${qs}`);
+  },
+  unreadCount: () => request<{ count: number }>('/notifications/unread-count'),
+  markRead: (id: string) =>
+    request<{ status: string }>(`/notifications/${id}/read`, { method: 'PATCH' }),
+  markAllRead: () =>
+    request<{ status: string; count: number }>('/notifications/read-all', { method: 'PATCH' }),
+  delete: (id: string) =>
+    request<{ status: string }>(`/notifications/${id}`, { method: 'DELETE' }),
 };
 
 // Plugins

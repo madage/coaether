@@ -15,8 +15,9 @@ import (
 )
 
 type TaskHandler struct {
-	DB  *sql.DB
-	Hub *DashboardHub
+	DB       *sql.DB
+	Hub      *DashboardHub
+	Notifier *NotificationHandler
 }
 
 func NewTaskHandler(db *sql.DB) *TaskHandler {
@@ -129,6 +130,11 @@ func (h *TaskHandler) List(c *gin.Context) {
 		args = append(args, assigneeID)
 		argIdx++
 	}
+	if delegatedID := c.Query("delegated_assignee_id"); delegatedID != "" {
+		query += fmt.Sprintf(" AND EXISTS (SELECT 1 FROM task_assignees ta WHERE ta.task_id = t.id AND ta.assignee_id = $%d)", argIdx)
+		args = append(args, delegatedID)
+		argIdx++
+	}
 	if priority := c.Query("priority"); priority != "" {
 		query += fmt.Sprintf(" AND t.priority = $%d", argIdx)
 		args = append(args, priority)
@@ -238,6 +244,15 @@ func (h *TaskHandler) Create(c *gin.Context) {
 	if h.Hub != nil {
 		h.Hub.SignalChange("tasks")
 	}
+
+	// Notify assignee
+	if h.Notifier != nil && req.AssigneeID != nil && req.AssigneeType != nil && *req.AssigneeType == "user" {
+		h.Notifier.Create(*req.AssigneeID, string(models.NotifTaskAssigned),
+			"Task Assigned",
+			fmt.Sprintf("You have been assigned to \"%s\"", req.Title),
+			&taskID)
+	}
+
 	c.JSON(http.StatusCreated, task)
 }
 
@@ -286,8 +301,8 @@ func (h *TaskHandler) Update(c *gin.Context) {
 	workspaceID := c.Query("workspace_id")
 
 	// Check permission
-	var creatorID string
-	err := h.DB.QueryRow(`SELECT user_id FROM tasks WHERE id = $1`, taskID).Scan(&creatorID)
+	var creatorID, oldAssigneeID, oldAssigneeType string
+	err := h.DB.QueryRow(`SELECT user_id, COALESCE(assignee_id, ''), COALESCE(assignee_type, '') FROM tasks WHERE id = $1`, taskID).Scan(&creatorID, &oldAssigneeID, &oldAssigneeType)
 	if err == sql.ErrNoRows {
 		c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
 		return
@@ -470,6 +485,49 @@ func (h *TaskHandler) Update(c *gin.Context) {
 	if h.Hub != nil {
 		h.Hub.SignalChange("tasks")
 	}
+
+	// Notifications for Update
+	if h.Notifier != nil {
+		actorID, _ := c.Get("user_id")
+		actorStr, _ := actorID.(string)
+
+		// Notify about status change
+		if req.Status != nil {
+			assignees := t.Assignees
+			for _, a := range assignees {
+				if a.AssigneeType == "user" && a.AssigneeID != actorStr {
+					h.Notifier.Create(a.AssigneeID, string(models.NotifTaskStatusChanged),
+						fmt.Sprintf("Task \"%s\" is now %s", t.Title, *req.Status),
+						fmt.Sprintf("Status changed to %s", *req.Status),
+						&t.ID)
+				}
+			}
+			if t.AssigneeID != nil && t.AssigneeType != nil && *t.AssigneeType == "user" && *t.AssigneeID != actorStr {
+				alreadyNotified := false
+				for _, a := range t.Assignees {
+					if a.AssigneeID == *t.AssigneeID { alreadyNotified = true; break }
+				}
+				if !alreadyNotified {
+					h.Notifier.Create(*t.AssigneeID, string(models.NotifTaskStatusChanged),
+						fmt.Sprintf("Task \"%s\" is now %s", t.Title, *req.Status),
+						fmt.Sprintf("Status changed to %s", *req.Status),
+						&t.ID)
+				}
+			}
+		}
+
+		// Notify new assignee if changed
+		if _, exists := fields["assignee_id"]; exists && req.AssigneeID != nil && req.AssigneeType != nil && *req.AssigneeType == "user" {
+			newID := *req.AssigneeID
+			if newID != oldAssigneeID && newID != actorStr {
+				h.Notifier.Create(newID, string(models.NotifTaskAssigned),
+					"Task Assigned",
+					fmt.Sprintf("You have been assigned to \"%s\"", t.Title),
+					&t.ID)
+			}
+		}
+	}
+
 	c.JSON(http.StatusOK, t)
 }
 
@@ -702,6 +760,33 @@ func (h *TaskHandler) SetStatus(c *gin.Context) {
 	if h.Hub != nil {
 		h.Hub.SignalChange("tasks")
 	}
+
+	// Notify assignees about status change
+	if h.Notifier != nil {
+		actorID, _ := c.Get("user_id")
+		actorStr, _ := actorID.(string)
+		for _, a := range t.Assignees {
+			if a.AssigneeType == "user" && a.AssigneeID != actorStr {
+				h.Notifier.Create(a.AssigneeID, string(models.NotifTaskStatusChanged),
+					fmt.Sprintf("Task \"%s\" is now %s", t.Title, t.Status),
+					fmt.Sprintf("Status changed to %s", t.Status),
+					&t.ID)
+			}
+		}
+		if t.AssigneeID != nil && t.AssigneeType != nil && *t.AssigneeType == "user" && *t.AssigneeID != actorStr {
+			alreadyNotified := false
+			for _, a := range t.Assignees {
+				if a.AssigneeID == *t.AssigneeID { alreadyNotified = true; break }
+			}
+			if !alreadyNotified {
+				h.Notifier.Create(*t.AssigneeID, string(models.NotifTaskStatusChanged),
+					fmt.Sprintf("Task \"%s\" is now %s", t.Title, t.Status),
+					fmt.Sprintf("Status changed to %s", t.Status),
+					&t.ID)
+			}
+		}
+	}
+
 	c.JSON(http.StatusOK, t)
 }
 
@@ -745,6 +830,23 @@ func (h *TaskHandler) AddAssignee(c *gin.Context) {
 	if h.Hub != nil {
 		h.Hub.SignalChange("tasks")
 	}
+		// Notify new assignee and task creator
+		if h.Notifier != nil {
+			actorID, _ := c.Get("user_id")
+			actorStr, _ := actorID.(string)
+			if req.AssigneeType == "user" {
+				h.Notifier.Create(req.AssigneeID, string(models.NotifTaskAssigned),
+					"Task Assigned",
+					"You have been assigned to a task",
+					&taskID)
+			}
+			if creatorID != actorStr {
+				h.Notifier.Create(creatorID, string(models.NotifTaskAssigned),
+					"New Assignee",
+					"Someone was assigned to your task",
+					&taskID)
+			}
+		}
 	c.JSON(http.StatusCreated, gin.H{"status": "added"})
 }
 
@@ -933,6 +1035,26 @@ func (h *TaskHandler) CreateComment(c *gin.Context) {
 	if h.Hub != nil {
 		h.Hub.SignalChange("tasks")
 	}
+		// Notify task assignees about the new comment
+		if h.Notifier != nil {
+			commenterID, _ := c.Get("user_id")
+			commenterStr, _ := commenterID.(string)
+			var taskTitle string
+			h.DB.QueryRow(`SELECT title FROM tasks WHERE id = $1`, taskID).Scan(&taskTitle)
+			assignees := h.fetchAssignees(taskID)
+			for _, a := range assignees {
+				if a.AssigneeType == "user" && a.AssigneeID != commenterStr {
+					msg := req.Content
+					if len([]rune(msg)) > 80 {
+						msg = string([]rune(msg)[:80]) + "..."
+					}
+					h.Notifier.Create(a.AssigneeID, string(models.NotifTaskComment),
+						fmt.Sprintf("New comment on \"%s\"", taskTitle),
+						msg,
+						&taskID)
+				}
+			}
+		}
 	c.JSON(http.StatusCreated, comment)
 }
 

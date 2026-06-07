@@ -36,7 +36,10 @@ function App() {
     }
     return { token: null, user: null, workspace_id: null, workspace_role: null };
   });
-  const [page, setPage] = useState<Page>('nodes');
+  const [page, setPage] = useState<Page>(() => {
+    const saved = localStorage.getItem('page') as Page | null;
+    return saved || 'nodes';
+  });
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isRegister, setIsRegister] = useState(false);
@@ -44,6 +47,11 @@ function App() {
   const { nodes, sessions, connected: dashboardConnected, subscribeNotification } = useDashboardWS();
   const [toast, setToast] = useState<{ title: string; message: string } | null>(null);
   const [showAddNode, setShowAddNode] = useState(false);
+  const [targetTaskId, setTargetTaskId] = useState<string | null>(null);
+
+  useEffect(() => {
+    localStorage.setItem('page', page);
+  }, [page]);
 
   // Invitation token from URL
   const [invitationToken, setInvitationToken] = useState<string | null>(null);
@@ -220,6 +228,11 @@ function App() {
       }
       setWorkspaceKey((k) => k + 1);
     } catch {}
+  }, []);
+
+  const handleOpenTask = useCallback((taskId: string) => {
+    setTargetTaskId(taskId);
+    setPage('tasks');
   }, []);
 
   // Auto-refresh workspaces on WebSocket resource_change signal
@@ -519,7 +532,7 @@ function App() {
           )}
           <div style={{ fontSize: '0.85em', color: '#999', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
             <span>{auth.user?.username} ({auth.user?.email})</span>
-            <NotificationBell onWorkspaceChange={handleWorkspaceChange} />
+            <NotificationBell onWorkspaceChange={handleWorkspaceChange} onOpenTask={handleOpenTask} />
           </div>
         </div>
 
@@ -628,7 +641,7 @@ function App() {
 
         {/* Tasks page */}
         <div style={{ display: page === 'tasks' ? 'block' : 'none', height: '100%', overflow: 'auto' }}>
-          <TaskBoard key={workspaceKey} />
+          <TaskBoard key={workspaceKey} initialTaskId={targetTaskId} onTaskOpened={() => setTargetTaskId(null)} />
         </div>
 
         {/* Projects page */}

@@ -506,6 +506,15 @@ export const en = {
 
   // Notifications
 
+  notifInbox: 'Notifications',
+  notifInvitations: 'Invitations',
+  notifEmpty: 'No notifications yet',
+  notifMarkAllRead: 'Mark all as read',
+  notifTaskAssigned: 'Task assigned',
+  notifTaskStatusChanged: 'Status changed',
+  notifTaskComment: 'New comment',
+  notifTimeAgo: '{time} ago',
+
   pendingInvitations: 'Pending Invitations',
 
   invitationFrom: '{name} invited you to {workspace}',

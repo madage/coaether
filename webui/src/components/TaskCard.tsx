@@ -48,7 +48,6 @@ interface TaskCardProps {
 
 export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap, subtaskCount, assigneeName, creatorName, assigneeNamesMap }: TaskCardProps) {
   const { t } = useLang();
-  const sc = statusColors[task.status];
   const pc = priorityColors[task.priority] || priorityColors.medium;
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -72,8 +71,9 @@ export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap, 
       style={{
         background: '#fff',
         borderRadius: '12px',
-        padding: '10px 14px',
-        boxShadow: '0 4px 6px rgba(0,0,0,0.1), 0 10px 20px rgba(0,0,0,0.06), 0 2px 4px rgba(0,0,0,0.08)',
+        padding: '14px 16px',
+        border: '1px solid #e0e0e0',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
         transition: 'transform 0.2s, boxShadow 0.2s',
         display: 'flex',
         flexDirection: 'column',
@@ -84,10 +84,12 @@ export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap, 
       onClick={() => onEdit(task)}
       onMouseEnter={(e) => {
         e.currentTarget.style.transform = 'translateY(-4px)';
+        e.currentTarget.style.borderColor = '#bbb';
         e.currentTarget.style.boxShadow = '0 12px 24px rgba(0,0,0,0.15), 0 4px 8px rgba(0,0,0,0.1)';
       }}
       onMouseLeave={(e) => {
         e.currentTarget.style.transform = '';
+        e.currentTarget.style.borderColor = '#e0e0e0';
         e.currentTarget.style.boxShadow = '';
       }}
     >
@@ -169,15 +171,6 @@ export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap, 
               }}
             />
           )}
-          {/* Status badge */}
-          <span
-            style={{
-              fontSize: '0.75em', padding: '2px 8px', borderRadius: '10px',
-              background: sc.bg, color: sc.color, fontWeight: 500, whiteSpace: 'nowrap',
-            }}
-          >
-            {t(statusKeys[task.status])}
-          </span>
         </div>
       </div>
 
