@@ -13,7 +13,8 @@ import (
 )
 
 type AgentProfileHandler struct {
-	DB *sql.DB
+	DB  *sql.DB
+	Hub *DashboardHub
 }
 
 func NewAgentProfileHandler(db *sql.DB) *AgentProfileHandler {
@@ -24,7 +25,7 @@ func (h *AgentProfileHandler) List(c *gin.Context) {
 	workspaceID := c.Query("workspace_id")
 	isMember, _ := c.Get("is_workspace_member")
 
-	query := `SELECT id, user_id, name, avatar, description, agent_id, version, model, backend, enabled, created_at, updated_at
+	query := `SELECT id, user_id, name, avatar, description, agent_id, node_id, version, model, backend, enabled, created_at, updated_at
 		 FROM agent_profiles`
 	args := []any{}
 	argIdx := 1
@@ -52,7 +53,7 @@ func (h *AgentProfileHandler) List(c *gin.Context) {
 	for rows.Next() {
 		var p models.AgentProfile
 		if err := rows.Scan(&p.ID, &p.UserID, &p.Name, &p.Avatar, &p.Description,
-			&p.AgentID, &p.Version, &p.Model, &p.Backend, &p.Enabled, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			&p.AgentID, &p.NodeID, &p.Version, &p.Model, &p.Backend, &p.Enabled, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to scan profile"})
 			return
 		}
@@ -66,7 +67,7 @@ func (h *AgentProfileHandler) Get(c *gin.Context) {
 	isMember, _ := c.Get("is_workspace_member")
 	profileID := c.Param("id")
 
-	query := `SELECT id, user_id, name, avatar, description, agent_id, version, model, backend, enabled, created_at, updated_at
+	query := `SELECT id, user_id, name, avatar, description, agent_id, node_id, version, model, backend, enabled, created_at, updated_at
 		 FROM agent_profiles WHERE id = $1`
 	args := []any{profileID}
 	argIdx := 2
@@ -82,7 +83,7 @@ func (h *AgentProfileHandler) Get(c *gin.Context) {
 
 	var p models.AgentProfile
 	err := h.DB.QueryRow(query, args...).Scan(&p.ID, &p.UserID, &p.Name, &p.Avatar, &p.Description,
-		&p.AgentID, &p.Version, &p.Model, &p.Backend, &p.Enabled, &p.CreatedAt, &p.UpdatedAt)
+		&p.AgentID, &p.NodeID, &p.Version, &p.Model, &p.Backend, &p.Enabled, &p.CreatedAt, &p.UpdatedAt)
 	if err == sql.ErrNoRows {
 		c.JSON(http.StatusNotFound, gin.H{"error": "profile not found"})
 		return
@@ -112,6 +113,7 @@ func (h *AgentProfileHandler) Create(c *gin.Context) {
 		Name        string `json:"name"`
 		Description string `json:"description"`
 		AgentID     string `json:"agent_id"`
+		NodeID      string `json:"node_id"`
 		Avatar      string `json:"avatar,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -131,9 +133,9 @@ func (h *AgentProfileHandler) Create(c *gin.Context) {
 	id := uuid.New().String()
 	now := time.Now()
 	_, err := h.DB.Exec(
-		`INSERT INTO agent_profiles (id, user_id, workspace_id, name, avatar, description, agent_id, version, model, backend, enabled, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, '', '', 'cli', true, $8, $8)`,
-		id, userID, workspaceID, req.Name, avatar, req.Description, req.AgentID, now,
+		`INSERT INTO agent_profiles (id, user_id, workspace_id, name, avatar, description, agent_id, node_id, version, model, backend, enabled, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '', '', 'cli', true, $9, $9)`,
+		id, userID, workspaceID, req.Name, avatar, req.Description, req.AgentID, req.NodeID, now,
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create profile"})
@@ -141,6 +143,9 @@ func (h *AgentProfileHandler) Create(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, gin.H{"id": id, "status": "created"})
+	if h.Hub != nil {
+		h.Hub.SignalChange("agent_profiles")
+	}
 }
 
 func (h *AgentProfileHandler) Update(c *gin.Context) {
@@ -164,6 +169,7 @@ func (h *AgentProfileHandler) Update(c *gin.Context) {
 		Description *string `json:"description,omitempty"`
 		Avatar      *string `json:"avatar,omitempty"`
 		AgentID     *string `json:"agent_id,omitempty"`
+		NodeID      *string `json:"node_id,omitempty"`
 		Enabled     *bool   `json:"enabled,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -192,6 +198,9 @@ func (h *AgentProfileHandler) Update(c *gin.Context) {
 	}
 	if req.AgentID != nil {
 		addField("agent_id", *req.AgentID)
+	}
+	if req.NodeID != nil {
+		addField("node_id", *req.NodeID)
 	}
 	if req.Enabled != nil {
 		addField("enabled", *req.Enabled)
@@ -231,6 +240,9 @@ func (h *AgentProfileHandler) Update(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "updated"})
+	if h.Hub != nil {
+		h.Hub.SignalChange("agent_profiles")
+	}
 }
 
 func (h *AgentProfileHandler) Delete(c *gin.Context) {
@@ -266,6 +278,9 @@ func (h *AgentProfileHandler) Delete(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
+	if h.Hub != nil {
+		h.Hub.SignalChange("agent_profiles")
+	}
 }
 
 func (h *AgentProfileHandler) ListRuntimes(c *gin.Context) {

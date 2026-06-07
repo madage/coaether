@@ -11,7 +11,7 @@ import { FloatingChat } from './components/FloatingChat';
 import { LangSwitcher } from './components/LangSwitcher';
 import WorkspaceMembers from './components/WorkspaceMembers';
 import NotificationBell from './components/NotificationBell';
-import { useDashboardWS } from './hooks/useDashboardWS';
+import { useDashboardWSContext } from './hooks/DashboardWSContext';
 import { useResourceSync } from './hooks/useResourceSync';
 import { useLang } from './i18n/context';
 import { auth as authApi, workspaces as workspacesApi, workspaceMembers as workspaceMembersApi, invitations as invitationsApi, users as usersApi } from './api/client';
@@ -44,7 +44,7 @@ function App() {
   const [password, setPassword] = useState('');
   const [isRegister, setIsRegister] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
-  const { nodes, sessions, connected: dashboardConnected, subscribeNotification } = useDashboardWS();
+  const { nodes, sessions, connected: dashboardConnected, subscribeNotification } = useDashboardWSContext();
   const [toast, setToast] = useState<{ title: string; message: string } | null>(null);
   const [showAddNode, setShowAddNode] = useState(false);
   const [targetTaskId, setTargetTaskId] = useState<string | null>(null);
@@ -578,6 +578,17 @@ function App() {
               | Session: {bus.sessionID?.slice(0, 6)}...
             </span>
           )}
+          <span style={{ marginLeft: '8px' }}>
+            <span style={{
+              display: 'inline-block',
+              width: '6px',
+              height: '6px',
+              borderRadius: '50%',
+              background: dashboardConnected ? '#4caf50' : '#f44336',
+              marginRight: '2px',
+            }} />
+            Dash: {dashboardConnected ? 'on' : 'off'}
+          </span>
         </div>
 
         <div style={{ marginTop: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>

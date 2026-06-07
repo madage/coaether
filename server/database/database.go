@@ -449,6 +449,7 @@ func Migrate() error {
 		"CREATE INDEX IF NOT EXISTS idx_projects_workspace_id ON projects(workspace_id)",
 
 		"CREATE INDEX IF NOT EXISTS idx_agent_profiles_workspace_id ON agent_profiles(workspace_id)",
+			"ALTER TABLE agent_profiles ADD COLUMN IF NOT EXISTS node_id VARCHAR(36) NOT NULL DEFAULT ''",
 
 		"ALTER TABLE nodes ADD COLUMN IF NOT EXISTS node_secret_hash VARCHAR(128)",
 

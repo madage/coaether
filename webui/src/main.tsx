@@ -1,12 +1,13 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { LangProvider } from './i18n/context';
+import { DashboardWSProvider } from './hooks/DashboardWSContext';
 import App from './App';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <LangProvider>
+  <LangProvider>
+    <DashboardWSProvider>
       <App />
-    </LangProvider>
-  </React.StrictMode>,
+    </DashboardWSProvider>
+  </LangProvider>,
 );

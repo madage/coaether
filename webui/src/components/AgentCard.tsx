@@ -3,6 +3,7 @@ import type { AgentProfile } from '../types';
 interface AgentCardProps {
   profile: AgentProfile;
   runtimeName?: string;
+  nodeName?: string;
   onClick: () => void;
 }
 
@@ -15,7 +16,7 @@ const cardStyle: React.CSSProperties = {
   overflow: 'hidden',
 };
 
-export function AgentCard({ profile, runtimeName, onClick }: AgentCardProps) {
+export function AgentCard({ profile, runtimeName, nodeName, onClick }: AgentCardProps) {
   return (
     <div
       style={cardStyle}
@@ -40,6 +41,11 @@ export function AgentCard({ profile, runtimeName, onClick }: AgentCardProps) {
           <span style={{ color: profile.enabled ? '#4caf50' : '#9e9e9e' }}>●</span>
           {' '}{runtimeName || profile.agent_id}
         </div>
+        {nodeName && (
+          <div style={{ fontSize: '0.75em', color: '#bbb', marginTop: '2px' }}>
+            {nodeName}
+          </div>
+        )}
       </div>
     </div>
   );

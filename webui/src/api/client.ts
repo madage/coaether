@@ -226,7 +226,7 @@ export const agentProfiles = {
 
 
 
-  create: (data: { name: string; description?: string; agent_id: string }) =>
+  create: (data: { name: string; description?: string; agent_id: string; node_id?: string }) =>
 
     request<{ id: string; status: string }>('/agents/profiles', {
 
@@ -238,7 +238,7 @@ export const agentProfiles = {
 
 
 
-  update: (id: string, data: Partial<{ name: string; description: string; avatar: string; agent_id: string; enabled: boolean }>) =>
+  update: (id: string, data: Partial<{ name: string; description: string; avatar: string; agent_id: string; node_id: string; enabled: boolean }>) =>
 
     request<{ status: string }>(`/agents/profiles/${id}`, {
 

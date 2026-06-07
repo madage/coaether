@@ -293,6 +293,7 @@ export const en = {
   agentRuntime: 'Runtime',
 
   selectRuntime: 'Select a runtime...',
+  agentNode: 'Node',
 
   saveAgent: 'Save',
 

@@ -1,21 +1,14 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useLang } from '../i18n/context';
-import { agentProfiles } from '../api/client';
+import { agentProfiles, nodes, agents } from '../api/client';
 import { AgentCard } from './AgentCard';
 import { AgentCreateCard } from './AgentCreateCard';
 import { AgentForm } from './AgentForm';
 import { AgentDetailModal } from './AgentDetailModal';
-import type { AgentProfile, RuntimeEntity } from '../types';
+import { MathConfirmDialog } from './MathConfirmDialog';
+import { useResourceSync } from '../hooks/useResourceSync';
+import type { AgentProfile, Node } from '../types';
 import { useWorkspace } from '../hooks/WorkspaceContext';
-
-function generateQuestion(): { a: number; b: number; op: '+' | '-'; answer: number } {
-  const a = Math.floor(Math.random() * 20) + 1;
-  const b = Math.floor(Math.random() * 20) + 1;
-  const op: '+' | '-' = Math.random() > 0.5 ? '+' : '-';
-  const answer = op === '+' ? a + b : Math.max(a, b) - Math.min(a, b);
-  const [na, nb] = op === '+' ? [a, b] : [Math.max(a, b), Math.min(a, b)];
-  return { a: na, b: nb, op, answer };
-}
 
 export function AgentList() {
   const { t, lang } = useLang();
@@ -23,29 +16,38 @@ export function AgentList() {
   const isObserver = role === 'observer';
   const canWrite = role === 'admin' || role === 'owner' || role === 'worker';
   const [profiles, setProfiles] = useState<AgentProfile[]>([]);
-  const [runtimes, setRuntimes] = useState<Record<string, string>>({});
+  const [agentsMap, setAgentsMap] = useState<Record<string, string>>({});
+  const [nodesMap, setNodesMap] = useState<Record<string, string>>({});
   const [selectedProfile, setSelectedProfile] = useState<AgentProfile | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [loading, setLoading] = useState(true);
-
-  // Delete verification
-  const [deleteVerify, setDeleteVerify] = useState<{
-    profileId: string;
-    a: number; b: number; op: '+' | '-'; answer: number;
-  } | null>(null);
-  const [verifyInput, setVerifyInput] = useState('');
-  const [verifyError, setVerifyError] = useState(false);
+  const [deleteProfileId, setDeleteProfileId] = useState<string | null>(null);
 
   const fetchProfiles = useCallback(async () => {
     try {
-      const [profilesRes, runtimesRes] = await Promise.all([
+      const [profilesRes, nodesRes] = await Promise.all([
         agentProfiles.list(),
-        agentProfiles.listRuntimes(),
+        nodes.list(),
       ]);
       setProfiles(profilesRes.profiles);
-      const rtMap: Record<string, string> = {};
-      runtimesRes.runtimes.forEach((r: RuntimeEntity) => { rtMap[r.id] = r.name; });
-      setRuntimes(rtMap);
+
+      // Build node name map
+      const ndMap: Record<string, string> = {};
+      nodesRes.nodes.forEach((n: Node) => { ndMap[n.id] = n.name; });
+      setNodesMap(ndMap);
+
+      // Fetch agents for each unique node_id from profiles
+      const nodeIds = [...new Set(profilesRes.profiles.map(p => p.node_id).filter((id): id is string => !!id))];
+      const agentMap: Record<string, string> = {};
+      await Promise.all(nodeIds.map(async (nid) => {
+        try {
+          const res = await agents.list(nid);
+          res.agents.forEach(a => { agentMap[a.id] = a.name; });
+        } catch {
+          // node might be offline
+        }
+      }));
+      setAgentsMap(agentMap);
     } catch {
       // silently fail
     } finally {
@@ -57,6 +59,8 @@ export function AgentList() {
     fetchProfiles();
   }, [fetchProfiles]);
 
+  useResourceSync('agent_profiles', fetchProfiles);
+
   const handleUpdate = useCallback(async (id: string, data: Partial<AgentProfile>) => {
     try {
       await agentProfiles.update(id, data);
@@ -67,31 +71,22 @@ export function AgentList() {
     }
   }, []);
 
-  const handleDelete = useCallback(async (id: string) => {
-    const q = generateQuestion();
-    setDeleteVerify({ profileId: id, ...q });
-    setVerifyInput('');
-    setVerifyError(false);
+  const handleDelete = useCallback((id: string) => {
+    setDeleteProfileId(id);
   }, []);
 
   const handleDeleteConfirm = useCallback(async () => {
-    if (!deleteVerify) return;
-    const userAnswer = parseInt(verifyInput, 10);
-    if (isNaN(userAnswer) || userAnswer !== deleteVerify.answer) {
-      setVerifyError(true);
-      return;
-    }
+    if (!deleteProfileId) return;
+    const id = deleteProfileId;
+    setDeleteProfileId(null);
     try {
-      await agentProfiles.delete(deleteVerify.profileId);
-      setProfiles((prev) => prev.filter((p) => p.id !== deleteVerify.profileId));
+      await agentProfiles.delete(id);
+      setProfiles((prev) => prev.filter((p) => p.id !== id));
       setSelectedProfile(null);
-      setDeleteVerify(null);
-      setVerifyInput('');
-      setVerifyError(false);
     } catch {
       // silently fail
     }
-  }, [deleteVerify, verifyInput]);
+  }, [deleteProfileId]);
 
   if (loading) {
     return (
@@ -112,7 +107,8 @@ export function AgentList() {
           <AgentCard
             key={profile.id}
             profile={profile}
-            runtimeName={runtimes[profile.agent_id] || profile.agent_id}
+            runtimeName={agentsMap[profile.agent_id] || profile.agent_id}
+            nodeName={(profile.node_id && nodesMap[profile.node_id]) || ''}
             onClick={() => setSelectedProfile(profile)}
           />
         ))}
@@ -135,77 +131,22 @@ export function AgentList() {
       {selectedProfile && (
         <AgentDetailModal
           profile={selectedProfile}
-          runtimeName={runtimes[selectedProfile.agent_id] || selectedProfile.agent_id}
+          runtimeName={agentsMap[selectedProfile.agent_id] || selectedProfile.agent_id}
+          nodeName={(selectedProfile.node_id && nodesMap[selectedProfile.node_id]) || ''}
           onClose={() => setSelectedProfile(null)}
           onSave={canWrite ? handleUpdate : undefined}
           onDelete={role === 'admin' || role === 'owner' ? handleDelete : undefined}
         />
       )}
 
-      {/* Delete verification modal */}
-      {deleteVerify && (
-        <div
-          onClick={() => { setDeleteVerify(null); setVerifyError(false); }}
-          style={{
-            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
-            display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000,
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              background: '#fff', borderRadius: '12px', padding: '28px',
-              width: '360px', maxWidth: '90vw',
-              boxShadow: '0 8px 32px rgba(0,0,0,0.2)', textAlign: 'center',
-            }}
-          >
-            <h3 style={{ margin: '0 0 8px', color: '#333' }}>{t('confirmDelete')}</h3>
-            <p style={{ color: '#666', fontSize: '0.9em', marginBottom: '20px' }}>
-              {lang === 'zh' ? '请回答以下验证问题：' : 'Answer the following to confirm:'}
-            </p>
-            <div style={{ fontSize: '1.4em', fontWeight: 700, color: '#333', marginBottom: '16px' }}>
-              {deleteVerify.a} {deleteVerify.op} {deleteVerify.b} = ?
-            </div>
-            <input
-              value={verifyInput}
-              onChange={(e) => { setVerifyInput(e.target.value); setVerifyError(false); }}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleDeleteConfirm(); }}
-              style={{
-                width: '100%', padding: '10px', borderRadius: '6px',
-                border: verifyError ? '1px solid #c62828' : '1px solid #ddd',
-                fontSize: '1.1em', textAlign: 'center', boxSizing: 'border-box', outline: 'none',
-                marginBottom: '8px',
-              }}
-              autoFocus
-            />
-            {verifyError && (
-              <div style={{ color: '#c62828', fontSize: '0.85em', marginBottom: '8px' }}>
-                {lang === 'zh' ? '答案错误，请重试' : 'Wrong answer, try again'}
-              </div>
-            )}
-            <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginTop: '12px' }}>
-              <button
-                onClick={() => { setDeleteVerify(null); setVerifyError(false); }}
-                style={{
-                  padding: '10px 20px', borderRadius: '6px', border: '1px solid #ddd',
-                  background: '#fff', cursor: 'pointer', color: '#666', fontSize: '0.95em',
-                }}
-              >
-                {t('cancel')}
-              </button>
-              <button
-                onClick={handleDeleteConfirm}
-                style={{
-                  padding: '10px 20px', borderRadius: '6px', border: 'none',
-                  background: '#c62828', color: '#fff', cursor: 'pointer', fontSize: '0.95em',
-                }}
-              >
-                {t('deleteAgent')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <MathConfirmDialog
+        open={deleteProfileId !== null}
+        title={t('confirmDelete')}
+        description={lang === 'zh' ? '此操作不可恢复，请完成验证：' : 'This cannot be undone. Complete the verification:'}
+        confirmLabel={t('deleteAgent')}
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => setDeleteProfileId(null)}
+      />
     </div>
   );
 }

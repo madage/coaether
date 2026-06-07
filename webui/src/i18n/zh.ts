@@ -293,6 +293,7 @@ export const zh = {
   agentRuntime: '运行时能力',
 
   selectRuntime: '选择一个运行时能力...',
+  agentNode: '运行节点',
 
   saveAgent: '保存',
 

@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import type { AgentProfile, RuntimeEntity } from '../types';
-import { agentProfiles } from '../api/client';
+import type { AgentProfile, Node, Agent } from '../types';
+import { agentProfiles, nodes, agents } from '../api/client';
 import { useLang } from '../i18n/context';
 
 interface AgentDetailModalProps {
   profile: AgentProfile;
   runtimeName?: string;
+  nodeName?: string;
   onClose: () => void;
   onSave?: (id: string, data: Partial<AgentProfile>) => void;
   onDelete?: (id: string) => void;
@@ -42,24 +43,41 @@ const inputStyle: React.CSSProperties = {
   boxSizing: 'border-box',
 };
 
-export function AgentDetailModal({ profile, runtimeName, onClose, onSave, onDelete }: AgentDetailModalProps) {
-  const { t } = useLang();
+export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSave, onDelete }: AgentDetailModalProps) {
+  const { t, lang } = useLang();
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState(profile.name);
   const [editDesc, setEditDesc] = useState(profile.description);
+  const [editNodeId, setEditNodeId] = useState(profile.node_id || '');
   const [editAgentId, setEditAgentId] = useState(profile.agent_id);
-  const [runtimes, setRuntimes] = useState<RuntimeEntity[]>([]);
+  const [nodeList, setNodeList] = useState<Node[]>([]);
+  const [agentList, setAgentList] = useState<Agent[]>([]);
+  const [loadingAgents, setLoadingAgents] = useState(false);
 
   useEffect(() => {
-    agentProfiles.listRuntimes().then((res) => {
-      setRuntimes(res.runtimes);
-    }).catch(() => {
-      // silently fail
-    });
+    nodes.list().then((res) => {
+      setNodeList(res.nodes);
+    }).catch(() => {});
   }, []);
 
+  // Fetch agents when node changes in edit mode
+  useEffect(() => {
+    if (!editing || !editNodeId) {
+      setAgentList([]);
+      return;
+    }
+    setLoadingAgents(true);
+    agents.list(editNodeId).then((res) => {
+      setAgentList(res.agents.filter(a => a.enabled));
+    }).catch(() => {
+      setAgentList([]);
+    }).finally(() => {
+      setLoadingAgents(false);
+    });
+  }, [editNodeId, editing]);
+
   const handleSave = () => {
-    onSave?.(profile.id, { name: editName, description: editDesc, agent_id: editAgentId });
+    onSave?.(profile.id, { name: editName, description: editDesc, agent_id: editAgentId, node_id: editNodeId || undefined });
     setEditing(false);
   };
 
@@ -67,6 +85,7 @@ export function AgentDetailModal({ profile, runtimeName, onClose, onSave, onDele
     setEditName(profile.name);
     setEditDesc(profile.description);
     setEditAgentId(profile.agent_id);
+    setEditNodeId(profile.node_id || '');
     setEditing(false);
   };
 
@@ -129,15 +148,40 @@ export function AgentDetailModal({ profile, runtimeName, onClose, onSave, onDele
             </div>
             <div>
               <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
+                {t('agentNode')}
+              </label>
+              <select
+                value={editNodeId}
+                onChange={(e) => setEditNodeId(e.target.value)}
+                style={{ ...inputStyle, background: '#fff' }}
+              >
+                <option value="">{lang === 'zh' ? '选择一个节点...' : 'Select a node...'}</option>
+                {nodeList.filter(n => n.status === 'online' || n.status === 'busy').map((n) => (
+                  <option key={n.id} value={n.id}>{n.name} ({n.status})</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
                 {t('agentRuntime')}
               </label>
               <select
                 value={editAgentId}
                 onChange={(e) => setEditAgentId(e.target.value)}
                 style={{ ...inputStyle, background: '#fff' }}
+                disabled={!editNodeId}
               >
-                {runtimes.map((r) => (
-                  <option key={r.id} value={r.id}>{r.name} - {r.description}</option>
+                <option value="">
+                  {!editNodeId
+                    ? (lang === 'zh' ? '请先选择节点' : 'Select a node first')
+                    : loadingAgents
+                      ? (lang === 'zh' ? '加载中...' : 'Loading...')
+                      : agentList.length === 0
+                        ? (lang === 'zh' ? '该节点没有可用 Agent' : 'No agents on this node')
+                        : lang === 'zh' ? '选择一个 Agent...' : 'Select an agent...'}
+                </option>
+                {agentList.map((a) => (
+                  <option key={a.id} value={a.id}>{a.name}</option>
                 ))}
               </select>
             </div>
@@ -200,6 +244,10 @@ export function AgentDetailModal({ profile, runtimeName, onClose, onSave, onDele
               <div>
                 <div style={{ color: '#999', fontSize: '0.85em' }}>Backend</div>
                 <div style={{ color: '#333', fontWeight: 500 }}>{profile.backend}</div>
+              </div>
+              <div>
+                <div style={{ color: '#999', fontSize: '0.85em' }}>{t('agentNode')}</div>
+                <div style={{ color: '#333', fontWeight: 500 }}>{nodeName || '-'}</div>
               </div>
             </div>
 

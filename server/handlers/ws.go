@@ -240,10 +240,13 @@ func (h *DashboardHub) BroadcastToDashboards(msgType string, payload interface{}
 	h.Mu.RLock()
 	defer h.Mu.RUnlock()
 
+	log.Printf("[Dashboard] Broadcasting %s to %d connections", msgType, len(h.Dashboards))
 	for id, dc := range h.Dashboards {
 		dc.Mu.Lock()
 		if err := dc.Conn.WriteMessage(websocket.TextMessage, data); err != nil {
 			log.Printf("[Dashboard] Write error (%s): %v", id, err)
+		} else {
+			log.Printf("[Dashboard] Sent %s to %s", msgType, id)
 		}
 		dc.Mu.Unlock()
 	}
@@ -263,6 +266,10 @@ func (h *DashboardHub) BroadcastSessionUpdate(sessionID string, status interface
 // SignalChange broadcasts a lightweight "resource changed" signal to all dashboard clients.
 // Components use this to know when to refetch data.
 func (h *DashboardHub) SignalChange(resource string) {
+	h.Mu.RLock()
+	count := len(h.Dashboards)
+	h.Mu.RUnlock()
+	log.Printf("[Dashboard] SignalChange(%s) — broadcasting to %d dashboard connections", resource, count)
 	h.BroadcastToDashboards("resource_change", map[string]string{
 		"resource": resource,
 	})

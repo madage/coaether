@@ -143,6 +143,7 @@ export function useDashboardWS() {
           case 'resource_change': {
             const p = msg.payload as { resource: string };
             if (p.resource) {
+              console.log(`[DashboardWS] resource_change: ${p.resource}, listeners: ${resourceListeners.current.size}`);
               resourceListeners.current.forEach((cb) => cb(p.resource));
             }
             break;

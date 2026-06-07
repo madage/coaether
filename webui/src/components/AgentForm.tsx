@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useLang } from '../i18n/context';
-import { agentProfiles } from '../api/client';
-import type { RuntimeEntity } from '../types';
+import { agentProfiles, nodes, agents } from '../api/client';
+import type { Node, Agent } from '../types';
 
 interface AgentFormProps {
   onClose: () => void;
@@ -39,32 +39,52 @@ const inputStyle: React.CSSProperties = {
 const avatars = ['🤖', '🧠', '⚡', '🎯', '🔧', '🛠️', '🌟', '💡', '🚀', '🎨'];
 
 export function AgentForm({ onClose, onCreated }: AgentFormProps) {
-  const { t } = useLang();
+  const { t, lang } = useLang();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [selectedRuntime, setSelectedRuntime] = useState('');
-  const [runtimes, setRuntimes] = useState<RuntimeEntity[]>([]);
+  const [nodeList, setNodeList] = useState<Node[]>([]);
+  const [selectedNode, setSelectedNode] = useState('');
+  const [agentList, setAgentList] = useState<Agent[]>([]);
+  const [selectedAgent, setSelectedAgent] = useState('');
+  const [loadingAgents, setLoadingAgents] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    agentProfiles.listRuntimes().then((res) => {
-      setRuntimes(res.runtimes);
-    }).catch(() => {
-      setRuntimes([{ id: 'claude', name: 'Claude Code', description: 'AI programming assistant' }]);
-    });
+    nodes.list().then((res) => {
+      setNodeList(res.nodes);
+    }).catch(() => {});
   }, []);
+
+  // Fetch agents when node changes
+  useEffect(() => {
+    if (!selectedNode) {
+      setAgentList([]);
+      setSelectedAgent('');
+      return;
+    }
+    setLoadingAgents(true);
+    setSelectedAgent('');
+    agents.list(selectedNode).then((res) => {
+      setAgentList(res.agents.filter(a => a.enabled));
+    }).catch(() => {
+      setAgentList([]);
+    }).finally(() => {
+      setLoadingAgents(false);
+    });
+  }, [selectedNode]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim() || !selectedRuntime) return;
+    if (!name.trim() || !selectedNode || !selectedAgent) return;
     setSaving(true);
     setError(null);
     try {
       await agentProfiles.create({
         name: name.trim(),
         description: description.trim(),
-        agent_id: selectedRuntime,
+        agent_id: selectedAgent,
+        node_id: selectedNode,
       });
       onCreated();
       onClose();
@@ -74,6 +94,9 @@ export function AgentForm({ onClose, onCreated }: AgentFormProps) {
       setSaving(false);
     }
   };
+
+  const nodeRequired = true;
+  const agentRequired = true;
 
   return (
     <div style={overlayStyle} onClick={onClose}>
@@ -96,17 +119,43 @@ export function AgentForm({ onClose, onCreated }: AgentFormProps) {
 
           <div style={{ marginBottom: '16px' }}>
             <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
+              {t('agentNode')} <span style={{ color: '#f44336' }}>*</span>
+            </label>
+            <select
+              value={selectedNode}
+              onChange={(e) => setSelectedNode(e.target.value)}
+              style={{ ...inputStyle, background: '#fff' }}
+              required={nodeRequired}
+            >
+              <option value="">{lang === 'zh' ? '选择一个节点...' : 'Select a node...'}</option>
+              {nodeList.filter(n => n.status === 'online' || n.status === 'busy').map((n) => (
+                <option key={n.id} value={n.id}>{n.name} ({n.status})</option>
+              ))}
+            </select>
+          </div>
+
+          <div style={{ marginBottom: '16px' }}>
+            <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
               {t('agentRuntime')} <span style={{ color: '#f44336' }}>*</span>
             </label>
             <select
-              value={selectedRuntime}
-              onChange={(e) => setSelectedRuntime(e.target.value)}
+              value={selectedAgent}
+              onChange={(e) => setSelectedAgent(e.target.value)}
               style={{ ...inputStyle, background: '#fff' }}
-              required
+              required={agentRequired}
+              disabled={!selectedNode}
             >
-              <option value="">{t('selectRuntime')}</option>
-              {runtimes.map((r) => (
-                <option key={r.id} value={r.id}>{r.name} - {r.description}</option>
+              <option value="">
+                {!selectedNode
+                  ? (lang === 'zh' ? '请先选择节点' : 'Select a node first')
+                  : loadingAgents
+                    ? (lang === 'zh' ? '加载中...' : 'Loading...')
+                    : agentList.length === 0
+                      ? (lang === 'zh' ? '该节点没有可用 Agent' : 'No agents on this node')
+                      : t('selectRuntime')}
+              </option>
+              {agentList.map((a) => (
+                <option key={a.id} value={a.id}>{a.name}</option>
               ))}
             </select>
           </div>

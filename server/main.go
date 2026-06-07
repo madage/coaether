@@ -81,6 +81,7 @@ func main() {
 	sessionH := handlers.NewSessionHandler(database.DB, messageBus)
 
 	profileH := handlers.NewAgentProfileHandler(database.DB)
+	profileH.Hub = dashHub
 
 	taskH := handlers.NewTaskHandler(database.DB)
 
