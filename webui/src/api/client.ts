@@ -1,4 +1,4 @@
-import type { Node, Session, CreateSessionReq, Agent, AgentProfile, RuntimeEntity, Task, CreateTaskReq, UpdateTaskReq, TaskStatus, TaskAssignee, AddAssigneeReq, Priority, Project, CreateProjectReq, UpdateProjectReq, ProjectStatus, Workspace, CreateWorkspaceReq, UpdateWorkspaceReq, WorkspaceMember, AddMemberReq, UpdateMemberRoleReq, PendingInvitation, InviteMemberReq, UserSummary } from '../types';
+import type { Node, Session, CreateSessionReq, Agent, AgentProfile, RuntimeEntity, Task, CreateTaskReq, UpdateTaskReq, TaskStatus, TaskAssignee, AddAssigneeReq, Priority, Project, CreateProjectReq, UpdateProjectReq, ProjectStatus, Workspace, CreateWorkspaceReq, UpdateWorkspaceReq, WorkspaceMember, AddMemberReq, UpdateMemberRoleReq, PendingInvitation, InviteMemberReq, UserSummary, Comment, CreateCommentReq } from '../types';
 
 
 
@@ -521,6 +521,19 @@ export const invitations = {
 };
 
 
+
+// Comments
+
+export const comments = {
+  list: (taskId: string) =>
+    request<{ comments: Comment[] }>(`/tasks/${taskId}/comments`),
+
+  create: (taskId: string, data: CreateCommentReq) =>
+    request<Comment>(`/tasks/${taskId}/comments`, { method: 'POST', body: JSON.stringify(data) }),
+
+  delete: (taskId: string, commentId: string) =>
+    request<{ status: string }>(`/tasks/${taskId}/comments/${commentId}`, { method: 'DELETE' }),
+};
 
 // User Management
 

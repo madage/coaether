@@ -194,7 +194,7 @@ export function ProjectList() {
         >
           <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', flex: 1 }}>
             <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: '#e0e0e0', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.3em', marginBottom: '12px' }}>📂</div>
-            <h3 style={{ margin: '0 0 4px', fontSize: '1.05em', color: '#999' }}>{t('noProject')}</h3>
+            <h3 style={{ margin: '0 0 4px', fontSize: '1.05em', color: '#999' }}>{t('defaultProject')}</h3>
             <p style={{ margin: '0 0 12px', color: '#bbb', fontSize: '0.83em', flex: 1 }}>{lang === 'zh' ? '未归属到任何项目的任务' : 'Tasks without a project'}</p>
             <div style={{ fontSize: '0.78em', color: '#ccc' }}>{unassignedCount} {lang === 'zh' ? '个任务' : 'tasks'}</div>
           </div>
@@ -250,7 +250,7 @@ export function ProjectList() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <div style={{ width: '48px', height: '48px', borderRadius: '12px', background: '#e0e0e0', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.5em' }}>📂</div>
-                <h2 style={{ margin: 0, color: '#999' }}>{t('noProject')}</h2>
+                <h2 style={{ margin: 0, color: '#999' }}>{t('defaultProject')}</h2>
               </div>
               <button onClick={() => setShowUnassigned(false)}
                 style={{ width: '36px', height: '36px', borderRadius: '50%', border: 'none', background: '#f5f5f5', cursor: 'pointer', fontSize: '1.2em', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666' }}

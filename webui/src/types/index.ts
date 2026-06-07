@@ -249,6 +249,25 @@ export interface AuthState {
   workspace_role: WorkspaceRole | null;
 }
 
+// === Comment Types ===
+export interface Comment {
+  id: string;
+  task_id: string;
+  user_id: string;
+  username: string;
+  agent_profile_id?: string;
+  agent_name?: string;
+  agent_avatar?: string;
+  content: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateCommentReq {
+  content: string;
+  agent_profile_id?: string;
+}
+
 // === User Management ===
 export interface UserSummary {
   id: string;

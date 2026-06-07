@@ -833,3 +833,145 @@ func (h *TaskHandler) ListSubtasks(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"tasks": tasks})
 }
+
+// === Comment Management ===
+
+func (h *TaskHandler) ListComments(c *gin.Context) {
+	taskID := c.Param("id")
+
+	rows, err := h.DB.Query(`
+		SELECT c.id, c.task_id, c.user_id, COALESCE(u.username, '') AS username,
+			c.agent_profile_id, COALESCE(ap.name, '') AS agent_name, COALESCE(ap.avatar, '') AS agent_avatar,
+			c.content, c.created_at, c.updated_at
+		FROM task_comments c
+		LEFT JOIN users u ON u.id = c.user_id
+		LEFT JOIN agent_profiles ap ON ap.id = c.agent_profile_id
+		WHERE c.task_id = $1
+		ORDER BY c.created_at ASC`, taskID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query comments"})
+		return
+	}
+	defer rows.Close()
+
+	comments := make([]models.TaskComment, 0)
+	for rows.Next() {
+		var cm models.TaskComment
+		if err := rows.Scan(
+			&cm.ID, &cm.TaskID, &cm.UserID, &cm.Username,
+			&cm.AgentProfileID, &cm.AgentName, &cm.AgentAvatar,
+			&cm.Content, &cm.CreatedAt, &cm.UpdatedAt,
+		); err != nil {
+			continue
+		}
+		comments = append(comments, cm)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"comments": comments})
+}
+
+func (h *TaskHandler) CreateComment(c *gin.Context) {
+	if !middleware.CanWrite(c) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions"})
+		return
+	}
+
+	taskID := c.Param("id")
+	userID, _ := c.Get("user_id")
+
+	var req models.CreateCommentReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Verify task exists
+	var exists bool
+	h.DB.QueryRow(`SELECT EXISTS(SELECT 1 FROM tasks WHERE id = $1)`, taskID).Scan(&exists)
+	if !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
+		return
+	}
+
+	now := time.Now()
+	comment := models.TaskComment{
+		ID:            uuid.New().String(),
+		TaskID:        taskID,
+		UserID:        userID.(string),
+		AgentProfileID: req.AgentProfileID,
+		Content:       req.Content,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+
+	_, err := h.DB.Exec(
+		`INSERT INTO task_comments (id, task_id, user_id, agent_profile_id, content, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		comment.ID, comment.TaskID, comment.UserID, comment.AgentProfileID,
+		comment.Content, comment.CreatedAt, comment.UpdatedAt,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create comment"})
+		return
+	}
+
+	// Fetch the created comment with user/agent info
+	h.DB.QueryRow(`
+		SELECT c.id, c.task_id, c.user_id, COALESCE(u.username, '') AS username,
+			c.agent_profile_id, COALESCE(ap.name, '') AS agent_name, COALESCE(ap.avatar, '') AS agent_avatar,
+			c.content, c.created_at, c.updated_at
+		FROM task_comments c
+		LEFT JOIN users u ON u.id = c.user_id
+		LEFT JOIN agent_profiles ap ON ap.id = c.agent_profile_id
+		WHERE c.id = $1`, comment.ID,
+	).Scan(
+		&comment.ID, &comment.TaskID, &comment.UserID, &comment.Username,
+		&comment.AgentProfileID, &comment.AgentName, &comment.AgentAvatar,
+		&comment.Content, &comment.CreatedAt, &comment.UpdatedAt,
+	)
+
+	if h.Hub != nil {
+		h.Hub.SignalChange("tasks")
+	}
+	c.JSON(http.StatusCreated, comment)
+}
+
+func (h *TaskHandler) DeleteComment(c *gin.Context) {
+	taskID := c.Param("id")
+	commentID := c.Param("commentId")
+
+	// Get comment owner
+	var commentUserID string
+	err := h.DB.QueryRow(`SELECT user_id FROM task_comments WHERE id = $1 AND task_id = $2`, commentID, taskID).Scan(&commentUserID)
+	if err == sql.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "comment not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "database error"})
+		return
+	}
+
+	// Allow if admin/owner, or if the comment owner matches the current user
+	currentUserID, _ := c.Get("user_id")
+	isOwner := commentUserID == currentUserID.(string)
+	if !middleware.HasRole(c, "admin", "owner") && !isOwner {
+		c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions"})
+		return
+	}
+
+	result, err := h.DB.Exec(`DELETE FROM task_comments WHERE id = $1 AND task_id = $2`, commentID, taskID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete comment"})
+		return
+	}
+	if n, _ := result.RowsAffected(); n == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "comment not found"})
+		return
+	}
+
+	if h.Hub != nil {
+		h.Hub.SignalChange("tasks")
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
+}

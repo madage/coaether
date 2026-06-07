@@ -18,6 +18,13 @@ const columnLabels: Record<TaskStatus, TranslationKey> = {
   done: 'taskStatusDone',
 };
 
+const priorityKeys: Record<Priority, TranslationKey> = {
+  urgent: 'priorityUrgent',
+  high: 'priorityHigh',
+  medium: 'priorityMedium',
+  low: 'priorityLow',
+};
+
 const columnColors: Record<TaskStatus, string> = {
   todo: '#e0e0e0',
   in_progress: '#bbdefb',
@@ -27,7 +34,7 @@ const columnColors: Record<TaskStatus, string> = {
 };
 
 export function TaskBoard() {
-  const { t, lang } = useLang();
+  const { t } = useLang();
   const { role, workspaceId } = useWorkspace();
   const isObserver = role === 'observer';
   const [taskList, setTaskList] = useState<Task[]>([]);
@@ -206,6 +213,7 @@ export function TaskBoard() {
           {/* Project filter */}
           <select value={filterProjectId} onChange={(e) => setFilterProjectId(e.target.value)} style={filterSelectStyle}>
             <option value="">{t('noProject')}</option>
+            <option value="none">{t('defaultProject')}</option>
             {projects.map((p) => (
               <option key={p.id} value={p.id}>{p.name}</option>
             ))}
@@ -213,16 +221,16 @@ export function TaskBoard() {
 
           {/* Priority filter */}
           <select value={filterPriority} onChange={(e) => setFilterPriority(e.target.value)} style={filterSelectStyle}>
-            <option value="">优先级</option>
-            <option value="urgent">🔴 urgent</option>
-            <option value="high">🟠 high</option>
-            <option value="medium">🔵 medium</option>
-            <option value="low">⚪ low</option>
+            <option value="">{t('taskFilterPriority')}</option>
+            <option value="urgent">{t('priorityUrgent')}</option>
+            <option value="high">{t('priorityHigh')}</option>
+            <option value="medium">{t('priorityMedium')}</option>
+            <option value="low">{t('priorityLow')}</option>
           </select>
 
           {/* Tag filter */}
           <input
-            placeholder="标签"
+            placeholder={t('taskDetailTags')}
             value={filterTag}
             onChange={(e) => setFilterTag(e.target.value)}
             style={{ ...filterSelectStyle, maxWidth: '100px' }}
@@ -327,12 +335,12 @@ export function TaskBoard() {
             <thead>
               <tr style={{ background: '#f5f5f5', textAlign: 'left' }}>
                 <th style={{ padding: '10px 12px', borderBottom: '2px solid #ddd' }}>{t('taskTitle')}</th>
-                <th style={{ padding: '10px 12px', borderBottom: '2px solid #ddd' }}>优先级</th>
+                <th style={{ padding: '10px 12px', borderBottom: '2px solid #ddd' }}>{t('taskDetailPriority')}</th>
                 <th style={{ padding: '10px 12px', borderBottom: '2px solid #ddd' }}>{t('taskStatus')}</th>
-                <th style={{ padding: '10px 12px', borderBottom: '2px solid #ddd' }}>创建者</th>
-                <th style={{ padding: '10px 12px', borderBottom: '2px solid #ddd' }}>负责人</th>
-                <th style={{ padding: '10px 12px', borderBottom: '2px solid #ddd' }}>执行人</th>
-                <th style={{ padding: '10px 12px', borderBottom: '2px solid #ddd' }}>截止</th>
+                <th style={{ padding: '10px 12px', borderBottom: '2px solid #ddd' }}>{t('creator')}</th>
+                <th style={{ padding: '10px 12px', borderBottom: '2px solid #ddd' }}>{t('taskDetailAssignee')}</th>
+                <th style={{ padding: '10px 12px', borderBottom: '2px solid #ddd' }}>{t('taskDelegated')}</th>
+                <th style={{ padding: '10px 12px', borderBottom: '2px solid #ddd' }}>{t('taskDetailDueDate')}</th>
                 <th style={{ padding: '10px 12px', borderBottom: '2px solid #ddd' }}>{t('created')}</th>
                 <th style={{ padding: '10px 12px', borderBottom: '2px solid #ddd' }}>{t('taskActions')}</th>
               </tr>
@@ -366,7 +374,7 @@ export function TaskBoard() {
                     </td>
                     <td style={{ padding: '10px 12px' }}>
                       <span style={{ fontSize: '0.8em', textTransform: 'uppercase', fontWeight: 600, color: task.priority === 'urgent' ? '#c62828' : task.priority === 'high' ? '#e65100' : task.priority === 'medium' ? '#1565c0' : '#757575' }}>
-                        {task.priority}
+                        {t(priorityKeys[task.priority])}
                       </span>
                     </td>
                     <td style={{ padding: '10px 12px' }}>
@@ -425,7 +433,7 @@ export function TaskBoard() {
           >
             <h3 style={{ margin: '0 0 8px', color: '#333' }}>{t('taskConfirmDelete')}</h3>
             <p style={{ color: '#666', fontSize: '0.9em', marginBottom: '20px' }}>
-              {lang === 'zh' ? '请回答以下验证问题：' : 'Answer the following to confirm:'}
+              {t('deleteVerifyPrompt')}
             </p>
             <div style={{ fontSize: '1.4em', fontWeight: 700, color: '#333', marginBottom: '16px' }}>
               {deleteVerify.a} {deleteVerify.op} {deleteVerify.b} = ?
@@ -439,7 +447,7 @@ export function TaskBoard() {
               }} autoFocus />
             {verifyError && (
               <div style={{ color: '#c62828', fontSize: '0.85em', marginBottom: '8px' }}>
-                {lang === 'zh' ? '答案错误，请重试' : 'Wrong answer, try again'}
+                {t('deleteVerifyWrong')}
               </div>
             )}
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginTop: '12px' }}>

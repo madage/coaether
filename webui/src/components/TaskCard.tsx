@@ -25,6 +25,13 @@ const statusKeys: Record<TaskStatus, TranslationKey> = {
   done: 'taskStatusDone',
 };
 
+const priorityKeys: Record<Priority, TranslationKey> = {
+  urgent: 'priorityUrgent',
+  high: 'priorityHigh',
+  medium: 'priorityMedium',
+  low: 'priorityLow',
+};
+
 const allStatuses: TaskStatus[] = ['todo', 'in_progress', 'blocked', 'review', 'done'];
 
 interface TaskCardProps {
@@ -149,7 +156,7 @@ export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap, 
               whiteSpace: 'nowrap', textTransform: 'uppercase',
             }}
           >
-            {task.priority}
+            {t(priorityKeys[task.priority])}
           </span>
           {/* Project dot */}
           {task.project_id && projectsMap?.[task.project_id] && (

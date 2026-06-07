@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useLang } from '../i18n/context';
-import { tasks as tasksApi, projects as projectsApi, workspaceMembers as workspaceMembersApi, agentProfiles as agentProfilesApi } from '../api/client';
+import { tasks as tasksApi, projects as projectsApi, workspaceMembers as workspaceMembersApi, agentProfiles as agentProfilesApi, comments as commentsApi } from '../api/client';
 import { useWorkspace } from '../hooks/WorkspaceContext';
-import type { Task, TaskStatus, Project, Priority, AssigneeType, WorkspaceMember, AgentProfile } from '../types';
+import type { Task, TaskStatus, Project, Priority, AssigneeType, WorkspaceMember, AgentProfile, Comment } from '../types';
 
 interface TaskDetailProps {
   task: Task;
@@ -17,6 +17,12 @@ const priorityOptions: Priority[] = ['urgent', 'high', 'medium', 'low'];
 export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailProps) {
   const { t, lang } = useLang();
   const { workspaceId } = useWorkspace();
+  const [currentUser] = useState(() => {
+    try {
+      const u = JSON.parse(localStorage.getItem('user') || '{}');
+      return (u as { id?: string }).id || '';
+    } catch { return ''; }
+  });
   const [currentTask, setCurrentTask] = useState<Task>(task);
   const [title, setTitle] = useState(task.title);
   const titleRef = useRef<HTMLInputElement>(null);
@@ -28,6 +34,11 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
   const [allTasks, setAllTasks] = useState<Task[]>([]);
   const [subtasks, setSubtasks] = useState<Task[]>([]);
   const [nameMap, setNameMap] = useState<Record<string, string>>({});
+
+  // Comments
+  const [comments, setComments] = useState<Comment[]>([]);
+  const [commentInput, setCommentInput] = useState('');
+  const [posting, setPosting] = useState(false);
 
   // Assignee picker state
   const [showAddAssignee, setShowAddAssignee] = useState(false);
@@ -42,6 +53,7 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
 
   // Delete verification
   const [showDeleteVerify, setShowDeleteVerify] = useState(false);
+  const [confirmDeleteComment, setConfirmDeleteComment] = useState<string | null>(null);
 
   const isOverdue = currentTask.due_at && new Date(currentTask.due_at) < new Date() && currentTask.status !== 'done';
 
@@ -55,6 +67,7 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
       setAllTasks(taskRes.tasks.filter(t => t.id !== task.id));
 
       tasksApi.listSubtasks(task.id).then(res => setSubtasks(res.tasks)).catch(() => {});
+      commentsApi.list(task.id).then(res => setComments(res.comments)).catch(() => {});
 
       const names: Record<string, string> = {};
       if (workspaceId) {
@@ -72,7 +85,10 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
 
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !showAddAssignee && !showDeleteVerify) onClose();
+      if (e.key === 'Escape') {
+        if (confirmDeleteComment) { setConfirmDeleteComment(null); return; }
+        if (!showAddAssignee && !showDeleteVerify) onClose();
+      }
     };
     window.addEventListener('keydown', handleEsc);
     return () => window.removeEventListener('keydown', handleEsc);
@@ -189,6 +205,42 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
     saveField({ tags: newTags });
   };
 
+  const handlePostComment = async () => {
+    const text = commentInput.trim();
+    if (!text || posting) return;
+    setPosting(true);
+    try {
+      const newComment = await commentsApi.create(currentTask.id, { content: text });
+      setComments(prev => [...prev, newComment]);
+      setCommentInput('');
+    } catch {
+      alert('Failed to post comment');
+    } finally {
+      setPosting(false);
+    }
+  };
+
+  const handleDeleteComment = async (commentId: string) => {
+    if (confirmDeleteComment !== commentId) {
+      setConfirmDeleteComment(commentId);
+      return;
+    }
+    setConfirmDeleteComment(null);
+    try {
+      await commentsApi.delete(currentTask.id, commentId);
+      setComments(prev => prev.filter(c => c.id !== commentId));
+    } catch {
+      alert('Failed to delete comment');
+    }
+  };
+
+  const handleCommentKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handlePostComment();
+    }
+  };
+
   const handleDeleteClick = () => {
     setShowDeleteVerify(true);
   };
@@ -235,6 +287,13 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
     done: { bg: '#c8e6c9', color: '#2e7d32' },
   };
 
+  const priorityLabel: Record<Priority, string> = {
+    urgent: t('priorityUrgent'),
+    high: t('priorityHigh'),
+    medium: t('priorityMedium'),
+    low: t('priorityLow'),
+  };
+
   const editableSelectStyle: React.CSSProperties = {
     width: '100%',
     padding: '6px 8px',
@@ -279,7 +338,7 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span style={{ fontSize: '0.85em', color: '#999' }}>
-              {saving ? 'Saving...' : `#${currentTask.id.slice(0, 8)}`}
+              {saving ? t('taskDetailSaving') : `#${currentTask.id.slice(0, 8)}`}
             </span>
             <span style={{
               fontSize: '0.75em', padding: '2px 8px', borderRadius: '10px',
@@ -320,13 +379,13 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
 
             {/* Creator info (read-only) */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '20px', fontSize: '0.85em', color: '#888' }}>
-              <span>✏️ {currentTask.creator_name || 'Unknown'}</span>
+              <span>✏️ {currentTask.creator_name || t('taskDetailUnknown')}</span>
               <span>·</span>
               <span>📅 {new Date(currentTask.created_at).toLocaleDateString()}</span>
               {currentTask.updated_at !== currentTask.created_at && (
                 <>
                   <span>·</span>
-                  <span>updated {new Date(currentTask.updated_at).toLocaleDateString()}</span>
+                  <span>{t('taskDetailUpdated')} {new Date(currentTask.updated_at).toLocaleDateString()}</span>
                 </>
               )}
             </div>
@@ -343,7 +402,7 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
                 border: '1px solid #eee',
                 minHeight: '60px',
               }}>
-                {currentTask.description || <span style={{ color: '#ccc', fontStyle: 'italic' }}>No description</span>}
+                {currentTask.description || <span style={{ color: '#ccc', fontStyle: 'italic' }}>{t('taskDetailNoDescription')}</span>}
               </div>
             </div>
 
@@ -351,7 +410,7 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
             {subtasks.length > 0 && (
               <div style={{ marginBottom: '24px' }}>
                 <h4 style={{ margin: '0 0 8px', fontSize: '0.85em', color: '#999', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                  Subtasks ({subtasks.length})
+                  {t('taskDetailSubtasks')} ({subtasks.length})
                 </h4>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   {subtasks.map(st => {
@@ -387,6 +446,108 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
               </div>
             )}
 
+            {/* Comments */}
+            <div style={{ marginBottom: '24px' }}>
+              <h4 style={{ margin: '0 0 12px', fontSize: '0.85em', color: '#999', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                {t('taskDetailComments')} ({comments.length})
+              </h4>
+
+              {/* Comments list */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '12px' }}>
+                {comments.length === 0 ? (
+                  <div style={{ textAlign: 'center', color: '#ccc', padding: '16px', fontSize: '0.85em' }}>
+                    {t('commentEmpty')}
+                  </div>
+                ) : (
+                  comments.map(c => {
+                    const isAgent = !!c.agent_profile_id;
+                    const authorName = c.agent_name || c.username || t('taskDetailUnknown');
+                    const avatar = isAgent ? (c.agent_avatar || '🤖') : '👤';
+                    const isOwn = c.user_id === currentUser;
+                    return (
+                      <div key={c.id} style={{
+                        display: 'flex', gap: '10px', padding: '10px 12px',
+                        background: isAgent ? '#f0f7ff' : '#fafafa',
+                        borderRadius: '8px', border: '1px solid #eee',
+                      }}>
+                        <div style={{
+                          width: '32px', height: '32px', borderRadius: '50%',
+                          background: isAgent ? '#e3f2fd' : '#e0e0e0',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          fontSize: '1em', flexShrink: 0,
+                        }}>
+                          {avatar}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                            <span style={{ fontWeight: 600, fontSize: '0.85em', color: '#333' }}>
+                              {authorName}
+                            </span>
+                            {isAgent && (
+                              <span style={{
+                                fontSize: '0.65em', padding: '1px 5px', borderRadius: '4px',
+                                background: '#e3f2fd', color: '#1565c0', fontWeight: 500,
+                              }}>{t('taskDetailAgentBadge')}</span>
+                            )}
+                            <span style={{ fontSize: '0.75em', color: '#aaa' }}>
+                              {new Date(c.created_at).toLocaleString()}
+                            </span>
+                            <div style={{ flex: 1 }} />
+                            {isOwn && (
+                              <button onClick={(e) => { e.stopPropagation(); handleDeleteComment(c.id); }}
+                                title={confirmDeleteComment === c.id ? t('taskDetailDeleteCommentHint') : t('taskDetailDeleteCommentTitle')}
+                                style={{
+                                  background: confirmDeleteComment === c.id ? '#ffcdd2' : 'none',
+                                  border: 'none', cursor: 'pointer',
+                                  color: confirmDeleteComment === c.id ? '#c62828' : '#bbb',
+                                  padding: '0 6px', fontSize: confirmDeleteComment === c.id ? '0.75em' : '0.85em',
+                                  lineHeight: 1, borderRadius: '4px',
+                                  opacity: confirmDeleteComment === c.id ? 1 : 0.4,
+                                  transition: 'opacity 0.15s, background 0.15s',
+                                }}
+                                onMouseEnter={e => { if (confirmDeleteComment !== c.id) { e.currentTarget.style.opacity = '1'; e.currentTarget.style.color = '#c62828'; } }}
+                                onMouseLeave={e => { if (confirmDeleteComment !== c.id) { e.currentTarget.style.opacity = '0.4'; e.currentTarget.style.color = '#bbb'; } }}
+                              >{confirmDeleteComment === c.id ? t('taskDetailDeleteCommentHint') : '✕'}</button>
+                            )}
+                          </div>
+                          <div style={{
+                            fontSize: '0.9em', lineHeight: 1.5, color: '#333',
+                            whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                          }}>
+                            {c.content}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Comment input */}
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <textarea
+                  value={commentInput}
+                  onChange={(e) => setCommentInput(e.target.value)}
+                  onKeyDown={handleCommentKeyDown}
+                  placeholder={t('commentPlaceholder')}
+                  rows={2}
+                  style={{
+                    flex: 1, padding: '8px 12px', borderRadius: '8px',
+                    border: '1px solid #ddd', fontSize: '0.85em', fontFamily: 'inherit',
+                    outline: 'none', resize: 'none', lineHeight: 1.4,
+                  }}
+                />
+                <button onClick={handlePostComment} disabled={posting || !commentInput.trim()}
+                  style={{
+                    padding: '8px 16px', borderRadius: '8px', border: 'none',
+                    background: posting || !commentInput.trim() ? '#ccc' : '#1976d2',
+                    color: '#fff', cursor: posting || !commentInput.trim() ? 'default' : 'pointer',
+                    fontSize: '0.85em', fontWeight: 600, alignSelf: 'flex-end',
+                  }}
+                >{posting ? '...' : t('commentPost')}</button>
+              </div>
+            </div>
+
             {/* Due date for overdue tasks */}
             {isOverdue && (
               <div style={{
@@ -394,7 +555,7 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
                 border: '1px solid #ffe0b2', fontSize: '0.85em', color: '#e65100',
                 marginBottom: '16px',
               }}>
-                ⚠ This task is past due ({new Date(currentTask.due_at!).toLocaleDateString()})
+                ⚠ {t('taskDetailOverdue')} ({new Date(currentTask.due_at!).toLocaleDateString()})
               </div>
             )}
           </div>
@@ -406,7 +567,7 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
           }}>
             {/* Status */}
             <div>
-              <div style={sidebarLabelStyle}>Status</div>
+              <div style={sidebarLabelStyle}>{t('taskStatus')}</div>
               <select
                 value={currentTask.status}
                 onChange={(e) => handleStatusChange(e.target.value as TaskStatus)}
@@ -420,21 +581,21 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
 
             {/* Priority */}
             <div>
-              <div style={sidebarLabelStyle}>Priority</div>
+              <div style={sidebarLabelStyle}>{t('taskDetailPriority')}</div>
               <select
                 value={currentTask.priority}
                 onChange={(e) => handlePriorityChange(e.target.value as Priority)}
                 style={editableSelectStyle}
               >
                 {priorityOptions.map(p => (
-                  <option key={p} value={p}>{p}</option>
+                  <option key={p} value={p}>{priorityLabel[p]}</option>
                 ))}
               </select>
             </div>
 
             {/* Assignee (Responsible Person) */}
             <div>
-              <div style={sidebarLabelStyle}>Assignee</div>
+              <div style={sidebarLabelStyle}>{t('taskDetailAssignee')}</div>
               <select
                 value={currentTask.assignee_id ? `${currentTask.assignee_type || 'user'}:${currentTask.assignee_id}` : ''}
                 onChange={(e) => {
@@ -448,15 +609,15 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
                 }}
                 style={editableSelectStyle}
               >
-                <option value="">Unassigned</option>
-                <optgroup label="Users">
+                <option value="">{t('taskDetailUnassigned')}</option>
+                <optgroup label={t('taskDetailUser') + 's'}>
                   {members.map(m => (
                     <option key={`user:${m.user_id}`} value={`user:${m.user_id}`}>
                       👤 {m.username}
                     </option>
                   ))}
                 </optgroup>
-                <optgroup label="Agents">
+                <optgroup label={t('agents')}>
                   {agentProfiles.map(a => (
                     <option key={`agent_profile:${a.id}`} value={`agent_profile:${a.id}`}>
                       {a.avatar || '🤖'} {a.name}
@@ -468,7 +629,7 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
 
             {/* Delegated Assignees */}
             <div>
-              <div style={sidebarLabelStyle}>Delegated Assignees</div>
+              <div style={sidebarLabelStyle}>{t('taskDetailDelegatedAssignees')}</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                 {(currentTask.assignees || []).map(a => (
                   <div key={a.assignee_id} style={{
@@ -485,7 +646,7 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
                         background: 'none', border: 'none', cursor: 'pointer',
                         color: '#c62828', padding: '0 2px', fontSize: '1em', lineHeight: 1,
                       }}
-                      title="Remove assignee"
+                      title={t('taskDetailRemoveAssignee')}
                     >✕</button>
                   </div>
                 ))}
@@ -496,15 +657,15 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
                       onChange={(e) => { setNewAssigneeType(e.target.value as AssigneeType); setNewAssigneeId(''); }}
                       style={editableSelectStyle}
                     >
-                      <option value="user">User</option>
-                      <option value="agent_profile">Agent</option>
+                      <option value="user">{t('taskDetailUser')}</option>
+                      <option value="agent_profile">{t('agent')}</option>
                     </select>
                     <select
                       value={newAssigneeId}
                       onChange={(e) => setNewAssigneeId(e.target.value)}
                       style={editableSelectStyle}
                     >
-                      <option value="">Select...</option>
+                      <option value="">{t('taskDetailSelect')}</option>
                       {(newAssigneeType === 'user' ? members : agentProfiles).map((item: WorkspaceMember | AgentProfile) => {
                         const id = 'user_id' in item ? (item as WorkspaceMember).user_id : (item as AgentProfile).id;
                         const name = 'username' in item ? (item as WorkspaceMember).username : (item as AgentProfile).name;
@@ -520,13 +681,13 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
                           flex: 1, padding: '4px 8px', borderRadius: '4px', border: 'none',
                           background: '#1976d2', color: '#fff', cursor: 'pointer', fontSize: '0.8em',
                         }}
-                      >Add</button>
+                      >{t('taskDetailAdd')}</button>
                       <button onClick={() => setShowAddAssignee(false)}
                         style={{
                           padding: '4px 8px', borderRadius: '4px', border: '1px solid #ddd',
                           background: '#fff', cursor: 'pointer', fontSize: '0.8em',
                         }}
-                      >Cancel</button>
+                      >{t('cancel')}</button>
                     </div>
                   </div>
                 ) : (
@@ -536,14 +697,14 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
                       background: 'transparent', cursor: 'pointer', fontSize: '0.8em', color: '#888',
                       textAlign: 'center', marginTop: '2px',
                     }}
-                  >+ Add assignee</button>
+                  >{t('taskDetailAddAssignee')}</button>
                 )}
               </div>
             </div>
 
             {/* Tags */}
             <div>
-              <div style={sidebarLabelStyle}>Tags</div>
+              <div style={sidebarLabelStyle}>{t('taskDetailTags')}</div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '4px' }}>
                 {(currentTask.tags || []).map(tag => (
                   <span key={tag} style={{
@@ -563,7 +724,7 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
                   value={tagInput}
                   onChange={(e) => setTagInput(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddTag(); } }}
-                  placeholder="Add tag..."
+                  placeholder={t('taskDetailAddTag')}
                   style={{
                     flex: 1, padding: '4px 8px', borderRadius: '4px', border: '1px solid #ddd',
                     fontSize: '0.8em', outline: 'none',
@@ -574,13 +735,13 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
                     padding: '4px 8px', borderRadius: '4px', border: '1px solid #ddd',
                     background: '#f5f5f5', cursor: 'pointer', fontSize: '0.8em',
                   }}
-                >Add</button>
+                >{t('taskDetailAdd')}</button>
               </div>
             </div>
 
             {/* Due Date */}
             <div>
-              <div style={sidebarLabelStyle}>Due Date</div>
+              <div style={sidebarLabelStyle}>{t('taskDetailDueDate')}</div>
               <input
                 type="date"
                 value={currentTask.due_at ? currentTask.due_at.slice(0, 10) : ''}
@@ -594,13 +755,13 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
 
             {/* Project */}
             <div>
-              <div style={sidebarLabelStyle}>Project</div>
+              <div style={sidebarLabelStyle}>{t('taskDetailProject')}</div>
               <select
                 value={currentTask.project_id || ''}
                 onChange={(e) => handleProjectChange(e.target.value || null)}
                 style={editableSelectStyle}
               >
-                <option value="">No project</option>
+                <option value="">{t('defaultProject')}</option>
                 {projects.map(p => (
                   <option key={p.id} value={p.id}>{p.name}</option>
                 ))}
@@ -609,13 +770,13 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
 
             {/* Parent Task */}
             <div>
-              <div style={sidebarLabelStyle}>Parent Task</div>
+              <div style={sidebarLabelStyle}>{t('taskDetailParentTask')}</div>
               <select
                 value={currentTask.parent_id || ''}
                 onChange={(e) => handleParentChange(e.target.value || null)}
                 style={editableSelectStyle}
               >
-                <option value="">None (top-level)</option>
+                <option value="">{t('taskDetailNoneTopLevel')}</option>
                 {allTasks.map(t => (
                   <option key={t.id} value={t.id}>{t.title}</option>
                 ))}
@@ -625,8 +786,8 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
             {/* Timestamps (read-only) */}
             <div style={{ borderTop: '1px solid #eee', paddingTop: '12px', marginTop: '4px' }}>
               <div style={{ fontSize: '0.8em', color: '#999', lineHeight: 1.6 }}>
-                <div>Created: {new Date(currentTask.created_at).toLocaleString()}</div>
-                <div>Updated: {new Date(currentTask.updated_at).toLocaleString()}</div>
+                <div>{t('taskDetailCreated')} {new Date(currentTask.created_at).toLocaleString()}</div>
+                <div>{t('taskDetailUpdatedTime')} {new Date(currentTask.updated_at).toLocaleString()}</div>
               </div>
             </div>
           </div>
@@ -642,13 +803,13 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
               padding: '6px 16px', borderRadius: '6px', border: '1px solid #ffcdd2',
               background: '#fff', color: '#c62828', cursor: 'pointer', fontSize: '0.85em',
             }}
-          >Delete task</button>
+          >{t('taskDetailDeleteTask')}</button>
           <button onClick={onClose}
             style={{
               padding: '6px 16px', borderRadius: '6px', border: '1px solid #ddd',
               background: '#fff', color: '#666', cursor: 'pointer', fontSize: '0.85em',
             }}
-          >Close</button>
+          >{t('taskDetailClose')}</button>
         </div>
       </div>
 
@@ -666,9 +827,9 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
               width: '360px', maxWidth: '90vw', boxShadow: '0 8px 32px rgba(0,0,0,0.2)', textAlign: 'center',
             }}
           >
-            <h3 style={{ margin: '0 0 8px', color: '#333' }}>Delete task</h3>
+            <h3 style={{ margin: '0 0 8px', color: '#333' }}>{t('taskDetailDeleteTask')}</h3>
             <p style={{ color: '#666', fontSize: '0.9em', marginBottom: '20px' }}>
-              Are you sure you want to delete this task? This action cannot be undone.
+              {t('taskDetailConfirmDeleteMsg')}
             </p>
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
               <button onClick={() => setShowDeleteVerify(false)}
@@ -676,13 +837,13 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
                   padding: '10px 20px', borderRadius: '6px', border: '1px solid #ddd',
                   background: '#fff', cursor: 'pointer', color: '#666', fontSize: '0.95em',
                 }}
-              >Cancel</button>
+              >{t('cancel')}</button>
               <button onClick={handleDeleteConfirm}
                 style={{
                   padding: '10px 20px', borderRadius: '6px', border: 'none',
                   background: '#c62828', color: '#fff', cursor: 'pointer', fontSize: '0.95em',
                 }}
-              >Delete</button>
+              >{t('taskDelete')}</button>
             </div>
           </div>
         </div>

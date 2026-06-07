@@ -97,19 +97,28 @@
 - 运行时自动发现和注册
 - 支持按工作区隔离配置
 
-### 任务管理
-- 看板视图，支持状态流转：`todo` → `in_progress` → `blocked` → `done` → `review`
+### 任务管理 / Task Management
+- **看板视图** (Kanban Board) — 支持状态流转：`todo` → `in_progress` → `blocked` → `review` → `done`
+- **任务详情** (Task Detail / GitHub Issue 风格) — 左侧栏显示标题（可编辑）、只读描述、子任务列表、评论区；右侧栏可编辑状态、优先级、负责人、委托负责人、标签、截止日期、项目、父任务
+- **三级负责人体系** — Creator（创建者，不可变）→ Assignee（负责人，可变更）→ Delegated Assignees（委托负责人，可追加）
+- **子任务** / Subtasks — 通过 `parent_id` 关联，在详情页以列表展示
+- **标签** / Tags — 自由添加/移除，支持按标签筛选
+- **优先级** / Priority — `urgent` > `high` > `medium` > `low`
+- **任务评论** / Comments — 类似 Issue 评论，用户和智能体均可发表，支持删除
 - 关联项目，按项目组织任务
 - 回收站机制：软删除 + 可恢复 + 永久删除
 - 按工作区隔离
 
-### 项目管理
+### 项目管理 / Project Management
 - 支持颜色标签、描述
 - 关联任务计数
+- 状态流转：`planning` → `active` → `completed` / `on_hold`
+- 支持负责人（多态：用户或智能体）
+- 支持开始/截止日期
 - 回收站机制（软删除/恢复/永久删除）
 - 按工作区隔离
 
-### 回收站
+### 回收站 / Trash
 - 任务和项目均支持软删除
 - 独立的回收站视图（`/tasks/trash`、`/projects/trash`）
 - 支持恢复和永久删除
@@ -237,8 +246,11 @@
 | `nodes` | 运行时节点 | id, name, status, ip, max_sessions |
 | `agents` | Agent 实例 | node_id, name, command, enabled |
 | `agent_profiles` | 用户 Agent 配置 | user_id, name, avatar, model, backend |
-| `tasks` | 任务 | title, status, project_id, workspace_id |
-| `projects` | 项目 | name, color, workspace_id |
+| `tasks` | 任务 | title, status, priority, project_id, parent_id, assignee_id, assignee_type, due_at, workspace_id, tags |
+| `task_assignees` | 委托负责人 | task_id, assignee_id, assignee_type |
+| `task_tags` | 任务标签 | task_id, tag |
+| `task_comments` | 任务评论 | task_id, user_id, agent_profile_id, content |
+| `projects` | 项目 | name, color, status, assignee, started_at, due_at, workspace_id |
 
 ---
 
@@ -284,20 +296,29 @@
 - `GET /api/sessions/:id` — 详情
 - `GET /api/sessions/:id/messages` — 消息历史
 
-### 任务
-- `GET /api/tasks` — 列表
+### 任务 / Tasks
+- `GET /api/tasks` — 列表（支持 `?project_id=`、`?parent_id=`、`?assignee_id=`、`?priority=`、`?tag=` 筛选）
 - `POST /api/tasks` — 创建
 - `GET /api/tasks/trash` — 回收站
+- `GET /api/tasks/:id` — 详情
 - `PUT /api/tasks/:id` — 更新
 - `DELETE /api/tasks/:id` — 软删除
 - `DELETE /api/tasks/:id/force` — 永久删除
 - `POST /api/tasks/:id/restore` — 恢复
 - `PATCH /api/tasks/:id/status` — 更新状态
+- `POST /api/tasks/:id/assignees` — 添加委托负责人
+- `DELETE /api/tasks/:id/assignees/:assigneeId` — 移除委托负责人
+- `GET /api/tasks/:id/assignees` — 委托负责人列表
+- `GET /api/tasks/:id/subtasks` — 子任务列表
+- `GET /api/tasks/:id/comments` — 评论列表
+- `POST /api/tasks/:id/comments` — 创建评论
+- `DELETE /api/tasks/:id/comments/:commentId` — 删除评论
 
-### 项目
-- `GET /api/projects` — 列表
+### 项目 / Projects
+- `GET /api/projects` — 列表（支持 `?status=` 筛选）
 - `POST /api/projects` — 创建
 - `GET /api/projects/trash` — 回收站
+- `GET /api/projects/:id` — 详情
 - `PUT /api/projects/:id` — 更新
 - `DELETE /api/projects/:id` — 软删除
 - `DELETE /api/projects/:id/force` — 永久删除
@@ -486,17 +507,23 @@ coaether/
 │   │   ├── App.tsx           # 主应用：路由、认证、布局
 │   │   ├── api/client.ts     # HTTP API 客户端
 │   │   │   ├── components/       # 组件
-│   │   │   ├── FloatingChat.tsx    # 浮动聊天窗口
-│   │   │   ├── MessageStream.tsx   # 消息渲染流（富文本）
-│   │   │   ├── InputArea.tsx       # 消息输入区
-│   │   │   ├── TaskBoard.tsx       # 任务看板
-│   │   │   ├── ProjectList.tsx     # 项目列表
+│   │   │   ├── FloatingChat.tsx     # 浮动聊天窗口
+│   │   │   ├── MessageStream.tsx    # 消息渲染流（富文本）
+│   │   │   ├── InputArea.tsx        # 消息输入区
+│   │   │   ├── TaskBoard.tsx        # 任务看板
+│   │   │   ├── TaskDetail.tsx       # 任务详情（GitHub Issue 风格内联编辑）
+│   │   │   ├── TaskCard.tsx         # 任务卡片
+│   │   │   ├── TaskForm.tsx         # 任务创建表单
+│   │   │   ├── ProjectList.tsx      # 项目列表
+│   │   │   ├── ProjectCard.tsx      # 项目卡片
+│   │   │   ├── ProjectForm.tsx      # 项目创建/编辑表单
+│   │   │   ├── ProjectDetail.tsx    # 项目详情（含任务列表）
 │   │   │   ├── NotificationBell.tsx # 通知铃铛
-│   │   │   ├── AgentList.tsx       # Agent 列表
-│   │   │   ├── Sidebar.tsx         # 侧边栏
-│   │   │   ├── LoginForm.tsx       # 登录表单
-│   │   │   ├── AddNodeDialog.tsx   # 添加节点对话框（平台选择/命令复制）
-│   │   │   └── NodeList.tsx        # 节点卡片列表（状态/Agent/删除）
+│   │   │   ├── AgentList.tsx        # Agent 列表
+│   │   │   ├── Sidebar.tsx          # 侧边栏
+│   │   │   ├── LoginForm.tsx        # 登录表单
+│   │   │   ├── AddNodeDialog.tsx    # 添加节点对话框（平台选择/命令复制）
+│   │   │   └── NodeList.tsx         # 节点卡片列表（状态/Agent/删除）
 │   │   ├── hooks/            # React Hooks
 │   │   │   ├── useMessageBus.ts    # Message Bus WebSocket hook
 │   │   │   ├── useDashboardWS.ts   # Dashboard WebSocket hook

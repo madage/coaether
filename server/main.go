@@ -226,6 +226,9 @@ func main() {
 		api.DELETE("/tasks/:id/assignees/:assigneeId", taskH.RemoveAssignee)
 		api.GET("/tasks/:id/assignees", taskH.ListAssignees)
 		api.GET("/tasks/:id/subtasks", taskH.ListSubtasks)
+			api.GET("/tasks/:id/comments", taskH.ListComments)
+			api.POST("/tasks/:id/comments", taskH.CreateComment)
+			api.DELETE("/tasks/:id/comments/:commentId", taskH.DeleteComment)
 
 		// Projects
 

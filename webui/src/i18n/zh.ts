@@ -198,8 +198,49 @@ export const zh = {
   taskPermanentDelete: '永久删除',
 
   taskTrashEmpty: '回收站为空',
+  defaultProject: '默认项目',
+  taskFilterPriority: '优先级',
+  creator: '创建者',
+  taskDelegated: '执行人',
+  deleteVerifyPrompt: '请回答以下验证问题：',
+  deleteVerifyWrong: '答案错误，请重试',
 
-
+  // Task Detail
+  taskDetailSaving: '保存中...',
+  taskDetailUnknown: '未知',
+  taskDetailUpdated: '已更新',
+  taskDetailNoDescription: '暂无描述',
+  taskDetailSubtasks: '子任务',
+  taskDetailComments: '评论',
+  taskDetailAgentBadge: '智能体',
+  taskDetailOverdue: '该任务已逾期',
+  taskDetailPriority: '优先级',
+  priorityUrgent: '紧急',
+  priorityHigh: '高',
+  priorityMedium: '中',
+  priorityLow: '低',
+  taskDetailAssignee: '负责人',
+  taskDetailUnassigned: '未分配',
+  taskDetailDelegatedAssignees: '委托负责人',
+  taskDetailRemoveAssignee: '移除负责人',
+  taskDetailUser: '用户',
+  taskDetailSelect: '请选择...',
+  taskDetailAdd: '添加',
+  taskDetailAddAssignee: '+ 添加负责人',
+  taskDetailAddTag: '添加标签...',
+  taskDetailTags: '标签',
+  taskDetailDueDate: '截止日期',
+  taskDetailProject: '项目',
+  taskDetailNoProject: '无项目',
+  taskDetailParentTask: '父任务',
+  taskDetailNoneTopLevel: '无（顶层任务）',
+  taskDetailCreated: '创建于：',
+  taskDetailUpdatedTime: '更新于：',
+  taskDetailClose: '关闭',
+  taskDetailDeleteTask: '删除任务',
+  taskDetailConfirmDeleteMsg: '确定要删除该任务吗？此操作不可撤销。',
+  taskDetailDeleteCommentHint: '再次点击确认删除',
+  taskDetailDeleteCommentTitle: '删除评论',
 
   // Agents
 
@@ -382,6 +423,14 @@ export const zh = {
   alreadyHasNode: '你已有一个活跃节点，请先移除它。',
 
 
+
+  // Comments
+  commentPlaceholder: '输入评论...',
+  commentPost: '发布',
+  commentEmpty: '暂无评论',
+  commentDelete: '删除',
+  commentDeleteConfirm: '确定删除这条评论？',
+  commentBy: '评论于',
 
   // Notifications
 

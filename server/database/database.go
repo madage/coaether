@@ -375,6 +375,20 @@ func Migrate() error {
 	CREATE INDEX IF NOT EXISTS idx_pending_invitations_email ON pending_invitations(invitee_email);
 
 	CREATE INDEX IF NOT EXISTS idx_pending_invitations_workspace ON pending_invitations(workspace_id);
+		CREATE TABLE IF NOT EXISTS task_comments (
+			id              VARCHAR(36) PRIMARY KEY,
+			task_id         VARCHAR(36) NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+			user_id         VARCHAR(36) NOT NULL REFERENCES users(id),
+			agent_profile_id VARCHAR(36) REFERENCES agent_profiles(id),
+			content         TEXT NOT NULL,
+			created_at      TIMESTAMP NOT NULL DEFAULT NOW(),
+			updated_at      TIMESTAMP NOT NULL DEFAULT NOW()
+		);
+
+		CREATE INDEX IF NOT EXISTS idx_task_comments_task_id ON task_comments(task_id);
+		CREATE INDEX IF NOT EXISTS idx_task_comments_created_at ON task_comments(task_id, created_at);
+
+
 
 	`
 

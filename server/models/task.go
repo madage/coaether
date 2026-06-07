@@ -86,3 +86,21 @@ type TaskTag struct {
 	TaskID string `json:"task_id"`
 	Tag    string `json:"tag"`
 }
+
+type TaskComment struct {
+	ID            string     `json:"id"`
+	TaskID        string     `json:"task_id"`
+	UserID        string     `json:"user_id"`
+	Username      string     `json:"username"`
+	AgentProfileID *string   `json:"agent_profile_id,omitempty"`
+	AgentName     string     `json:"agent_name,omitempty"`
+	AgentAvatar   string     `json:"agent_avatar,omitempty"`
+	Content       string     `json:"content"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+}
+
+type CreateCommentReq struct {
+	Content       string  `json:"content" binding:"required"`
+	AgentProfileID *string `json:"agent_profile_id,omitempty"`
+}

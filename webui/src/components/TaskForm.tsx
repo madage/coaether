@@ -155,7 +155,7 @@ export function TaskForm({ task, onClose, onSave }: TaskFormProps) {
               {t('navProjects')}
             </label>
             <select value={projectId || ''} onChange={(e) => setProjectId(e.target.value || null)} style={selectStyle}>
-              <option value="">{t('noProject')}</option>
+              <option value="">{t('defaultProject')}</option>
               {projects.map((p) => (
                 <option key={p.id} value={p.id}>{p.name}</option>
               ))}

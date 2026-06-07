@@ -198,8 +198,49 @@ export const en = {
   taskPermanentDelete: 'Delete Forever',
 
   taskTrashEmpty: 'Trash is empty',
+  defaultProject: 'Default project',
+  taskFilterPriority: 'Priority',
+  creator: 'Creator',
+  taskDelegated: 'Delegated',
+  deleteVerifyPrompt: 'Answer the following to confirm:',
+  deleteVerifyWrong: 'Wrong answer, try again',
 
-
+  // Task Detail
+  taskDetailSaving: 'Saving...',
+  taskDetailUnknown: 'Unknown',
+  taskDetailUpdated: 'updated',
+  taskDetailNoDescription: 'No description',
+  taskDetailSubtasks: 'Subtasks',
+  taskDetailComments: 'Comments',
+  taskDetailAgentBadge: 'Agent',
+  taskDetailOverdue: 'This task is past due',
+  taskDetailPriority: 'Priority',
+  priorityUrgent: 'Urgent',
+  priorityHigh: 'High',
+  priorityMedium: 'Medium',
+  priorityLow: 'Low',
+  taskDetailAssignee: 'Assignee',
+  taskDetailUnassigned: 'Unassigned',
+  taskDetailDelegatedAssignees: 'Delegated Assignees',
+  taskDetailRemoveAssignee: 'Remove assignee',
+  taskDetailUser: 'User',
+  taskDetailSelect: 'Select...',
+  taskDetailAdd: 'Add',
+  taskDetailAddAssignee: '+ Add assignee',
+  taskDetailAddTag: 'Add tag...',
+  taskDetailTags: 'Tags',
+  taskDetailDueDate: 'Due Date',
+  taskDetailProject: 'Project',
+  taskDetailNoProject: 'No project',
+  taskDetailParentTask: 'Parent Task',
+  taskDetailNoneTopLevel: 'None (top-level)',
+  taskDetailCreated: 'Created:',
+  taskDetailUpdatedTime: 'Updated:',
+  taskDetailClose: 'Close',
+  taskDetailDeleteTask: 'Delete task',
+  taskDetailConfirmDeleteMsg: 'Are you sure you want to delete this task? This action cannot be undone.',
+  taskDetailDeleteCommentHint: 'Click again to confirm',
+  taskDetailDeleteCommentTitle: 'Delete comment',
 
   // Agents
 
@@ -382,6 +423,14 @@ export const en = {
   alreadyHasNode: 'You already have an active node. Remove it first.',
 
 
+
+  // Comments
+  commentPlaceholder: 'Write a comment...',
+  commentPost: 'Comment',
+  commentEmpty: 'No comments yet',
+  commentDelete: 'Delete',
+  commentDeleteConfirm: 'Delete this comment?',
+  commentBy: 'commented',
 
   // Notifications
 
