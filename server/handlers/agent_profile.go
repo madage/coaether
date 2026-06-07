@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -25,7 +26,7 @@ func (h *AgentProfileHandler) List(c *gin.Context) {
 	workspaceID := c.Query("workspace_id")
 	isMember, _ := c.Get("is_workspace_member")
 
-	query := `SELECT id, user_id, name, avatar, description, agent_id, node_id, version, model, backend, enabled, created_at, updated_at
+	query := `SELECT id, user_id, name, avatar, description, COALESCE(system_prompt,''), agent_id, node_id, version, model, backend, enabled, COALESCE(max_concurrency,1), COALESCE(current_load,0), COALESCE(tags,'[]'::jsonb), COALESCE(skills,'[]'::jsonb), last_active_at, created_at, updated_at
 		 FROM agent_profiles`
 	args := []any{}
 	argIdx := 1
@@ -53,7 +54,8 @@ func (h *AgentProfileHandler) List(c *gin.Context) {
 	for rows.Next() {
 		var p models.AgentProfile
 		if err := rows.Scan(&p.ID, &p.UserID, &p.Name, &p.Avatar, &p.Description,
-			&p.AgentID, &p.NodeID, &p.Version, &p.Model, &p.Backend, &p.Enabled, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			&p.SystemPrompt, &p.AgentID, &p.NodeID, &p.Version, &p.Model, &p.Backend, &p.Enabled,
+				&p.MaxConcurrency, &p.CurrentLoad, &p.Tags, &p.Skills, &p.LastActiveAt, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to scan profile"})
 			return
 		}
@@ -67,7 +69,7 @@ func (h *AgentProfileHandler) Get(c *gin.Context) {
 	isMember, _ := c.Get("is_workspace_member")
 	profileID := c.Param("id")
 
-	query := `SELECT id, user_id, name, avatar, description, agent_id, node_id, version, model, backend, enabled, created_at, updated_at
+	query := `SELECT id, user_id, name, avatar, description, COALESCE(system_prompt,''), agent_id, node_id, version, model, backend, enabled, COALESCE(max_concurrency,1), COALESCE(current_load,0), COALESCE(tags,'[]'::jsonb), COALESCE(skills,'[]'::jsonb), last_active_at, created_at, updated_at
 		 FROM agent_profiles WHERE id = $1`
 	args := []any{profileID}
 	argIdx := 2
@@ -83,7 +85,8 @@ func (h *AgentProfileHandler) Get(c *gin.Context) {
 
 	var p models.AgentProfile
 	err := h.DB.QueryRow(query, args...).Scan(&p.ID, &p.UserID, &p.Name, &p.Avatar, &p.Description,
-		&p.AgentID, &p.NodeID, &p.Version, &p.Model, &p.Backend, &p.Enabled, &p.CreatedAt, &p.UpdatedAt)
+		&p.SystemPrompt, &p.AgentID, &p.NodeID, &p.Version, &p.Model, &p.Backend, &p.Enabled,
+		&p.MaxConcurrency, &p.CurrentLoad, &p.Tags, &p.Skills, &p.LastActiveAt, &p.CreatedAt, &p.UpdatedAt)
 	if err == sql.ErrNoRows {
 		c.JSON(http.StatusNotFound, gin.H{"error": "profile not found"})
 		return
@@ -110,11 +113,13 @@ func (h *AgentProfileHandler) Create(c *gin.Context) {
 	workspaceID := c.Query("workspace_id")
 
 	var req struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		AgentID     string `json:"agent_id"`
-		NodeID      string `json:"node_id"`
-		Avatar      string `json:"avatar,omitempty"`
+		Name         string          `json:"name"`
+		Description  string          `json:"description"`
+		SystemPrompt string          `json:"system_prompt"`
+		AgentID      string          `json:"agent_id"`
+		NodeID       string          `json:"node_id"`
+		Avatar       string          `json:"avatar,omitempty"`
+		Tags         json.RawMessage `json:"tags,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -133,9 +138,9 @@ func (h *AgentProfileHandler) Create(c *gin.Context) {
 	id := uuid.New().String()
 	now := time.Now()
 	_, err := h.DB.Exec(
-		`INSERT INTO agent_profiles (id, user_id, workspace_id, name, avatar, description, agent_id, node_id, version, model, backend, enabled, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '', '', 'cli', true, $9, $9)`,
-		id, userID, workspaceID, req.Name, avatar, req.Description, req.AgentID, req.NodeID, now,
+		`INSERT INTO agent_profiles (id, user_id, workspace_id, name, avatar, description, system_prompt, agent_id, node_id, tags, version, model, backend, enabled, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, '', '', 'cli', true, $11, $11)`,
+		id, userID, workspaceID, req.Name, avatar, req.Description, req.SystemPrompt, req.AgentID, req.NodeID, req.Tags, now,
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create profile"})
@@ -166,11 +171,14 @@ func (h *AgentProfileHandler) Update(c *gin.Context) {
 
 	var req struct {
 		Name        *string `json:"name,omitempty"`
+		SystemPrompt *string          `json:"system_prompt,omitempty"`
 		Description *string `json:"description,omitempty"`
 		Avatar      *string `json:"avatar,omitempty"`
 		AgentID     *string `json:"agent_id,omitempty"`
 		NodeID      *string `json:"node_id,omitempty"`
 		Enabled     *bool   `json:"enabled,omitempty"`
+		MaxConcurrency *int             `json:"max_concurrency,omitempty"`
+		Tags         *json.RawMessage `json:"tags,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -196,12 +204,21 @@ func (h *AgentProfileHandler) Update(c *gin.Context) {
 	if req.Avatar != nil {
 		addField("avatar", *req.Avatar)
 	}
-	if req.AgentID != nil {
-		addField("agent_id", *req.AgentID)
-	}
-	if req.NodeID != nil {
-		addField("node_id", *req.NodeID)
-	}
+		if req.AgentID != nil {
+			addField("agent_id", *req.AgentID)
+		}
+		if req.SystemPrompt != nil {
+			addField("system_prompt", *req.SystemPrompt)
+		}
+		if req.NodeID != nil {
+			addField("node_id", *req.NodeID)
+		}
+		if req.MaxConcurrency != nil {
+			addField("max_concurrency", *req.MaxConcurrency)
+		}
+		if req.Tags != nil {
+			addField("tags", *req.Tags)
+		}
 	if req.Enabled != nil {
 		addField("enabled", *req.Enabled)
 	}

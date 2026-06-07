@@ -42,6 +42,8 @@ export function AgentForm({ onClose, onCreated }: AgentFormProps) {
   const { t, lang } = useLang();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [systemPrompt, setSystemPrompt] = useState('');
+  const [tags, setTags] = useState('');
   const [nodeList, setNodeList] = useState<Node[]>([]);
   const [selectedNode, setSelectedNode] = useState('');
   const [agentList, setAgentList] = useState<Agent[]>([]);
@@ -83,8 +85,10 @@ export function AgentForm({ onClose, onCreated }: AgentFormProps) {
       await agentProfiles.create({
         name: name.trim(),
         description: description.trim(),
+        system_prompt: systemPrompt.trim(),
         agent_id: selectedAgent,
         node_id: selectedNode,
+        tags: tags.split(',').map(t => t.trim()).filter(Boolean),
       });
       onCreated();
       onClose();
@@ -160,7 +164,7 @@ export function AgentForm({ onClose, onCreated }: AgentFormProps) {
             </select>
           </div>
 
-          <div style={{ marginBottom: '24px' }}>
+          <div style={{ marginBottom: '16px' }}>
             <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
               {t('agentDescription')}
             </label>
@@ -170,6 +174,31 @@ export function AgentForm({ onClose, onCreated }: AgentFormProps) {
               placeholder={t('agentDescriptionPlaceholder')}
               rows={3}
               style={{ ...inputStyle, resize: 'vertical' }}
+            />
+          </div>
+
+          <div style={{ marginBottom: '16px' }}>
+            <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
+              {t('systemPrompt')}
+            </label>
+            <textarea
+              value={systemPrompt}
+              onChange={(e) => setSystemPrompt(e.target.value)}
+              placeholder={t('systemPromptPlaceholder')}
+              rows={3}
+              style={{ ...inputStyle, resize: 'vertical', fontFamily: 'monospace', fontSize: '0.85em' }}
+            />
+          </div>
+
+          <div style={{ marginBottom: '16px' }}>
+            <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
+              {t('abilityTags')} <span style={{ color: '#999', fontWeight: 400, fontSize: '0.85em' }}>({t('optional')})</span>
+            </label>
+            <input
+              value={tags}
+              onChange={(e) => setTags(e.target.value)}
+              placeholder={t('abilityTagsPlaceholder')}
+              style={inputStyle}
             />
           </div>
 

@@ -48,6 +48,9 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState(profile.name);
   const [editDesc, setEditDesc] = useState(profile.description);
+  const [editSystemPrompt, setEditSystemPrompt] = useState(profile.system_prompt || '');
+  const [editTags, setEditTags] = useState(profile.tags?.join(', ') || '');
+  const [editMaxConcurrency, setEditMaxConcurrency] = useState(profile.max_concurrency || 1);
   const [editNodeId, setEditNodeId] = useState(profile.node_id || '');
   const [editAgentId, setEditAgentId] = useState(profile.agent_id);
   const [nodeList, setNodeList] = useState<Node[]>([]);
@@ -77,13 +80,24 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
   }, [editNodeId, editing]);
 
   const handleSave = () => {
-    onSave?.(profile.id, { name: editName, description: editDesc, agent_id: editAgentId, node_id: editNodeId || undefined });
+    onSave?.(profile.id, {
+      name: editName,
+      description: editDesc,
+      system_prompt: editSystemPrompt,
+      agent_id: editAgentId,
+      node_id: editNodeId || undefined,
+      max_concurrency: editMaxConcurrency,
+      tags: editTags.split(',').map(t => t.trim()).filter(Boolean),
+    });
     setEditing(false);
   };
 
   const handleCancel = () => {
     setEditName(profile.name);
     setEditDesc(profile.description);
+    setEditSystemPrompt(profile.system_prompt || '');
+    setEditTags(profile.tags?.join(', ') || '');
+    setEditMaxConcurrency(profile.max_concurrency || 1);
     setEditAgentId(profile.agent_id);
     setEditNodeId(profile.node_id || '');
     setEditing(false);
@@ -196,6 +210,42 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
                 style={{ ...inputStyle, resize: 'vertical' }}
               />
             </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
+                {t('systemPrompt')}
+              </label>
+              <textarea
+                value={editSystemPrompt}
+                onChange={(e) => setEditSystemPrompt(e.target.value)}
+                placeholder={t('systemPromptPlaceholder')}
+                rows={3}
+                style={{ ...inputStyle, resize: 'vertical', fontFamily: 'monospace', fontSize: '0.85em' }}
+              />
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
+                {t('abilityTags')}
+              </label>
+              <input
+                value={editTags}
+                onChange={(e) => setEditTags(e.target.value)}
+                placeholder={t('abilityTagsPlaceholder')}
+                style={inputStyle}
+              />
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
+                {t('maxConcurrency')}
+              </label>
+              <input
+                type="number"
+                value={editMaxConcurrency}
+                onChange={(e) => setEditMaxConcurrency(Math.max(1, parseInt(e.target.value) || 1))}
+                min={1}
+                max={20}
+                style={inputStyle}
+              />
+            </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', paddingTop: '8px' }}>
               <button onClick={handleCancel} style={{
                 padding: '10px 24px', background: '#f5f5f5', color: '#666',
@@ -218,6 +268,33 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
                 {profile.description || '-'}
               </p>
             </div>
+
+            {profile.system_prompt && (
+              <div style={{ marginBottom: '16px' }}>
+                <div style={{ fontWeight: 600, color: '#333', fontSize: '0.9em', marginBottom: '8px' }}>
+                  {t('systemPrompt')}
+                </div>
+                <p style={{ margin: 0, color: '#666', fontSize: '0.85em', lineHeight: 1.6, fontFamily: 'monospace', background: '#f5f5f5', padding: '10px', borderRadius: '6px', whiteSpace: 'pre-wrap' }}>
+                  {profile.system_prompt}
+                </p>
+              </div>
+            )}
+
+            {profile.tags && profile.tags.length > 0 && (
+              <div style={{ marginBottom: '16px' }}>
+                <div style={{ fontWeight: 600, color: '#333', fontSize: '0.9em', marginBottom: '8px' }}>
+                  {t('abilityTags')}
+                </div>
+                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                  {profile.tags.map((tag, i) => (
+                    <span key={i} style={{
+                      background: '#e3f2fd', color: '#1565c0', padding: '2px 10px',
+                      borderRadius: '10px', fontSize: '0.8em', fontWeight: 500,
+                    }}>{tag}</span>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div style={{
               background: '#f9f9f9',
@@ -248,6 +325,10 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
               <div>
                 <div style={{ color: '#999', fontSize: '0.85em' }}>{t('agentNode')}</div>
                 <div style={{ color: '#333', fontWeight: 500 }}>{nodeName || '-'}</div>
+              </div>
+              <div>
+                <div style={{ color: '#999', fontSize: '0.85em' }}>{t('agentLoad')}</div>
+                <div style={{ color: '#333', fontWeight: 500 }}>{profile.current_load ?? 0}/{profile.max_concurrency ?? 1}</div>
               </div>
             </div>
 

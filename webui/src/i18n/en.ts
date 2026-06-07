@@ -606,5 +606,21 @@ export const en = {
 
   saving: 'Saving...',
 
+  // Agent Profile Enhancement
+
+  systemPrompt: 'System Prompt',
+
+  systemPromptPlaceholder: 'Define the agent\'s role, personality, and expertise...',
+
+  maxConcurrency: 'Max Parallel Tasks',
+
+  abilityTags: 'Ability Tags',
+
+  abilityTagsPlaceholder: 'e.g. frontend, backend, database',
+
+  agentLoad: 'Load',
+
+  agentLoadInfo: '{current}/{max} tasks running',
+
 } as const;
 

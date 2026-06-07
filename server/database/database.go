@@ -506,6 +506,17 @@ func Migrate() error {
 		"ALTER TABLE task_comments ADD COLUMN IF NOT EXISTS parent_id VARCHAR(36) REFERENCES task_comments(id)",
 		"CREATE INDEX IF NOT EXISTS idx_task_comments_parent_id ON task_comments(parent_id)",
 
+		// Agent as Colleague: Phase 1 — Profile enhancements
+		"ALTER TABLE agent_profiles ADD COLUMN IF NOT EXISTS system_prompt TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE agent_profiles ADD COLUMN IF NOT EXISTS skills JSONB NOT NULL DEFAULT '[]'",
+		"ALTER TABLE agent_profiles ADD COLUMN IF NOT EXISTS max_concurrency INT NOT NULL DEFAULT 1",
+		"ALTER TABLE agent_profiles ADD COLUMN IF NOT EXISTS current_load INT NOT NULL DEFAULT 0",
+		"ALTER TABLE agent_profiles ADD COLUMN IF NOT EXISTS tags JSONB NOT NULL DEFAULT '[]'",
+		"ALTER TABLE agent_profiles ADD COLUMN IF NOT EXISTS last_active_at TIMESTAMP",
+
+		// Agent as Colleague: Agent autonomous comment flag
+		"ALTER TABLE task_comments ADD COLUMN IF NOT EXISTS is_agent_comment BOOLEAN NOT NULL DEFAULT false",
+
 	}
 
 	for _, a := range alterations {

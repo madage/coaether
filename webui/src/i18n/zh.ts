@@ -606,5 +606,21 @@ export const zh = {
 
   saving: '保存中...',
 
+  // Agent Profile Enhancement
+
+  systemPrompt: '系统提示词',
+
+  systemPromptPlaceholder: '定义智能体的角色、性格和专业领域...',
+
+  maxConcurrency: '最大并行任务数',
+
+  abilityTags: '能力标签',
+
+  abilityTagsPlaceholder: '例如：前端、后端、数据库',
+
+  agentLoad: '负载',
+
+  agentLoadInfo: '{current}/{max} 个任务运行中',
+
 } as const;
 

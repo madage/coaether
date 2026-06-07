@@ -47,6 +47,13 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
   const [replyToId, setReplyToId] = useState<string | null>(null);
   const replyEditorRef = useRef<HTMLDivElement>(null);
 
+  // @mention autocomplete
+  const [mentionOpen, setMentionOpen] = useState(false);
+  const [mentionSearch, setMentionSearch] = useState('');
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const [mentionItems, setMentionItems] = useState<{ id: string; name: string; type: 'user' | 'agent' }[]>([]);
+  const [mentionEditor, setMentionEditor] = useState<'main' | 'reply'>('main');
+
   // Assignee picker state
   const [showAddAssignee, setShowAddAssignee] = useState(false);
   const [newAssigneeType, setNewAssigneeType] = useState<AssigneeType>('user');
@@ -89,6 +96,13 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
     };
     load();
   }, [workspaceId, task.id]);
+
+  // Build mention candidates when members/agents change
+  const mentionCandidates = useRef<{ id: string; name: string; type: 'user' | 'agent' }[]>([]);
+  mentionCandidates.current = [
+    ...members.map(m => ({ id: m.user_id, name: m.username, type: 'user' as const })),
+    ...agentProfiles.map(a => ({ id: a.id, name: a.name, type: 'agent' as const })),
+  ];
 
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
@@ -306,11 +320,44 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
               wordBreak: 'break-word',
             }} dangerouslySetInnerHTML={{ __html: highlightMentions(c.content) }} />
             {showReplyEditor && (
-              <div style={{ marginTop: '10px', paddingLeft: '8px', borderLeft: '2px solid #1976d2' }}>
+              <div style={{ marginTop: '10px', paddingLeft: '8px', borderLeft: '2px solid #1976d2', position: 'relative' }}>
+                {mentionOpen && mentionEditor === 'reply' && (
+                  <div style={{
+                    position: 'absolute', bottom: '100%', left: 0, zIndex: 999,
+                    background: '#fff', border: '1px solid #ddd', borderRadius: '8px',
+                    boxShadow: '0 4px 16px rgba(0,0,0,0.15)', maxHeight: '200px', overflow: 'auto',
+                    minWidth: '200px',
+                  }}>
+                    {mentionItems.length === 0 ? (
+                      <div style={{ padding: '8px 12px', color: '#999', fontSize: '0.85em' }}>No results</div>
+                    ) : mentionItems.map((item, i) => (
+                      <div key={item.id}
+                        onClick={() => insertMention(item)}
+                        onMouseEnter={() => setMentionIndex(i)}
+                        style={{
+                          padding: '8px 12px', cursor: 'pointer', fontSize: '0.85em',
+                          background: i === mentionIndex ? '#e3f2fd' : 'transparent',
+                          display: 'flex', alignItems: 'center', gap: '6px',
+                        }}
+                      >
+                        <span>{item.type === 'user' ? '👤' : '🤖'}</span>
+                        <span>{item.name}</span>
+                        <span style={{ marginLeft: 'auto', fontSize: '0.75em', color: '#999' }}>
+                          {item.type === 'user' ? 'user' : 'agent'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <div
                   ref={replyEditorRef}
                   contentEditable
                   suppressContentEditableWarning
+                  onInput={() => handleMentionInput('reply')}
+                  onKeyDown={(e) => {
+                    if (mentionOpen && handleMentionKeyDown(e)) return;
+                    if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); handlePostComment(c.id); }
+                  }}
                   onPaste={(e) => { e.preventDefault(); document.execCommand('insertText', false, e.clipboardData.getData('text/plain')); }}
                   style={{
                     width: '100%', boxSizing: 'border-box', padding: '8px 12px', borderRadius: '8px',
@@ -345,6 +392,104 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
     );
   };
 
+  // --- @mention autocomplete ---
+  const closeMention = () => {
+    setMentionOpen(false);
+    setMentionSearch('');
+    setMentionIndex(0);
+  };
+
+  const handleMentionInput = (editor: 'main' | 'reply') => {
+    const ref = editor === 'main' ? commentEditorRef.current : replyEditorRef.current;
+    if (!ref) return;
+
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount) { closeMention(); return; }
+    const range = sel.getRangeAt(0);
+
+    // Get text before cursor
+    const preRange = document.createRange();
+    preRange.selectNodeContents(ref);
+    preRange.setEnd(range.startContainer, range.startOffset);
+    const textBefore = preRange.toString();
+
+    const atIdx = textBefore.lastIndexOf('@');
+    if (atIdx === -1 || textBefore.length - atIdx > 30) { closeMention(); return; }
+
+    const search = textBefore.slice(atIdx + 1);
+    if (search.includes(' ')) { closeMention(); return; }
+
+    setMentionEditor(editor);
+    setMentionSearch(search);
+    setMentionIndex(0);
+    setMentionItems(
+      mentionCandidates.current.filter(c =>
+        c.name.toLowerCase().includes(search.toLowerCase())
+      ).slice(0, 20)
+    );
+    setMentionOpen(true);
+  };
+
+  const insertMention = (item: { name: string }) => {
+    const ref = mentionEditor === 'main' ? commentEditorRef.current : replyEditorRef.current;
+    if (!ref) return;
+
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount) { closeMention(); return; }
+    const range = sel.getRangeAt(0);
+
+    // Walk backwards from cursor to find the @ character in the same text node
+    const node = range.startContainer;
+    if (node.nodeType === Node.TEXT_NODE) {
+      const text = node.textContent || '';
+      const offset = range.startOffset;
+      const atIdx = text.lastIndexOf('@', offset - 1);
+      if (atIdx !== -1) {
+        range.setStart(node, atIdx);
+      }
+    }
+    range.deleteContents();
+
+    // Insert @mention as plain text — blue highlighting is handled by highlightMentions() on display
+    range.insertNode(document.createTextNode(`@${item.name} `));
+    range.collapse(false);
+    sel.removeAllRanges();
+    sel.addRange(range);
+
+    // Notify React of content change
+    const evt = new Event('input', { bubbles: true });
+    ref.dispatchEvent(evt);
+    closeMention();
+  };
+
+  const handleMentionKeyDown = (e: React.KeyboardEvent): boolean => {
+    if (!mentionOpen) return false;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setMentionIndex(i => Math.min(i + 1, mentionItems.length - 1));
+      return true;
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setMentionIndex(i => Math.max(i - 1, 0));
+      return true;
+    }
+    if (e.key === 'Enter' || e.key === 'Tab') {
+      if (mentionItems[mentionIndex]) {
+        e.preventDefault();
+        insertMention(mentionItems[mentionIndex]);
+        return true;
+      }
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeMention();
+      return true;
+    }
+    return false;
+  };
+  // --- end @mention ---
+
   const handleDeleteComment = async (commentId: string) => {
     if (confirmDeleteComment !== commentId) {
       setConfirmDeleteComment(commentId);
@@ -360,6 +505,7 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
   };
 
   const handleCommentKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (mentionOpen && handleMentionKeyDown(e)) return;
     if (e.key === 'Enter' && e.ctrlKey) {
       e.preventDefault();
       handlePostComment();
@@ -605,12 +751,43 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
                   <button type="button" onMouseDown={(e) => { e.preventDefault(); document.execCommand('insertUnorderedList'); commentEditorRef.current?.focus(); }}
                     style={{ padding: '2px 8px', borderRadius: '4px', border: '1px solid #ddd', background: '#fafafa', cursor: 'pointer', fontSize: '0.8em', lineHeight: 1.4 }} title="Bullet List">•</button>
                 </div>
-                <div>
+                <div style={{ position: 'relative' }}>
+                  {mentionOpen && mentionEditor === 'main' && (
+                    <div style={{
+                      position: 'absolute', bottom: '100%', left: 0, zIndex: 999,
+                      background: '#fff', border: '1px solid #ddd', borderRadius: '8px',
+                      boxShadow: '0 4px 16px rgba(0,0,0,0.15)', maxHeight: '200px', overflow: 'auto',
+                      minWidth: '200px',
+                    }}>
+                      {mentionItems.length === 0 ? (
+                        <div style={{ padding: '8px 12px', color: '#999', fontSize: '0.85em' }}>No results</div>
+                      ) : mentionItems.map((item, i) => (
+                        <div key={item.id}
+                          onClick={() => insertMention(item)}
+                          onMouseEnter={() => setMentionIndex(i)}
+                          style={{
+                            padding: '8px 12px', cursor: 'pointer', fontSize: '0.85em',
+                            background: i === mentionIndex ? '#e3f2fd' : 'transparent',
+                            display: 'flex', alignItems: 'center', gap: '6px',
+                          }}
+                        >
+                          <span>{item.type === 'user' ? '👤' : '🤖'}</span>
+                          <span>{item.name}</span>
+                          <span style={{ marginLeft: 'auto', fontSize: '0.75em', color: '#999' }}>
+                            {item.type === 'user' ? 'user' : 'agent'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   <div
                     ref={commentEditorRef}
                     contentEditable
                     suppressContentEditableWarning
-                    onInput={() => setCommentInput(commentEditorRef.current?.innerHTML || '')}
+                    onInput={() => {
+                      setCommentInput(commentEditorRef.current?.innerHTML || '');
+                      handleMentionInput('main');
+                    }}
                     onKeyDown={handleCommentKeyDown}
                     onPaste={(e) => {
                       e.preventDefault();

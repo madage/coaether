@@ -35,12 +35,18 @@ export interface AgentProfile {
   name: string;
   avatar: string;
   description: string;
+  system_prompt: string;
   agent_id: string;
   node_id?: string;
   version: string;
   model: string;
   backend: string;
   enabled: boolean;
+  max_concurrency: number;
+  current_load: number;
+  tags: string[];
+  skills: string[];
+  last_active_at?: string;
   created_at: string;
   updated_at: string;
 }
