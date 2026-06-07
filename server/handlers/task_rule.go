@@ -68,8 +68,15 @@ func (e *RuleEngine) evaluateConditions(condJSON []byte, ctx map[string]interfac
 	}
 
 	var conds []map[string]interface{}
-	if err := json.Unmarshal(condJSON, &conds); err != nil {
-		return false, fmt.Sprintf("invalid conditions: %v", err)
+	// Try as single object first ({"field":"...","op":"...","value":"..."})
+	var singleCond map[string]interface{}
+	if err := json.Unmarshal(condJSON, &singleCond); err == nil && len(singleCond) > 0 {
+		conds = []map[string]interface{}{singleCond}
+	} else {
+		// Fall back to array format ([{...}, {...}])
+		if err := json.Unmarshal(condJSON, &conds); err != nil {
+			return false, fmt.Sprintf("invalid conditions: %v", err)
+		}
 	}
 
 	for _, cond := range conds {
@@ -130,7 +137,34 @@ func (e *RuleEngine) executeActions(actJSON []byte, taskID string, ctx map[strin
 
 	for _, act := range acts {
 		actType, _ := act["type"].(string)
-		params, _ := act["params"].(map[string]interface{})
+
+		// Support both {"type":"X","params":{"field":"val"}} and {"type":"X","value":"val"} formats
+		params, hasParams := act["params"].(map[string]interface{})
+		if !hasParams {
+			params = make(map[string]interface{})
+			switch actType {
+			case "set_priority":
+				if v, ok := act["value"]; ok {
+					params["priority"] = v
+				}
+			case "set_status":
+				if v, ok := act["value"]; ok {
+					params["status"] = v
+				}
+			case "assign_user":
+				if v, ok := act["value"]; ok {
+					params["user_id"] = v
+				}
+			case "add_tag":
+				if v, ok := act["value"]; ok {
+					params["tag"] = v
+				}
+			case "webhook":
+				if v, ok := act["value"]; ok {
+					params["url"] = v
+				}
+			}
+		}
 
 		result, logLine := e.executeAction(actType, params, taskID, ctx)
 		results = append(results, result)

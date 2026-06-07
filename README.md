@@ -110,6 +110,17 @@ The system uses a **dual WebSocket channel** architecture:
 - Trash mechanism: soft delete + restore + permanent delete
 - Isolated by workspace
 
+### Automation Rules
+- **Trigger→Condition→Action** rule engine: "When X happens, if condition Y is met, execute action Z"
+- **4 trigger types**: `on_comment` (On Comment), `on_status_change` (On Status Change), `on_assignee_change` (On Assignee Change), `on_task_create` (On Task Create)
+- **5 action types**: `set_priority` (set urgency), `set_status` (change status), `assign_user` (assign to user), `add_tag` (add label), `webhook` (call external URL)
+- **Conditions** evaluated via JSON: `equals`, `contains`, `matches` (regex), `is_null`, `not_exists`
+- **Conditions format**: `{"field": "comment_content", "op": "contains", "value": "keyword"}`
+- **Actions format**: `[{"type": "set_priority", "value": "urgent"}]`
+- **Rule management UI**: create/edit/delete/toggle in the Automation page
+- **Execution logs**: each rule has a log viewer showing matched/unmatched events with timestamps and results
+- Isolated by workspace
+
 ### Project Management
 - Supports color labels, description
 - Linked task count
@@ -250,7 +261,9 @@ All communication is based on JSON `Envelope` format:
 | `tasks` | Tasks | title, status, priority, project_id, parent_id, assignee_id, assignee_type, due_at, workspace_id, tags |
 | `task_assignees` | Delegated assignees | task_id, assignee_id, assignee_type |
 | `task_tags` | Task tags | task_id, tag |
-| `task_comments` | Task comments | task_id, user_id, agent_profile_id, content |
+| `task_comments` | Task comments | task_id, user_id, agent_profile_id, content, parent_id |
+| `task_rules` | Automation rules | workspace_id, name, trigger_type, conditions (JSONB), actions (JSONB) |
+| `task_rule_logs` | Rule execution logs | rule_id, task_id, trigger_event, matched |
 | `projects` | Projects | name, color, status, assignee, started_at, due_at, workspace_id |
 
 ---
@@ -314,6 +327,14 @@ All communication is based on JSON `Envelope` format:
 - `GET /api/tasks/:id/comments` — Comments list
 - `POST /api/tasks/:id/comments` — Create comment
 - `DELETE /api/tasks/:id/comments/:commentId` — Delete comment
+
+### Task Rules
+- `GET /api/rules?workspace_id=` — List rules
+- `POST /api/rules?workspace_id=` — Create rule
+- `GET /api/rules/:id` — Get rule detail
+- `PUT /api/rules/:id` — Update rule
+- `DELETE /api/rules/:id` — Delete rule
+- `GET /api/rules/:id/logs` — Rule execution logs
 
 ### Projects
 - `GET /api/projects` — List (supports `?status=` filtering)
@@ -483,7 +504,8 @@ coaether/
 │   │   ├── auth.go           # Login/Register
 │   │   ├── workspace.go      # Workspace CRUD + member management + invitations
 │   │   ├── session.go        # AI session management
-│   │   ├── task.go           # Task CRUD + trash
+│   │   ├── task.go           # Task CRUD + trash + @mention parsing + rule engine hooks
+│   │   ├── task_rule.go      # Rule engine (Evaluate) + Rule CRUD + execution logs
 │   │   ├── project.go        # Project CRUD + trash
 │   │   ├── agent_profile.go  # Agent profile CRUD
 │   │   ├── node.go           # Runtime node management
@@ -498,7 +520,7 @@ coaether/
 │   │   ├── message.go        # Envelope, Payload, ContentBlock
 │   │   ├── bus.go            # MessageBus core: endpoint/session management, message routing
 │   │   └── address.go        # Address parsing
-│   ├── models/               # Data models
+│   ├── models/               # Data models (includes task_rule.go)
 │   ├── store/                # Message persistence (PostgreSQL)
 │   ├── mailer/               # Email sending
 │   └── notifications/        # Notification system
@@ -520,6 +542,9 @@ coaether/
 │   │   │   ├── ProjectForm.tsx      # Project create/edit form
 │   │   │   ├── ProjectDetail.tsx    # Project detail (with task list)
 │   │   │   ├── NotificationBell.tsx # Notification bell
+│   │   │   ├── RuleList.tsx         # Rule list with toggle/edit/delete
+│   │   │   ├── RuleForm.tsx         # Rule create/edit form modal
+│   │   │   ├── RuleLogModal.tsx     # Rule execution log viewer
 │   │   │   ├── AgentList.tsx        # Agent list
 │   │   │   ├── Sidebar.tsx          # Sidebar
 │   │   │   ├── LoginForm.tsx        # Login form

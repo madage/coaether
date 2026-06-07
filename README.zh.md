@@ -109,6 +109,17 @@
 - 回收站机制：软删除 + 可恢复 + 永久删除
 - 按工作区隔离
 
+### 自动化规则 / Automation Rules
+- **触发→条件→动作** 规则引擎："当 XX 发生时，如果条件满足，自动执行 YY"
+- **4 种触发器**：`on_comment`（评论时）、`on_status_change`（状态变更时）、`on_assignee_change`（负责人变更时）、`on_task_create`（创建任务时）
+- **5 种动作**：`set_priority`（设优先级）、`set_status`（改状态）、`assign_user`（分配用户）、`add_tag`（添加标签）、`webhook`（调用外部 URL）
+- **条件匹配方式**：`equals`（等于）、`contains`（包含）、`matches`（正则匹配）、`is_null`（为空）、`not_exists`（不存在）
+- **条件格式**：`{"field": "comment_content", "op": "contains", "value": "关键词"}`
+- **动作格式**：`[{"type": "set_priority", "value": "urgent"}]`
+- **规则管理界面**：在 Automation 页面创建/编辑/删除/开关规则
+- **执行日志**：每条规则可通过 📋 按钮查看匹配/未匹配的执行记录
+- 按工作区隔离
+
 ### 项目管理 / Project Management
 - 支持颜色标签、描述
 - 关联任务计数
@@ -249,7 +260,9 @@
 | `tasks` | 任务 | title, status, priority, project_id, parent_id, assignee_id, assignee_type, due_at, workspace_id, tags |
 | `task_assignees` | 委托负责人 | task_id, assignee_id, assignee_type |
 | `task_tags` | 任务标签 | task_id, tag |
-| `task_comments` | 任务评论 | task_id, user_id, agent_profile_id, content |
+| `task_comments` | 任务评论 | task_id, user_id, agent_profile_id, content, parent_id |
+| `task_rules` | 自动化规则 | workspace_id, name, trigger_type, conditions (JSONB), actions (JSONB) |
+| `task_rule_logs` | 规则执行日志 | rule_id, task_id, trigger_event, matched |
 | `projects` | 项目 | name, color, status, assignee, started_at, due_at, workspace_id |
 
 ---
@@ -313,6 +326,14 @@
 - `GET /api/tasks/:id/comments` — 评论列表
 - `POST /api/tasks/:id/comments` — 创建评论
 - `DELETE /api/tasks/:id/comments/:commentId` — 删除评论
+
+### 自动化规则 / Task Rules
+- `GET /api/rules?workspace_id=` — 规则列表
+- `POST /api/rules?workspace_id=` — 创建规则
+- `GET /api/rules/:id` — 规则详情
+- `PUT /api/rules/:id` — 更新规则
+- `DELETE /api/rules/:id` — 删除规则
+- `GET /api/rules/:id/logs` — 执行日志
 
 ### 项目 / Projects
 - `GET /api/projects` — 列表（支持 `?status=` 筛选）
@@ -482,7 +503,8 @@ coaether/
 │   │   ├── auth.go           # 登录/注册
 │   │   ├── workspace.go      # 工作区 CRUD + 成员管理 + 邀请
 │   │   ├── session.go        # AI 会话管理
-│   │   ├── task.go           # 任务 CRUD + 回收站
+│   │   ├── task.go           # 任务 CRUD + @提及解析 + 规则引擎钩子
+│   │   ├── task_rule.go      # 规则引擎 + 规则 CRUD + 执行日志
 │   │   ├── project.go        # 项目 CRUD + 回收站
 │   │   ├── agent_profile.go  # Agent 配置 CRUD
 │   │   ├── node.go           # 运行时节点管理
@@ -497,7 +519,7 @@ coaether/
 │   │   ├── message.go        # Envelope、Payload、ContentBlock
 │   │   ├── bus.go            # MessageBus 核心：端点/会话管理、消息路由
 │   │   └── address.go        # 地址解析
-│   ├── models/               # 数据模型
+│   ├── models/               # 数据模型（含 task_rule.go）
 │   ├── store/                # 消息持久化 (PostgreSQL)
 │   ├── mailer/               # 邮件发送
 │   └── notifications/        # 通知系统
@@ -519,6 +541,9 @@ coaether/
 │   │   │   ├── ProjectForm.tsx      # 项目创建/编辑表单
 │   │   │   ├── ProjectDetail.tsx    # 项目详情（含任务列表）
 │   │   │   ├── NotificationBell.tsx # 通知铃铛
+│   │   │   ├── RuleList.tsx         # 规则列表（开关/编辑/删除）
+│   │   │   ├── RuleForm.tsx         # 规则创建/编辑弹窗
+│   │   │   ├── RuleLogModal.tsx     # 规则执行日志查看
 │   │   │   ├── AgentList.tsx        # Agent 列表
 │   │   │   ├── Sidebar.tsx          # 侧边栏
 │   │   │   ├── LoginForm.tsx        # 登录表单

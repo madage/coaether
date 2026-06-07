@@ -596,7 +596,7 @@ export const en = {
 
   ruleLogResult: 'Result',
 
-  navAutomation: 'Automation',
+  navAutomation: 'Rules',
 
   edit: 'Edit',
 

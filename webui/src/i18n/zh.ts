@@ -596,7 +596,7 @@ export const zh = {
 
   ruleLogResult: '结果',
 
-  navAutomation: '自动化',
+  navAutomation: '规则',
 
   edit: '编辑',
 
