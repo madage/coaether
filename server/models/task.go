@@ -24,6 +24,7 @@ const (
 type Task struct {
 	ID           string     `json:"id"`
 	UserID       string     `json:"user_id"`
+	CreatorName  string     `json:"creator_name,omitempty"`
 	Title        string     `json:"title"`
 	Description  string     `json:"description"`
 	Status       TaskStatus `json:"status"`
@@ -32,7 +33,8 @@ type Task struct {
 	AssigneeID   *string    `json:"assignee_id"`
 	AssigneeType *string    `json:"assignee_type"`
 	Priority     Priority   `json:"priority"`
-	Tags         []string   `json:"tags"`
+	Tags         []string       `json:"tags"`
+	Assignees    []TaskAssignee `json:"assignees,omitempty"`
 	DueAt        *time.Time `json:"due_at"`
 	CompletedAt  *time.Time `json:"completed_at"`
 	CreatedAt    time.Time  `json:"created_at"`

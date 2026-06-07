@@ -125,6 +125,7 @@ export type AssigneeType = 'user' | 'agent_profile';
 export interface Task {
   id: string;
   user_id: string;
+  creator_name?: string;
   title: string;
   description: string;
   status: TaskStatus;
@@ -134,6 +135,7 @@ export interface Task {
   assignee_type?: AssigneeType;
   priority: Priority;
   tags: string[];
+  assignees?: TaskAssignee[];
   due_at?: string;
   completed_at?: string;
   created_at: string;

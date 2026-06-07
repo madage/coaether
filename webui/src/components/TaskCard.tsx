@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import type { Task, TaskStatus, Priority } from '../types';
+import type { Task, TaskStatus, Priority, TaskAssignee } from '../types';
 import { useLang, type TranslationKey } from '../i18n/context';
 
 const statusColors: Record<TaskStatus, { bg: string; color: string }> = {
@@ -35,9 +35,11 @@ interface TaskCardProps {
   projectsMap?: Record<string, { name: string; color: string }>;
   subtaskCount?: number;
   assigneeName?: string;
+  creatorName?: string;
+  assigneeNamesMap?: Record<string, string>;
 }
 
-export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap, subtaskCount, assigneeName }: TaskCardProps) {
+export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap, subtaskCount, assigneeName, creatorName, assigneeNamesMap }: TaskCardProps) {
   const { t } = useLang();
   const sc = statusColors[task.status];
   const pc = priorityColors[task.priority] || priorityColors.medium;
@@ -204,10 +206,24 @@ export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap, 
           <span style={{ fontSize: '0.7em', color: '#999' }}>+{task.tags.length - 3}</span>
         )}
 
+        {/* Creator */}
+        {creatorName && (
+          <span style={{ fontSize: '0.75em', color: '#888' }}>
+            ✏️ {creatorName}
+          </span>
+        )}
+
         {/* Assignee */}
         {assigneeName && (
           <span style={{ fontSize: '0.75em', color: '#555' }}>
             👤 {assigneeName}
+          </span>
+        )}
+
+        {/* Delegated assignees */}
+        {task.assignees && task.assignees.length > 0 && (
+          <span style={{ fontSize: '0.75em', color: '#777' }}>
+            👥 {task.assignees.map(a => assigneeNamesMap?.[a.assignee_id] || a.assignee_id.slice(0, 6)).join(', ')}
           </span>
         )}
 

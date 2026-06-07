@@ -124,6 +124,18 @@ export function TaskForm({ task, onClose, onSave }: TaskFormProps) {
             />
           </div>
 
+          {/* Creator (read-only) */}
+          {task?.creator_name && (
+            <div style={{ marginBottom: '14px' }}>
+              <label style={{ display: 'block', fontSize: '0.85em', color: '#666', marginBottom: '4px' }}>
+                创建者
+              </label>
+              <div style={{ ...inputStyle, background: '#f5f5f5', color: '#888', display: 'flex', alignItems: 'center', padding: '10px' }}>
+                ✏️ {task.creator_name}
+              </div>
+            </div>
+          )}
+
           {/* Description */}
           <div style={{ marginBottom: '14px' }}>
             <label style={{ display: 'block', fontSize: '0.85em', color: '#666', marginBottom: '4px' }}>

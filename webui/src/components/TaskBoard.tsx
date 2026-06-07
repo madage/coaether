@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useLang, type TranslationKey } from '../i18n/context';
-import { tasks as tasksApi, projects as projectsApi, workspaceMembers as workspaceMembersApi } from '../api/client';
+import { tasks as tasksApi, projects as projectsApi, workspaceMembers as workspaceMembersApi, agentProfiles as agentProfilesApi } from '../api/client';
 import { useResourceSync } from '../hooks/useResourceSync';
 import { useWorkspace } from '../hooks/WorkspaceContext';
 import { TaskCard } from './TaskCard';
@@ -88,12 +88,15 @@ export function TaskBoard() {
 
   useEffect(() => {
     projectsApi.list().then((res) => setProjects(res.projects)).catch(() => {});
-    // Build a map of user_id -> username from workspace members for assignee display
+    // Build a combined map of user/agent id -> name for assignee display
     if (workspaceId) {
       workspaceMembersApi.list(workspaceId).then(res => {
         const names: Record<string, string> = {};
         res.members.forEach(m => { names[m.user_id] = m.username; });
-        setAssigneeNames(names);
+        agentProfilesApi.list().then(ar => {
+          ar.profiles.forEach(p => { names[p.id] = p.name; });
+          setAssigneeNames(names);
+        }).catch(() => setAssigneeNames(names));
       }).catch(() => {});
     }
   }, [workspaceId]);
@@ -315,6 +318,8 @@ export function TaskBoard() {
                       projectsMap={Object.fromEntries(projects.map(p => [p.id, { name: p.name, color: p.color }]))}
                       subtaskCount={subtaskCounts[task.id]}
                       assigneeName={task.assignee_id ? (assigneeNames[task.assignee_id] || task.assignee_id.slice(0, 8)) : undefined}
+                      creatorName={task.creator_name}
+                      assigneeNamesMap={assigneeNames}
                     />
                   ))}
                 </div>
@@ -333,7 +338,9 @@ export function TaskBoard() {
                 <th style={{ padding: '10px 12px', borderBottom: '2px solid #ddd' }}>{t('taskTitle')}</th>
                 <th style={{ padding: '10px 12px', borderBottom: '2px solid #ddd' }}>优先级</th>
                 <th style={{ padding: '10px 12px', borderBottom: '2px solid #ddd' }}>{t('taskStatus')}</th>
+                <th style={{ padding: '10px 12px', borderBottom: '2px solid #ddd' }}>创建者</th>
                 <th style={{ padding: '10px 12px', borderBottom: '2px solid #ddd' }}>负责人</th>
+                <th style={{ padding: '10px 12px', borderBottom: '2px solid #ddd' }}>执行人</th>
                 <th style={{ padding: '10px 12px', borderBottom: '2px solid #ddd' }}>截止</th>
                 <th style={{ padding: '10px 12px', borderBottom: '2px solid #ddd' }}>{t('created')}</th>
                 <th style={{ padding: '10px 12px', borderBottom: '2px solid #ddd' }}>{t('taskActions')}</th>
@@ -376,8 +383,16 @@ export function TaskBoard() {
                         {t(columnLabels[task.status])}
                       </span>
                     </td>
+                    <td style={{ padding: '10px 12px', color: '#888', fontSize: '0.85em' }}>
+                      {task.creator_name || '-'}
+                    </td>
                     <td style={{ padding: '10px 12px', color: '#666', fontSize: '0.85em' }}>
                       {task.assignee_id ? (assigneeNames[task.assignee_id] || task.assignee_id.slice(0, 8)) : '-'}
+                    </td>
+                    <td style={{ padding: '10px 12px', color: '#777', fontSize: '0.85em' }}>
+                      {task.assignees && task.assignees.length > 0
+                        ? task.assignees.map(a => assigneeNames[a.assignee_id] || a.assignee_id.slice(0, 6)).join(', ')
+                        : '-'}
                     </td>
                     <td style={{ padding: '10px 12px', color: isOverdue ? '#c62828' : '#999', fontSize: '0.85em', fontWeight: isOverdue ? 600 : 400, whiteSpace: 'nowrap' }}>
                       {task.due_at ? new Date(task.due_at).toLocaleDateString() : '-'}

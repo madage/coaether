@@ -23,14 +23,14 @@ func NewTaskHandler(db *sql.DB) *TaskHandler {
 	return &TaskHandler{DB: db}
 }
 
-const taskSelectCols = `t.id, t.user_id, t.title, t.description, t.status, t.project_id,
+const taskSelectCols = `t.id, t.user_id, COALESCE(u.username, '') AS creator_name, t.title, t.description, t.status, t.project_id,
 	t.parent_id, t.assignee_id, t.assignee_type, t.priority, t.due_at, t.completed_at, t.created_at, t.updated_at`
 
 func (h *TaskHandler) scanTask(scanner interface {
 	Scan(dest ...interface{}) error
 }, t *models.Task) error {
 	return scanner.Scan(
-		&t.ID, &t.UserID, &t.Title, &t.Description, &t.Status,
+		&t.ID, &t.UserID, &t.CreatorName, &t.Title, &t.Description, &t.Status,
 		&t.ProjectID, &t.ParentID, &t.AssigneeID, &t.AssigneeType,
 		&t.Priority, &t.DueAt, &t.CompletedAt, &t.CreatedAt, &t.UpdatedAt,
 	)
@@ -53,6 +53,23 @@ func (h *TaskHandler) fetchTags(taskID string) []string {
 	return tags
 }
 
+// fetchAssignees retrieves delegated assignees for a given task ID.
+func (h *TaskHandler) fetchAssignees(taskID string) []models.TaskAssignee {
+	rows, err := h.DB.Query(`SELECT task_id, assignee_id, assignee_type, role FROM task_assignees WHERE task_id = $1`, taskID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var as []models.TaskAssignee
+	for rows.Next() {
+		var a models.TaskAssignee
+		if err := rows.Scan(&a.TaskID, &a.AssigneeID, &a.AssigneeType, &a.Role); err == nil {
+			as = append(as, a)
+		}
+	}
+	return as
+}
+
 // replaceTags removes all existing tags and inserts new ones in a transaction.
 func (h *TaskHandler) replaceTags(tx *sql.Tx, taskID string, tags []string) error {
 	if _, err := tx.Exec(`DELETE FROM task_tags WHERE task_id = $1`, taskID); err != nil {
@@ -73,7 +90,7 @@ func (h *TaskHandler) List(c *gin.Context) {
 	workspaceID := c.Query("workspace_id")
 	isMember, _ := c.Get("is_workspace_member")
 
-	query := fmt.Sprintf(`SELECT %s FROM tasks t WHERE t.deleted_at IS NULL`, taskSelectCols)
+	query := fmt.Sprintf(`SELECT %s FROM tasks t LEFT JOIN users u ON u.id = t.user_id WHERE t.deleted_at IS NULL`, taskSelectCols)
 	args := []any{}
 	argIdx := 1
 
@@ -139,6 +156,7 @@ func (h *TaskHandler) List(c *gin.Context) {
 			continue
 		}
 		t.Tags = h.fetchTags(t.ID)
+			t.Assignees = h.fetchAssignees(t.ID)
 		tasks = append(tasks, t)
 	}
 
@@ -228,7 +246,7 @@ func (h *TaskHandler) Get(c *gin.Context) {
 	isMember, _ := c.Get("is_workspace_member")
 	taskID := c.Param("id")
 
-	query := fmt.Sprintf(`SELECT %s FROM tasks t WHERE t.id = $1`, taskSelectCols)
+	query := fmt.Sprintf(`SELECT %s FROM tasks t LEFT JOIN users u ON u.id = t.user_id WHERE t.id = $1`, taskSelectCols)
 	args := []any{taskID}
 	argIdx := 2
 
@@ -254,6 +272,7 @@ func (h *TaskHandler) Get(c *gin.Context) {
 	}
 
 	t.Tags = h.fetchTags(t.ID)
+			t.Assignees = h.fetchAssignees(t.ID)
 	c.JSON(http.StatusOK, t)
 }
 
@@ -439,13 +458,14 @@ func (h *TaskHandler) Update(c *gin.Context) {
 	}
 
 	var t models.Task
-	query := fmt.Sprintf(`SELECT %s FROM tasks t WHERE t.id = $1`, taskSelectCols)
+	query := fmt.Sprintf(`SELECT %s FROM tasks t LEFT JOIN users u ON u.id = t.user_id WHERE t.id = $1`, taskSelectCols)
 	h.DB.QueryRow(query, taskID).Scan(
 		&t.ID, &t.UserID, &t.Title, &t.Description, &t.Status,
 		&t.ProjectID, &t.ParentID, &t.AssigneeID, &t.AssigneeType,
 		&t.Priority, &t.DueAt, &t.CompletedAt, &t.CreatedAt, &t.UpdatedAt,
 	)
 	t.Tags = h.fetchTags(t.ID)
+			t.Assignees = h.fetchAssignees(t.ID)
 
 	if h.Hub != nil {
 		h.Hub.SignalChange("tasks")
@@ -497,7 +517,7 @@ func (h *TaskHandler) ListTrash(c *gin.Context) {
 	workspaceID := c.Query("workspace_id")
 	isMember, _ := c.Get("is_workspace_member")
 
-	query := fmt.Sprintf(`SELECT %s FROM tasks t WHERE t.deleted_at IS NOT NULL`, taskSelectCols)
+	query := fmt.Sprintf(`SELECT %s FROM tasks t LEFT JOIN users u ON u.id = t.user_id WHERE t.deleted_at IS NOT NULL`, taskSelectCols)
 	args := []any{}
 	argIdx := 1
 
@@ -527,6 +547,7 @@ func (h *TaskHandler) ListTrash(c *gin.Context) {
 			continue
 		}
 		t.Tags = h.fetchTags(t.ID)
+			t.Assignees = h.fetchAssignees(t.ID)
 		tasks = append(tasks, t)
 	}
 
@@ -669,13 +690,14 @@ func (h *TaskHandler) SetStatus(c *gin.Context) {
 
 	var t models.Task
 	h.DB.QueryRow(
-		fmt.Sprintf(`SELECT %s FROM tasks t WHERE t.id = $1`, taskSelectCols), taskID,
+		fmt.Sprintf(`SELECT %s FROM tasks t LEFT JOIN users u ON u.id = t.user_id WHERE t.id = $1`, taskSelectCols), taskID,
 	).Scan(
 		&t.ID, &t.UserID, &t.Title, &t.Description, &t.Status,
 		&t.ProjectID, &t.ParentID, &t.AssigneeID, &t.AssigneeType,
 		&t.Priority, &t.DueAt, &t.CompletedAt, &t.CreatedAt, &t.UpdatedAt,
 	)
 	t.Tags = h.fetchTags(t.ID)
+			t.Assignees = h.fetchAssignees(t.ID)
 
 	if h.Hub != nil {
 		h.Hub.SignalChange("tasks")
@@ -790,7 +812,7 @@ func (h *TaskHandler) ListAssignees(c *gin.Context) {
 func (h *TaskHandler) ListSubtasks(c *gin.Context) {
 	taskID := c.Param("id")
 
-	query := fmt.Sprintf(`SELECT %s FROM tasks t WHERE t.parent_id = $1 AND t.deleted_at IS NULL ORDER BY t.created_at`, taskSelectCols)
+	query := fmt.Sprintf(`SELECT %s FROM tasks t LEFT JOIN users u ON u.id = t.user_id WHERE t.parent_id = $1 AND t.deleted_at IS NULL ORDER BY t.created_at`, taskSelectCols)
 	rows, err := h.DB.Query(query, taskID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query subtasks"})
@@ -805,6 +827,7 @@ func (h *TaskHandler) ListSubtasks(c *gin.Context) {
 			continue
 		}
 		t.Tags = h.fetchTags(t.ID)
+			t.Assignees = h.fetchAssignees(t.ID)
 		tasks = append(tasks, t)
 	}
 

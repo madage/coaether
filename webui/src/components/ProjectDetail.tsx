@@ -50,7 +50,7 @@ export function ProjectDetail({ project, onClose, onDelete }: ProjectDetailProps
     return acc;
   }, {} as Record<string, number>);
 
-  const handleTaskUpdate = async (data: { title: string; description: string; status?: TaskStatus; project_id?: string | null }) => {
+  const handleTaskUpdate = async (data: { title: string; description: string; status?: TaskStatus; project_id?: string | null; parent_id?: string | null; assignee_id?: string | null; assignee_type?: string | null; priority?: string; tags?: string[]; due_at?: string | null }) => {
     if (!editingTask) return;
     try {
       const updateData: Record<string, unknown> = {};
@@ -58,6 +58,12 @@ export function ProjectDetail({ project, onClose, onDelete }: ProjectDetailProps
       if (data.description !== editingTask.description) updateData.description = data.description;
       if (data.status && data.status !== editingTask.status) updateData.status = data.status;
       if (data.project_id !== editingTask.project_id) updateData.project_id = data.project_id ?? null;
+      if (data.parent_id !== editingTask.parent_id) updateData.parent_id = data.parent_id ?? null;
+      if (data.assignee_id !== editingTask.assignee_id) updateData.assignee_id = data.assignee_id ?? null;
+      if (data.assignee_type !== editingTask.assignee_type) updateData.assignee_type = data.assignee_type ?? null;
+      if (data.priority !== editingTask.priority) updateData.priority = data.priority;
+      if (JSON.stringify(data.tags) !== JSON.stringify(editingTask.tags)) updateData.tags = data.tags;
+      if (data.due_at !== (editingTask.due_at || null)) updateData.due_at = data.due_at ?? null;
       if (Object.keys(updateData).length > 0) {
         await tasksApi.update(editingTask.id, updateData);
       }
@@ -198,6 +204,7 @@ export function ProjectDetail({ project, onClose, onDelete }: ProjectDetailProps
                 onDelete={handleTaskDelete}
                 onStatusChange={handleTaskStatusChange}
                 projectsMap={{ [project.id]: { name: project.name, color: project.color } }}
+                creatorName={task.creator_name}
               />
             ))}
           </div>
