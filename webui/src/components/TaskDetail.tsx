@@ -38,6 +38,7 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
   // Comments
   const [comments, setComments] = useState<Comment[]>([]);
   const [commentInput, setCommentInput] = useState('');
+  const commentEditorRef = useRef<HTMLDivElement>(null);
   const [posting, setPosting] = useState(false);
 
   // Assignee picker state
@@ -206,12 +207,15 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
   };
 
   const handlePostComment = async () => {
-    const text = commentInput.trim();
-    if (!text || posting) return;
+    const text = (commentEditorRef.current?.innerHTML || '').trim();
+    const plain = text.replace(/<[^>]*>/g, '').trim();
+    if (!plain || plain === '<br>' || posting) return;
     setPosting(true);
     try {
-      const newComment = await commentsApi.create(currentTask.id, { content: text });
+      const content = text === '<br>' ? '' : text;
+      const newComment = await commentsApi.create(currentTask.id, { content });
       setComments(prev => [...prev, newComment]);
+      if (commentEditorRef.current) commentEditorRef.current.innerHTML = '';
       setCommentInput('');
     } catch {
       alert('Failed to post comment');
@@ -234,8 +238,8 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
     }
   };
 
-  const handleCommentKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+  const handleCommentKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Enter' && e.ctrlKey) {
       e.preventDefault();
       handlePostComment();
     }
@@ -398,11 +402,13 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
               <div style={{
                 background: '#f9f9f9', borderRadius: '8px', padding: '16px',
                 fontSize: '0.95em', lineHeight: 1.6, color: '#333',
-                whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                wordBreak: 'break-word',
                 border: '1px solid #eee',
                 minHeight: '60px',
               }}>
-                {currentTask.description || <span style={{ color: '#ccc', fontStyle: 'italic' }}>{t('taskDetailNoDescription')}</span>}
+                {currentTask.description
+                  ? <span dangerouslySetInnerHTML={{ __html: currentTask.description }} />
+                  : <span style={{ color: '#ccc', fontStyle: 'italic' }}>{t('taskDetailNoDescription')}</span>}
               </div>
             </div>
 
@@ -512,10 +518,8 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
                           </div>
                           <div style={{
                             fontSize: '0.9em', lineHeight: 1.5, color: '#333',
-                            whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                          }}>
-                            {c.content}
-                          </div>
+                            wordBreak: 'break-word',
+                          }} dangerouslySetInnerHTML={{ __html: c.content }} />
                         </div>
                       </div>
                     );
@@ -523,28 +527,50 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
                 )}
               </div>
 
-              {/* Comment input */}
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <textarea
-                  value={commentInput}
-                  onChange={(e) => setCommentInput(e.target.value)}
-                  onKeyDown={handleCommentKeyDown}
-                  placeholder={t('commentPlaceholder')}
-                  rows={2}
-                  style={{
-                    flex: 1, padding: '8px 12px', borderRadius: '8px',
-                    border: '1px solid #ddd', fontSize: '0.85em', fontFamily: 'inherit',
-                    outline: 'none', resize: 'none', lineHeight: 1.4,
-                  }}
-                />
-                <button onClick={handlePostComment} disabled={posting || !commentInput.trim()}
-                  style={{
-                    padding: '8px 16px', borderRadius: '8px', border: 'none',
-                    background: posting || !commentInput.trim() ? '#ccc' : '#1976d2',
-                    color: '#fff', cursor: posting || !commentInput.trim() ? 'default' : 'pointer',
-                    fontSize: '0.85em', fontWeight: 600, alignSelf: 'flex-end',
-                  }}
-                >{posting ? '...' : t('commentPost')}</button>
+              {/* Comment input — Rich Text */}
+              <div>
+                {/* Mini toolbar */}
+                <div style={{ display: 'flex', gap: '3px', marginBottom: '4px' }}>
+                  <button type="button" onMouseDown={(e) => { e.preventDefault(); document.execCommand('bold'); commentEditorRef.current?.focus(); }}
+                    style={{ padding: '2px 8px', borderRadius: '4px', border: '1px solid #ddd', background: '#fafafa', cursor: 'pointer', fontSize: '0.8em', lineHeight: 1.4 }} title="Bold"><b>B</b></button>
+                  <button type="button" onMouseDown={(e) => { e.preventDefault(); document.execCommand('italic'); commentEditorRef.current?.focus(); }}
+                    style={{ padding: '2px 8px', borderRadius: '4px', border: '1px solid #ddd', background: '#fafafa', cursor: 'pointer', fontSize: '0.8em', lineHeight: 1.4 }} title="Italic"><i>I</i></button>
+                  <button type="button" onMouseDown={(e) => { e.preventDefault(); document.execCommand('underline'); commentEditorRef.current?.focus(); }}
+                    style={{ padding: '2px 8px', borderRadius: '4px', border: '1px solid #ddd', background: '#fafafa', cursor: 'pointer', fontSize: '0.8em', lineHeight: 1.4 }} title="Underline"><u>U</u></button>
+                  <button type="button" onMouseDown={(e) => { e.preventDefault(); document.execCommand('insertUnorderedList'); commentEditorRef.current?.focus(); }}
+                    style={{ padding: '2px 8px', borderRadius: '4px', border: '1px solid #ddd', background: '#fafafa', cursor: 'pointer', fontSize: '0.8em', lineHeight: 1.4 }} title="Bullet List">•</button>
+                </div>
+                <div>
+                  <div
+                    ref={commentEditorRef}
+                    contentEditable
+                    suppressContentEditableWarning
+                    onInput={() => setCommentInput(commentEditorRef.current?.innerHTML || '')}
+                    onKeyDown={handleCommentKeyDown}
+                    onPaste={(e) => {
+                      e.preventDefault();
+                      document.execCommand('insertText', false, e.clipboardData.getData('text/plain'));
+                    }}
+                    data-placeholder={t('commentPlaceholder')}
+                    style={{
+                      width: '100%', boxSizing: 'border-box', padding: '8px 12px', borderRadius: '8px',
+                      border: '1px solid #ddd', fontSize: '0.85em', fontFamily: 'inherit',
+                      outline: 'none', lineHeight: 1.4, minHeight: '160px',
+                      whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'break-word',
+                    }}
+                  />
+                  <div style={{ display: 'flex', justifyContent: 'center', marginTop: '6px' }}>
+                    <button onClick={(e) => { e.preventDefault(); handlePostComment(); }}
+                      disabled={posting}
+                      style={{
+                        padding: '6px 20px', borderRadius: '6px', border: 'none',
+                        background: posting ? '#ccc' : '#1976d2',
+                        color: '#fff', cursor: posting ? 'default' : 'pointer',
+                        fontSize: '0.85em', fontWeight: 600,
+                      }}
+                    >{posting ? '...' : t('commentPost')}</button>
+                  </div>
+                </div>
               </div>
             </div>
 

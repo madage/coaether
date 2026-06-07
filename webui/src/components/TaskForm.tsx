@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useLang } from '../i18n/context';
 import { projects as projectsApi, agentProfiles as agentProfilesApi, tasks as tasksApi, workspaceMembers as workspaceMembersApi } from '../api/client';
 import { useWorkspace } from '../hooks/WorkspaceContext';
@@ -26,6 +26,13 @@ export function TaskForm({ task, onClose, onSave }: TaskFormProps) {
   const { workspaceId } = useWorkspace();
   const [title, setTitle] = useState(task?.title || '');
   const [description, setDescription] = useState(task?.description || '');
+  const editorRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (editorRef.current && task?.description) {
+      editorRef.current.innerHTML = task.description;
+    }
+  }, [task?.description]);
   const [status, setStatus] = useState<TaskStatus>(task?.status || 'todo');
   const [projectId, setProjectId] = useState<string | null>(task?.project_id || null);
   const [parentId, setParentId] = useState<string | null>(task?.parent_id || null);
@@ -136,16 +143,45 @@ export function TaskForm({ task, onClose, onSave }: TaskFormProps) {
             </div>
           )}
 
-          {/* Description */}
+          {/* Description — Rich Text */}
           <div style={{ marginBottom: '14px' }}>
             <label style={{ display: 'block', fontSize: '0.85em', color: '#666', marginBottom: '4px' }}>
               {t('taskDescription')}
             </label>
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              rows={3}
-              style={{ ...inputStyle, resize: 'vertical' }}
+            {/* Toolbar */}
+            <div style={{ display: 'flex', gap: '4px', marginBottom: '6px', flexWrap: 'wrap' }}>
+              <button type="button" onMouseDown={(e) => { e.preventDefault(); document.execCommand('bold'); editorRef.current?.focus(); }}
+                style={toolbarBtnStyle} title="Bold"><b>B</b></button>
+              <button type="button" onMouseDown={(e) => { e.preventDefault(); document.execCommand('italic'); editorRef.current?.focus(); }}
+                style={toolbarBtnStyle} title="Italic"><i>I</i></button>
+              <button type="button" onMouseDown={(e) => { e.preventDefault(); document.execCommand('underline'); editorRef.current?.focus(); }}
+                style={toolbarBtnStyle} title="Underline"><u>U</u></button>
+              <span style={{ width: '1px', background: '#ddd', margin: '0 2px' }} />
+              <button type="button" onMouseDown={(e) => { e.preventDefault(); document.execCommand('formatBlock', false, 'h3'); editorRef.current?.focus(); }}
+                style={toolbarBtnStyle} title="Heading">H</button>
+              <button type="button" onMouseDown={(e) => { e.preventDefault(); document.execCommand('insertUnorderedList'); editorRef.current?.focus(); }}
+                style={toolbarBtnStyle} title="Bullet List">• List</button>
+              <button type="button" onMouseDown={(e) => { e.preventDefault(); document.execCommand('insertOrderedList'); editorRef.current?.focus(); }}
+                style={toolbarBtnStyle} title="Numbered List">1. List</button>
+            </div>
+            {/* Editor */}
+            <div
+              ref={editorRef}
+              contentEditable
+              suppressContentEditableWarning
+              onInput={() => setDescription(editorRef.current?.innerHTML || '')}
+              onPaste={(e) => {
+                e.preventDefault();
+                const text = e.clipboardData.getData('text/plain');
+                document.execCommand('insertText', false, text);
+              }}
+              style={{
+                ...inputStyle,
+                minHeight: '240px',
+                resize: 'vertical',
+                overflow: 'auto',
+                lineHeight: 1.6,
+              }}
             />
           </div>
 
@@ -345,4 +381,10 @@ const btnPrimaryStyle: React.CSSProperties = {
 const btnSecondaryStyle: React.CSSProperties = {
   padding: '10px 20px', borderRadius: '6px', border: '1px solid #ddd',
   background: '#fff', cursor: 'pointer', color: '#666', fontSize: '0.95em',
+};
+
+const toolbarBtnStyle: React.CSSProperties = {
+  padding: '4px 10px', borderRadius: '4px', border: '1px solid #ddd',
+  background: '#fafafa', cursor: 'pointer', fontSize: '0.85em', color: '#333',
+  lineHeight: 1.4,
 };

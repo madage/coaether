@@ -182,9 +182,9 @@ export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap, 
       {/* Description */}
       {task.description && (
         <p style={{ margin: 0, fontSize: '0.85em', color: '#666', lineHeight: 1.4 }}>
-          {task.description.length > 100
-            ? task.description.slice(0, 100) + '...'
-            : task.description}
+          {task.description.replace(/<[^>]*>/g, '').length > 100
+            ? task.description.replace(/<[^>]*>/g, '').slice(0, 100) + '...'
+            : task.description.replace(/<[^>]*>/g, '')}
         </p>
       )}
 
