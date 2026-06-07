@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/superco/server/protocol"
+	"github.com/coaether/server/protocol"
 )
 
 // ClaudeBackend uses the Anthropic Messages API to interact with Claude.

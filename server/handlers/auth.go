@@ -7,8 +7,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
-	"github.com/superco/server/mailer"
-	"github.com/superco/server/models"
+	"github.com/coaether/server/mailer"
+	"github.com/coaether/server/models"
 	"golang.org/x/crypto/bcrypt"
 )
 

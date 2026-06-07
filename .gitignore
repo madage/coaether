@@ -12,8 +12,8 @@ agent-runtime/server
 agent-runtime/bin/
 server/agent-node
 server/agent-runtime
-server/superco-server
-server/handlers/superco-server
+server/coaether-server
+server/handlers/coaether-server
 agent-node/agent-node
 *.exe
 *.exe~

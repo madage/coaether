@@ -1,4 +1,4 @@
-# Superco — AI Agent Distributed Orchestration Platform
+# CoAether — AI Agent Distributed Orchestration Platform
 
 A cross-platform AI Agent distributed orchestration platform that connects AI Runtimes with a Web frontend through the **Message Bus** protocol, providing multi-user workspaces, task/project management, real-time chat, and Agent configuration.
 
@@ -347,7 +347,7 @@ cp .env.example .env
 Ensure PostgreSQL is running and create the database:
 
 ```bash
-createdb superco
+createdb coaether
 ```
 
 ### 4. Start Backend
@@ -398,8 +398,8 @@ The install script will automatically:
 
 | Variable | Description | Default | Required |
 |----------|-------------|---------|----------|
-| `POSTGRES_DSN` | PostgreSQL connection string | `postgres://postgres:postgres@localhost:5432/superco?sslmode=disable` | Yes |
-| `JWT_SECRET` | JWT signing key | `superco-secret-key` | Yes |
+| `POSTGRES_DSN` | PostgreSQL connection string | `postgres://postgres:postgres@localhost:5432/coaether?sslmode=disable` | Yes |
+| `JWT_SECRET` | JWT signing key | `coaether-secret-key` | Yes |
 | `PORT` | HTTP server port | `8088` | No |
 | `SMTP_HOST` | SMTP server | - | Invitations |
 | `SMTP_PORT` | SMTP port | `587` | No |
@@ -426,7 +426,7 @@ The install script will automatically:
 ## Project Structure
 
 ```
-superco/
+coaether/
 ├── server/                    # Go backend
 │   ├── main.go               # Entry point: routing, dependency injection
 │   ├── config/               # Configuration loading

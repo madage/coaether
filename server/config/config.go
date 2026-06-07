@@ -44,7 +44,7 @@ func Load() *Config {
 		SMTPPort:    getEnv("SMTP_PORT", "587"),
 		SMTPUser:    getEnv("SMTP_USER", ""),
 		SMTPPass:    getEnv("SMTP_PASS", ""),
-		SMTPFrom:    getEnv("SMTP_FROM", "noreply@superco.local"),
+		SMTPFrom:    getEnv("SMTP_FROM", "noreply@coaether.local"),
 		PublicURL:   getEnv("PUBLIC_URL", "http://localhost:5173"),
 	}
 }

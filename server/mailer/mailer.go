@@ -42,7 +42,7 @@ If you don't have an account yet, you'll be prompted to create one.
 This invitation will expire in 7 days.
 
 Best,
-Superco Team`, inviterName, workspaceName, acceptURL)
+CoAether Team`, inviterName, workspaceName, acceptURL)
 
 	if m.Host == "" {
 		log.Printf("[Mailer] SMTP not configured. Invitation link for %s: %s", toEmail, acceptURL)

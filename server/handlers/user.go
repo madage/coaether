@@ -5,8 +5,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/superco/server/database"
-	"github.com/superco/server/middleware"
+	"github.com/coaether/server/database"
+	"github.com/coaether/server/middleware"
 )
 
 type UserHandler struct {

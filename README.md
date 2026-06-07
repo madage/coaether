@@ -1,4 +1,4 @@
-# Superco — AI Agent 分布式调度平台
+# CoAether — AI Agent 分布式调度平台
 
 跨平台 AI Agent 分布式调度平台，通过 **Message Bus** 协议连接 AI Runtime 与 Web 前端，提供多用户工作区、任务/项目管理、实时聊天、Agent 配置等能力。
 
@@ -347,7 +347,7 @@ cp .env.example .env
 确保 PostgreSQL 运行，创建数据库：
 
 ```bash
-createdb superco
+createdb coaether
 ```
 
 ### 4. 启动后端
@@ -398,8 +398,8 @@ powershell -c "iex ((Invoke-WebRequest -Uri 'http://<server>:8088/api/nodes/inst
 
 | 变量 | 说明 | 默认值 | 必填 |
 |------|------|--------|------|
-| `POSTGRES_DSN` | PostgreSQL 连接字符串 | `postgres://postgres:postgres@localhost:5432/superco?sslmode=disable` | 是 |
-| `JWT_SECRET` | JWT 签名密钥 | `superco-secret-key` | 是 |
+| `POSTGRES_DSN` | PostgreSQL 连接字符串 | `postgres://postgres:postgres@localhost:5432/coaether?sslmode=disable` | 是 |
+| `JWT_SECRET` | JWT 签名密钥 | `coaether-secret-key` | 是 |
 | `PORT` | HTTP 服务端口 | `8088` | 否 |
 | `SMTP_HOST` | SMTP 服务器地址 | - | 邀请功能需要 |
 | `SMTP_PORT` | SMTP 端口 | `587` | 否 |
@@ -426,7 +426,7 @@ powershell -c "iex ((Invoke-WebRequest -Uri 'http://<server>:8088/api/nodes/inst
 ## 项目结构
 
 ```
-superco/
+coaether/
 ├── server/                    # Go 后端
 │   ├── main.go               # 入口：路由注册、依赖注入
 │   ├── config/               # 配置加载

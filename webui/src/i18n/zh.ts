@@ -2,7 +2,7 @@ export const zh = {
 
   // App
 
-  appTitle: 'Superco',
+  appTitle: 'CoAether',
 
   appSubtitle: 'AI Agent 分布式调度平台',
 

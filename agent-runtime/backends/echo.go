@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/superco/server/protocol"
+	"github.com/coaether/server/protocol"
 )
 
 // EchoBackend is a simple test backend that echoes back messages.

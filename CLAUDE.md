@@ -1,7 +1,7 @@
 <!-- codragraph:start -->
 # CodraGraph — Code Intelligence
 
-This project is indexed by CodraGraph as **superco** (1945 symbols, 5301 relationships, 125 execution flows). Use the CodraGraph MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by CodraGraph as **coaether** (1945 symbols, 5301 relationships, 125 execution flows). Use the CodraGraph MCP tools to understand code, assess impact, and navigate safely.
 
 > If any CodraGraph tool warns the index is stale, run `npx @codragraph/cli analyze` in terminal first.
 
@@ -24,12 +24,12 @@ This project is indexed by CodraGraph as **superco** (1945 symbols, 5301 relatio
 
 | Resource | Use for |
 |----------|---------|
-| `codragraph://repo/superco/context` | Codebase overview, check index freshness |
-| `codragraph://repo/superco/clusters` | All functional areas |
-| `codragraph://repo/superco/feature-clusters` | Product/domain feature areas |
-| `codragraph://repo/superco/feature/{name}` | Focused files, line ranges, flows, dependencies |
-| `codragraph://repo/superco/processes` | All execution flows |
-| `codragraph://repo/superco/process/{name}` | Step-by-step execution trace |
+| `codragraph://repo/coaether/context` | Codebase overview, check index freshness |
+| `codragraph://repo/coaether/clusters` | All functional areas |
+| `codragraph://repo/coaether/feature-clusters` | Product/domain feature areas |
+| `codragraph://repo/coaether/feature/{name}` | Focused files, line ranges, flows, dependencies |
+| `codragraph://repo/coaether/processes` | All execution flows |
+| `codragraph://repo/coaether/process/{name}` | Step-by-step execution trace |
 | `.codragraph/structure/README.md` | Local what/why/how/when/where memory, branch state, and SQLite seed |
 
 ## CLI

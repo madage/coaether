@@ -8,8 +8,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/superco/server/middleware"
-	"github.com/superco/server/models"
+	"github.com/coaether/server/middleware"
+	"github.com/coaether/server/models"
 )
 
 type AgentProfileHandler struct {

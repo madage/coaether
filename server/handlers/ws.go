@@ -12,8 +12,8 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
-	"github.com/superco/server/models"
-	"github.com/superco/server/protocol"
+	"github.com/coaether/server/models"
+	"github.com/coaether/server/protocol"
 )
 
 var upgrader = websocket.Upgrader{

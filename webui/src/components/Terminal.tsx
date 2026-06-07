@@ -60,7 +60,7 @@ export function Terminal({ onInput, className = '' }: TerminalProps) {
       onInputRef.current?.(data);
     });
 
-    term.write('Superco AI Agent Terminal\r\n');
+    term.write('CoAether AI Agent Terminal\r\n');
     term.write('========================\r\n\r\n');
 
     xtermRef.current = term;

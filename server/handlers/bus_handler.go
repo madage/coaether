@@ -14,7 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
-	"github.com/superco/server/protocol"
+	"github.com/coaether/server/protocol"
 )
 
 // BusHandler handles WebSocket connections that speak the Message Bus protocol.

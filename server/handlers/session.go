@@ -8,8 +8,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/superco/server/models"
-	"github.com/superco/server/protocol"
+	"github.com/coaether/server/models"
+	"github.com/coaether/server/protocol"
 )
 
 type SessionHandler struct {

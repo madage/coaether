@@ -28,9 +28,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/superco/server/models"
+	"github.com/coaether/server/models"
 
-	"github.com/superco/server/protocol"
+	"github.com/coaether/server/protocol"
 
 )
 
@@ -630,9 +630,9 @@ SERVER_URL="%s"
 SERVER_BASE="%s://%s"
 
 # Check if already installed
-if [ -f "$HOME/.superco/env" ]; then
-    echo "This machine already has a Superco agent node configured."
-    echo "To reinstall, remove ~/.superco/ first."
+if [ -f "$HOME/.coaether/env" ]; then
+    echo "This machine already has a CoAether agent node configured."
+    echo "To reinstall, remove ~/.coaether/ first."
     exit 1
 fi
 
@@ -646,9 +646,9 @@ case "$ARCH" in
 esac
 
 echo "Downloading agent-runtime for ${OS}/${ARCH}..."
-mkdir -p "$HOME/.superco"
-curl -sL --connect-timeout 5 --max-time 30 "${SERVER_BASE}/api/nodes/bin/${OS}/${ARCH}" -o "$HOME/.superco/agent-runtime" || { echo "Failed to download agent-runtime"; exit 1; }
-chmod +x "$HOME/.superco/agent-runtime"
+mkdir -p "$HOME/.coaether"
+curl -sL --connect-timeout 5 --max-time 30 "${SERVER_BASE}/api/nodes/bin/${OS}/${ARCH}" -o "$HOME/.coaether/agent-runtime" || { echo "Failed to download agent-runtime"; exit 1; }
+chmod +x "$HOME/.coaether/agent-runtime"
 
 # Install Claude Code CLI if not already installed
 if ! command -v claude &>/dev/null; then
@@ -661,7 +661,7 @@ if ! command -v claude &>/dev/null; then
                 echo "WARNING: Could not install Claude Code CLI automatically."
                 echo "To use Claude Code features, install it manually after setup:"
                 echo "  npm install -g @anthropic-ai/claude-code"
-                echo "Or set ANTHROPIC_API_KEY in ~/.superco/env for the API backend."
+                echo "Or set ANTHROPIC_API_KEY in ~/.coaether/env for the API backend."
             }
         }
     elif command -v npx &>/dev/null; then
@@ -674,14 +674,14 @@ if ! command -v claude &>/dev/null; then
         echo ""
         echo "WARNING: npm not found. Install Node.js first, then run:"
         echo "  npm install -g @anthropic-ai/claude-code"
-        echo "Or set ANTHROPIC_API_KEY in ~/.superco/env for the API backend."
+        echo "Or set ANTHROPIC_API_KEY in ~/.coaether/env for the API backend."
     fi
 else
     echo "Claude Code CLI already installed."
 fi
 
 # Save config
-cat > "$HOME/.superco/env" <<CONFEOF
+cat > "$HOME/.coaether/env" <<CONFEOF
 SERVER_URL=${SERVER_URL}
 NODE_TOKEN=${TOKEN}
 NODE_SECRET=
@@ -699,7 +699,7 @@ fi
 export PATH="/usr/local/bin:/opt/homebrew/bin:${HOME}/.npm-global/bin:${NPM_BIN}:${PATH}"
 
 # Install as macOS LaunchAgent (persists across terminal closes and reboots)
-PLIST_PATH="$HOME/Library/LaunchAgents/com.superco.agent.plist"
+PLIST_PATH="$HOME/Library/LaunchAgents/com.coaether.agent.plist"
 mkdir -p "$HOME/Library/LaunchAgents"
 
 cat > "$PLIST_PATH" <<PLISTEOF
@@ -708,13 +708,13 @@ cat > "$PLIST_PATH" <<PLISTEOF
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.superco.agent</string>
+    <string>com.coaether.agent</string>
     <key>ProgramArguments</key>
     <array>
-        <string>${HOME}/.superco/agent-runtime</string>
+        <string>${HOME}/.coaether/agent-runtime</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>${HOME}/.superco</string>
+    <string>${HOME}/.coaether</string>
     <key>EnvironmentVariables</key>
     <dict>
         <key>SERVER_URL</key>
@@ -733,9 +733,9 @@ cat > "$PLIST_PATH" <<PLISTEOF
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>${HOME}/.superco/agent.log</string>
+    <string>${HOME}/.coaether/agent.log</string>
     <key>StandardErrorPath</key>
-    <string>${HOME}/.superco/agent.err</string>
+    <string>${HOME}/.coaether/agent.err</string>
 </dict>
 </plist>
 PLISTEOF
@@ -744,9 +744,9 @@ PLISTEOF
 launchctl unload "$PLIST_PATH" 2>/dev/null || true
 launchctl load "$PLIST_PATH"
 
-echo "Superco agent installed and started as a background service."
-echo "Check status: launchctl list com.superco.agent"
-echo "View logs: tail -f $HOME/.superco/agent.log"
+echo "CoAether agent installed and started as a background service."
+echo "Check status: launchctl list com.coaether.agent"
+echo "View logs: tail -f $HOME/.coaether/agent.log"
 
 `, token, serverAddr, scheme, serverAddr)
 
@@ -801,11 +801,11 @@ $SERVER_URL="%s"
 $SERVER_BASE="%s://%s"
 
 $ARCH="amd64"
-$DIR="$env:USERPROFILE\.superco"
+$DIR="$env:USERPROFILE\.coaether"
 
 # Check if already installed
 if (Test-Path "$DIR\env") {
-    Write-Host "This machine already has a Superco agent node configured."
+    Write-Host "This machine already has a CoAether agent node configured."
     Write-Host "To reinstall, remove $DIR first."
     exit 1
 }
@@ -851,7 +851,7 @@ NODE_ID=
 
 # Create startup shortcut (CurrentUser Startup folder)
 $STARTUP = [Environment]::GetFolderPath("Startup")
-$VBS_PATH = "$STARTUP\superco-agent.vbs"
+$VBS_PATH = "$STARTUP\coaether-agent.vbs"
 $VBS = @'
 Set WshShell = CreateObject("WScript.Shell")
 WshShell.Run chr(34) & "'" + "$DIR\agent-runtime.exe" + "'" & chr(34), 0, False
@@ -863,7 +863,7 @@ Write-Host "Starting agent-runtime..."
 Start-Process -WindowStyle Hidden -FilePath "$DIR\agent-runtime.exe"
 
 Write-Host ""
-Write-Host "Superco agent installed and started as a background process."
+Write-Host "CoAether agent installed and started as a background process."
 Write-Host "It will auto-start on login (via Startup folder)."
 Write-Host "View process: Get-Process agent-runtime"
 `, token, serverAddr, scheme, serverAddr)

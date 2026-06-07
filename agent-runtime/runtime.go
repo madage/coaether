@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/superco/agent-runtime/backends"
-	"github.com/superco/server/protocol"
+	"github.com/coaether/agent-runtime/backends"
+	"github.com/coaether/server/protocol"
 )
 
 // Runtime connects to the Message Bus and manages agent backends.
@@ -239,16 +239,16 @@ type Backend interface {
 	HandleMessage(env *protocol.Envelope) (*protocol.Envelope, error)
 }
 
-// loadConfig reads ~/.superco/env and sets env vars if not already set.
+// loadConfig reads ~/.coaether/env and sets env vars if not already set.
 
-// saveNodeSecret persists the node_secret to ~/.superco/env (and optionally node_id).
+// saveNodeSecret persists the node_secret to ~/.coaether/env (and optionally node_id).
 func (r *Runtime) saveNodeSecret(secret string) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		log.Printf("[Runtime] Cannot save node secret: %v", err)
 		return
 	}
-	envPath := filepath.Join(homeDir, ".superco", "env")
+	envPath := filepath.Join(homeDir, ".coaether", "env")
 	data, err := os.ReadFile(envPath)
 	if err != nil {
 		data = []byte("SERVER_URL=" + r.ServerURL + "\nNODE_TOKEN=\nNODE_SECRET=\nRUNTIME_NAME=\n")
@@ -287,7 +287,7 @@ func loadConfig() {
 	if err != nil {
 		return
 	}
-	data, err := os.ReadFile(filepath.Join(homeDir, ".superco", "env"))
+	data, err := os.ReadFile(filepath.Join(homeDir, ".coaether", "env"))
 	if err != nil {
 		return // config file doesn't exist, use env vars or defaults
 	}
@@ -335,7 +335,7 @@ func main() {
 
 	nodeToken := os.Getenv("NODE_TOKEN")
 	if nodeToken == "" {
-		log.Fatal("[Runtime] NODE_TOKEN or NODE_SECRET is required. Generate a token via the Superco Web UI (Nodes -> Add Node).")
+		log.Fatal("[Runtime] NODE_TOKEN or NODE_SECRET is required. Generate a token via the CoAether Web UI (Nodes -> Add Node).")
 	}
 
 	// Derive deterministic node ID from token (matches old server-side HashToken)

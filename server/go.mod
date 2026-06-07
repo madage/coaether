@@ -1,4 +1,4 @@
-module github.com/superco/server
+module github.com/coaether/server
 
 go 1.21
 

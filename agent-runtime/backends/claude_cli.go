@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/superco/server/protocol"
+	"github.com/coaether/server/protocol"
 )
 
 // ClaudeCLIBackend manages persistent claude subprocesses via stream-json protocol.

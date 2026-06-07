@@ -2,7 +2,7 @@ export const en = {
 
   // App
 
-  appTitle: 'Superco',
+  appTitle: 'CoAether',
 
   appSubtitle: 'AI Agent Distributed Platform',
 

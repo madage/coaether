@@ -10,19 +10,19 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/superco/server/config"
+	"github.com/coaether/server/config"
 
-	"github.com/superco/server/database"
+	"github.com/coaether/server/database"
 
-	"github.com/superco/server/handlers"
+	"github.com/coaether/server/handlers"
 
-	"github.com/superco/server/mailer"
+	"github.com/coaether/server/mailer"
 
-	"github.com/superco/server/middleware"
+	"github.com/coaether/server/middleware"
 
-	"github.com/superco/server/protocol"
+	"github.com/coaether/server/protocol"
 
-	"github.com/superco/server/store"
+	"github.com/coaether/server/store"
 
 )
 
