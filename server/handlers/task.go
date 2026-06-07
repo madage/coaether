@@ -23,37 +23,107 @@ func NewTaskHandler(db *sql.DB) *TaskHandler {
 	return &TaskHandler{DB: db}
 }
 
+const taskSelectCols = `t.id, t.user_id, t.title, t.description, t.status, t.project_id,
+	t.parent_id, t.assignee_id, t.assignee_type, t.priority, t.due_at, t.completed_at, t.created_at, t.updated_at`
+
+func (h *TaskHandler) scanTask(scanner interface {
+	Scan(dest ...interface{}) error
+}, t *models.Task) error {
+	return scanner.Scan(
+		&t.ID, &t.UserID, &t.Title, &t.Description, &t.Status,
+		&t.ProjectID, &t.ParentID, &t.AssigneeID, &t.AssigneeType,
+		&t.Priority, &t.DueAt, &t.CompletedAt, &t.CreatedAt, &t.UpdatedAt,
+	)
+}
+
+// fetchTags retrieves tags for a given task ID.
+func (h *TaskHandler) fetchTags(taskID string) []string {
+	rows, err := h.DB.Query(`SELECT tag FROM task_tags WHERE task_id = $1 ORDER BY tag`, taskID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var tags []string
+	for rows.Next() {
+		var tag string
+		if err := rows.Scan(&tag); err == nil {
+			tags = append(tags, tag)
+		}
+	}
+	return tags
+}
+
+// replaceTags removes all existing tags and inserts new ones in a transaction.
+func (h *TaskHandler) replaceTags(tx *sql.Tx, taskID string, tags []string) error {
+	if _, err := tx.Exec(`DELETE FROM task_tags WHERE task_id = $1`, taskID); err != nil {
+		return err
+	}
+	for _, tag := range tags {
+		if tag = strings.TrimSpace(tag); tag == "" {
+			continue
+		}
+		if _, err := tx.Exec(`INSERT INTO task_tags (task_id, tag) VALUES ($1, $2) ON CONFLICT DO NOTHING`, taskID, tag); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (h *TaskHandler) List(c *gin.Context) {
 	workspaceID := c.Query("workspace_id")
 	isMember, _ := c.Get("is_workspace_member")
 
-	query := `SELECT id, user_id, title, description, status, project_id, created_at, updated_at
-		 FROM tasks WHERE deleted_at IS NULL`
+	query := fmt.Sprintf(`SELECT %s FROM tasks t WHERE t.deleted_at IS NULL`, taskSelectCols)
 	args := []any{}
 	argIdx := 1
 
 	if workspaceID != "" && isMember.(bool) {
-		query += fmt.Sprintf(" AND workspace_id = $%d", argIdx)
+		query += fmt.Sprintf(" AND t.workspace_id = $%d", argIdx)
 		args = append(args, workspaceID)
 		argIdx++
 	} else {
 		userID, _ := c.Get("user_id")
-		query += fmt.Sprintf(" AND user_id = $%d", argIdx)
+		query += fmt.Sprintf(" AND t.user_id = $%d", argIdx)
 		args = append(args, userID)
 		argIdx++
 	}
 
+	// Optional filters
 	if projectID := c.Query("project_id"); projectID != "" {
 		if projectID == "none" {
-			query += fmt.Sprintf(" AND project_id IS NULL")
+			query += " AND t.project_id IS NULL"
 		} else {
-			query += fmt.Sprintf(" AND project_id = $%d", argIdx)
+			query += fmt.Sprintf(" AND t.project_id = $%d", argIdx)
 			args = append(args, projectID)
 			argIdx++
 		}
 	}
+	if parentID := c.Query("parent_id"); parentID != "" {
+		if parentID == "none" {
+			query += " AND t.parent_id IS NULL"
+		} else {
+			query += fmt.Sprintf(" AND t.parent_id = $%d", argIdx)
+			args = append(args, parentID)
+			argIdx++
+		}
+	}
+	if assigneeID := c.Query("assignee_id"); assigneeID != "" {
+		query += fmt.Sprintf(" AND t.assignee_id = $%d", argIdx)
+		args = append(args, assigneeID)
+		argIdx++
+	}
+	if priority := c.Query("priority"); priority != "" {
+		query += fmt.Sprintf(" AND t.priority = $%d", argIdx)
+		args = append(args, priority)
+		argIdx++
+	}
+	if tag := c.Query("tag"); tag != "" {
+		query += fmt.Sprintf(" AND EXISTS (SELECT 1 FROM task_tags tt WHERE tt.task_id = t.id AND tt.tag = $%d)", argIdx)
+		args = append(args, tag)
+		argIdx++
+	}
 
-	query += " ORDER BY updated_at DESC"
+	query += " ORDER BY t.updated_at DESC"
 
 	rows, err := h.DB.Query(query, args...)
 	if err != nil {
@@ -65,9 +135,10 @@ func (h *TaskHandler) List(c *gin.Context) {
 	tasks := make([]models.Task, 0)
 	for rows.Next() {
 		var t models.Task
-		if err := rows.Scan(&t.ID, &t.UserID, &t.Title, &t.Description, &t.Status, &t.ProjectID, &t.CreatedAt, &t.UpdatedAt); err != nil {
+		if err := h.scanTask(rows, &t); err != nil {
 			continue
 		}
+		t.Tags = h.fetchTags(t.ID)
 		tasks = append(tasks, t)
 	}
 
@@ -89,27 +160,62 @@ func (h *TaskHandler) Create(c *gin.Context) {
 		return
 	}
 
-	now := time.Now()
-	task := models.Task{
-		ID:          uuid.New().String(),
-		UserID:      userID.(string),
-		Title:       req.Title,
-		Description: req.Description,
-		Status:      models.TaskTodo,
-		CreatedAt:   now,
-		UpdatedAt:   now,
-		ProjectID:   req.ProjectID,
+	priority := models.PriorityMedium
+	if req.Priority != nil {
+		priority = *req.Priority
 	}
 
-	_, err := h.DB.Exec(
-		`INSERT INTO tasks (id, user_id, workspace_id, title, description, status, project_id, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-		task.ID, task.UserID, workspaceID, task.Title, task.Description, task.Status, task.ProjectID, task.CreatedAt, task.UpdatedAt,
+	now := time.Now()
+	taskID := uuid.New().String()
+	task := models.Task{
+		ID:           taskID,
+		UserID:       userID.(string),
+		Title:        req.Title,
+		Description:  req.Description,
+		Status:       models.TaskTodo,
+		ProjectID:    req.ProjectID,
+		ParentID:     req.ParentID,
+		AssigneeID:   req.AssigneeID,
+		AssigneeType: req.AssigneeType,
+		Priority:     priority,
+		DueAt:        req.DueAt,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+
+	tx, err := h.DB.Begin()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create task"})
+		return
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(
+		`INSERT INTO tasks (id, user_id, workspace_id, title, description, status, project_id,
+		 parent_id, assignee_id, assignee_type, priority, due_at, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+		task.ID, task.UserID, workspaceID, task.Title, task.Description, task.Status,
+		task.ProjectID, task.ParentID, task.AssigneeID, task.AssigneeType,
+		task.Priority, task.DueAt, task.CreatedAt, task.UpdatedAt,
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create task"})
 		return
 	}
+
+	if len(req.Tags) > 0 {
+		if err := h.replaceTags(tx, taskID, req.Tags); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save tags"})
+			return
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create task"})
+		return
+	}
+
+	task.Tags = req.Tags
 
 	if h.Hub != nil {
 		h.Hub.SignalChange("tasks")
@@ -122,22 +228,21 @@ func (h *TaskHandler) Get(c *gin.Context) {
 	isMember, _ := c.Get("is_workspace_member")
 	taskID := c.Param("id")
 
-	query := `SELECT id, user_id, title, description, status, project_id, created_at, updated_at
-		 FROM tasks WHERE id = $1`
+	query := fmt.Sprintf(`SELECT %s FROM tasks t WHERE t.id = $1`, taskSelectCols)
 	args := []any{taskID}
 	argIdx := 2
 
 	if workspaceID != "" && isMember.(bool) {
-		query += fmt.Sprintf(" AND workspace_id = $%d", argIdx)
+		query += fmt.Sprintf(" AND t.workspace_id = $%d", argIdx)
 		args = append(args, workspaceID)
 	} else {
 		userID, _ := c.Get("user_id")
-		query += fmt.Sprintf(" AND user_id = $%d", argIdx)
+		query += fmt.Sprintf(" AND t.user_id = $%d", argIdx)
 		args = append(args, userID)
 	}
 
 	var t models.Task
-	err := h.DB.QueryRow(query, args...).Scan(&t.ID, &t.UserID, &t.Title, &t.Description, &t.Status, &t.ProjectID, &t.CreatedAt, &t.UpdatedAt)
+	err := h.scanTask(h.DB.QueryRow(query, args...), &t)
 
 	if err == sql.ErrNoRows {
 		c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
@@ -148,6 +253,7 @@ func (h *TaskHandler) Get(c *gin.Context) {
 		return
 	}
 
+	t.Tags = h.fetchTags(t.ID)
 	c.JSON(http.StatusOK, t)
 }
 
@@ -210,6 +316,17 @@ func (h *TaskHandler) Update(c *gin.Context) {
 		sets = append(sets, fmt.Sprintf("status = $%d", argIdx))
 		args = append(args, *req.Status)
 		argIdx++
+		// Auto-set completed_at when status changes to/from done
+		if *req.Status == string(models.TaskDone) {
+			now := time.Now()
+			sets = append(sets, fmt.Sprintf("completed_at = $%d", argIdx))
+			args = append(args, now)
+			argIdx++
+		} else {
+			sets = append(sets, fmt.Sprintf("completed_at = $%d", argIdx))
+			args = append(args, nil)
+			argIdx++
+		}
 	}
 	if _, exists := fields["project_id"]; exists {
 		if req.ProjectID != nil {
@@ -221,8 +338,57 @@ func (h *TaskHandler) Update(c *gin.Context) {
 		}
 		argIdx++
 	}
+	if _, exists := fields["parent_id"]; exists {
+		if req.ParentID != nil {
+			sets = append(sets, fmt.Sprintf("parent_id = $%d", argIdx))
+			args = append(args, *req.ParentID)
+		} else {
+			sets = append(sets, fmt.Sprintf("parent_id = $%d", argIdx))
+			args = append(args, nil)
+		}
+		argIdx++
+	}
+	if _, exists := fields["assignee_id"]; exists {
+		if req.AssigneeID != nil {
+			sets = append(sets, fmt.Sprintf("assignee_id = $%d", argIdx))
+			args = append(args, *req.AssigneeID)
+		} else {
+			sets = append(sets, fmt.Sprintf("assignee_id = $%d", argIdx))
+			args = append(args, nil)
+		}
+		argIdx++
+	}
+	if _, exists := fields["assignee_type"]; exists {
+		if req.AssigneeType != nil {
+			sets = append(sets, fmt.Sprintf("assignee_type = $%d", argIdx))
+			args = append(args, *req.AssigneeType)
+		} else {
+			sets = append(sets, fmt.Sprintf("assignee_type = $%d", argIdx))
+			args = append(args, nil)
+		}
+		argIdx++
+	}
+	if _, exists := fields["priority"]; exists {
+		sets = append(sets, fmt.Sprintf("priority = $%d", argIdx))
+		if req.Priority != nil {
+			args = append(args, *req.Priority)
+		} else {
+			args = append(args, string(models.PriorityMedium))
+		}
+		argIdx++
+	}
+	if _, exists := fields["due_at"]; exists {
+		if req.DueAt != nil {
+			sets = append(sets, fmt.Sprintf("due_at = $%d", argIdx))
+			args = append(args, *req.DueAt)
+		} else {
+			sets = append(sets, fmt.Sprintf("due_at = $%d", argIdx))
+			args = append(args, nil)
+		}
+		argIdx++
+	}
 
-	if len(sets) == 0 {
+	if len(sets) == 0 && req.Tags == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "no fields to update"})
 		return
 	}
@@ -239,24 +405,47 @@ func (h *TaskHandler) Update(c *gin.Context) {
 		whereClause += fmt.Sprintf(" AND workspace_id = $%d", argIdx)
 	}
 
-	query := fmt.Sprintf("UPDATE tasks SET %s %s", strings.Join(sets, ", "), whereClause)
-
-	result, err := h.DB.Exec(query, args...)
+	tx, err := h.DB.Begin()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update task"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to begin transaction"})
 		return
 	}
+	defer tx.Rollback()
 
-	if n, _ := result.RowsAffected(); n == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
+	if len(sets) > 0 {
+		query := fmt.Sprintf("UPDATE tasks SET %s %s", strings.Join(sets, ", "), whereClause)
+		result, err := tx.Exec(query, args...)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update task"})
+			return
+		}
+		if n, _ := result.RowsAffected(); n == 0 {
+			c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
+			return
+		}
+	}
+
+	// Handle tags update (field is always sent as empty array to clear, or populated)
+	if _, exists := fields["tags"]; exists {
+		if err := h.replaceTags(tx, taskID, req.Tags); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update tags"})
+			return
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to commit update"})
 		return
 	}
 
 	var t models.Task
-	h.DB.QueryRow(
-		`SELECT id, user_id, title, description, status, project_id, created_at, updated_at
-		 FROM tasks WHERE id = $1`, taskID,
-	).Scan(&t.ID, &t.UserID, &t.Title, &t.Description, &t.Status, &t.ProjectID, &t.CreatedAt, &t.UpdatedAt)
+	query := fmt.Sprintf(`SELECT %s FROM tasks t WHERE t.id = $1`, taskSelectCols)
+	h.DB.QueryRow(query, taskID).Scan(
+		&t.ID, &t.UserID, &t.Title, &t.Description, &t.Status,
+		&t.ProjectID, &t.ParentID, &t.AssigneeID, &t.AssigneeType,
+		&t.Priority, &t.DueAt, &t.CompletedAt, &t.CreatedAt, &t.UpdatedAt,
+	)
+	t.Tags = h.fetchTags(t.ID)
 
 	if h.Hub != nil {
 		h.Hub.SignalChange("tasks")
@@ -268,7 +457,6 @@ func (h *TaskHandler) Delete(c *gin.Context) {
 	workspaceID := c.Query("workspace_id")
 	taskID := c.Param("id")
 
-	// Check permission
 	var creatorID string
 	err := h.DB.QueryRow(`SELECT user_id FROM tasks WHERE id = $1`, taskID).Scan(&creatorID)
 	if err == sql.ErrNoRows {
@@ -309,22 +497,21 @@ func (h *TaskHandler) ListTrash(c *gin.Context) {
 	workspaceID := c.Query("workspace_id")
 	isMember, _ := c.Get("is_workspace_member")
 
-	query := `SELECT id, user_id, title, description, status, project_id, created_at, updated_at
-		 FROM tasks WHERE deleted_at IS NOT NULL`
+	query := fmt.Sprintf(`SELECT %s FROM tasks t WHERE t.deleted_at IS NOT NULL`, taskSelectCols)
 	args := []any{}
 	argIdx := 1
 
 	if workspaceID != "" && isMember.(bool) {
-		query += fmt.Sprintf(" AND workspace_id = $%d", argIdx)
+		query += fmt.Sprintf(" AND t.workspace_id = $%d", argIdx)
 		args = append(args, workspaceID)
 		argIdx++
 	} else {
 		userID, _ := c.Get("user_id")
-		query += fmt.Sprintf(" AND user_id = $%d", argIdx)
+		query += fmt.Sprintf(" AND t.user_id = $%d", argIdx)
 		args = append(args, userID)
 		argIdx++
 	}
-	query += ` ORDER BY updated_at DESC`
+	query += ` ORDER BY t.updated_at DESC`
 
 	rows, err := h.DB.Query(query, args...)
 	if err != nil {
@@ -336,9 +523,10 @@ func (h *TaskHandler) ListTrash(c *gin.Context) {
 	tasks := make([]models.Task, 0)
 	for rows.Next() {
 		var t models.Task
-		if err := rows.Scan(&t.ID, &t.UserID, &t.Title, &t.Description, &t.Status, &t.ProjectID, &t.CreatedAt, &t.UpdatedAt); err != nil {
+		if err := h.scanTask(rows, &t); err != nil {
 			continue
 		}
+		t.Tags = h.fetchTags(t.ID)
 		tasks = append(tasks, t)
 	}
 
@@ -452,11 +640,19 @@ func (h *TaskHandler) SetStatus(c *gin.Context) {
 		return
 	}
 
-	query := `UPDATE tasks SET status = $1, updated_at = NOW() WHERE id = $2`
-	args := []any{req.Status, taskID}
+	// Auto-set completed_at
+	var completedAt interface{}
+	if req.Status == string(models.TaskDone) {
+		completedAt = time.Now()
+	} else {
+		completedAt = nil
+	}
+
+	query := `UPDATE tasks SET status = $1, completed_at = $2, updated_at = NOW() WHERE id = $3`
+	args := []any{req.Status, completedAt, taskID}
 	isMember, _ := c.Get("is_workspace_member")
 	if workspaceID != "" && isMember.(bool) {
-		query += ` AND workspace_id = $3`
+		query += ` AND workspace_id = $4`
 		args = append(args, workspaceID)
 	}
 
@@ -473,12 +669,144 @@ func (h *TaskHandler) SetStatus(c *gin.Context) {
 
 	var t models.Task
 	h.DB.QueryRow(
-		`SELECT id, user_id, title, description, status, project_id, created_at, updated_at
-		 FROM tasks WHERE id = $1`, taskID,
-	).Scan(&t.ID, &t.UserID, &t.Title, &t.Description, &t.Status, &t.ProjectID, &t.CreatedAt, &t.UpdatedAt)
+		fmt.Sprintf(`SELECT %s FROM tasks t WHERE t.id = $1`, taskSelectCols), taskID,
+	).Scan(
+		&t.ID, &t.UserID, &t.Title, &t.Description, &t.Status,
+		&t.ProjectID, &t.ParentID, &t.AssigneeID, &t.AssigneeType,
+		&t.Priority, &t.DueAt, &t.CompletedAt, &t.CreatedAt, &t.UpdatedAt,
+	)
+	t.Tags = h.fetchTags(t.ID)
 
 	if h.Hub != nil {
 		h.Hub.SignalChange("tasks")
 	}
 	c.JSON(http.StatusOK, t)
+}
+
+// === Assignee Management ===
+
+func (h *TaskHandler) AddAssignee(c *gin.Context) {
+	taskID := c.Param("id")
+
+	var creatorID string
+	err := h.DB.QueryRow(`SELECT user_id FROM tasks WHERE id = $1`, taskID).Scan(&creatorID)
+	if err == sql.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
+		return
+	}
+	if !h.canModifyTask(c, creatorID) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions"})
+		return
+	}
+
+	var req models.AddAssigneeReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.AssigneeType != "user" && req.AssigneeType != "agent_profile" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "assignee_type must be 'user' or 'agent_profile'"})
+		return
+	}
+
+	_, err = h.DB.Exec(
+		`INSERT INTO task_assignees (task_id, assignee_id, assignee_type, role)
+		 VALUES ($1, $2, $3, 'assignee') ON CONFLICT DO NOTHING`,
+		taskID, req.AssigneeID, req.AssigneeType,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to add assignee"})
+		return
+	}
+
+	if h.Hub != nil {
+		h.Hub.SignalChange("tasks")
+	}
+	c.JSON(http.StatusCreated, gin.H{"status": "added"})
+}
+
+func (h *TaskHandler) RemoveAssignee(c *gin.Context) {
+	taskID := c.Param("id")
+	assigneeID := c.Param("assigneeId")
+
+	var creatorID string
+	err := h.DB.QueryRow(`SELECT user_id FROM tasks WHERE id = $1`, taskID).Scan(&creatorID)
+	if err == sql.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
+		return
+	}
+	if !h.canModifyTask(c, creatorID) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions"})
+		return
+	}
+
+	result, err := h.DB.Exec(
+		`DELETE FROM task_assignees WHERE task_id = $1 AND assignee_id = $2`,
+		taskID, assigneeID,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to remove assignee"})
+		return
+	}
+	if n, _ := result.RowsAffected(); n == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "assignee not found"})
+		return
+	}
+
+	if h.Hub != nil {
+		h.Hub.SignalChange("tasks")
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "removed"})
+}
+
+func (h *TaskHandler) ListAssignees(c *gin.Context) {
+	taskID := c.Param("id")
+
+	rows, err := h.DB.Query(
+		`SELECT task_id, assignee_id, assignee_type, role FROM task_assignees WHERE task_id = $1 ORDER BY assignee_type, assignee_id`,
+		taskID,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query assignees"})
+		return
+	}
+	defer rows.Close()
+
+	assignees := make([]models.TaskAssignee, 0)
+	for rows.Next() {
+		var a models.TaskAssignee
+		if err := rows.Scan(&a.TaskID, &a.AssigneeID, &a.AssigneeType, &a.Role); err != nil {
+			continue
+		}
+		assignees = append(assignees, a)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"assignees": assignees})
+}
+
+// === Subtask Management ===
+
+func (h *TaskHandler) ListSubtasks(c *gin.Context) {
+	taskID := c.Param("id")
+
+	query := fmt.Sprintf(`SELECT %s FROM tasks t WHERE t.parent_id = $1 AND t.deleted_at IS NULL ORDER BY t.created_at`, taskSelectCols)
+	rows, err := h.DB.Query(query, taskID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query subtasks"})
+		return
+	}
+	defer rows.Close()
+
+	tasks := make([]models.Task, 0)
+	for rows.Next() {
+		var t models.Task
+		if err := h.scanTask(rows, &t); err != nil {
+			continue
+		}
+		t.Tags = h.fetchTags(t.ID)
+		tasks = append(tasks, t)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"tasks": tasks})
 }

@@ -1,4 +1,4 @@
-import type { Node, Session, CreateSessionReq, Agent, AgentProfile, RuntimeEntity, Task, CreateTaskReq, UpdateTaskReq, TaskStatus, Project, CreateProjectReq, UpdateProjectReq, Workspace, CreateWorkspaceReq, UpdateWorkspaceReq, WorkspaceMember, AddMemberReq, UpdateMemberRoleReq, PendingInvitation, InviteMemberReq, UserSummary } from '../types';
+import type { Node, Session, CreateSessionReq, Agent, AgentProfile, RuntimeEntity, Task, CreateTaskReq, UpdateTaskReq, TaskStatus, TaskAssignee, AddAssigneeReq, Priority, Project, CreateProjectReq, UpdateProjectReq, ProjectStatus, Workspace, CreateWorkspaceReq, UpdateWorkspaceReq, WorkspaceMember, AddMemberReq, UpdateMemberRoleReq, PendingInvitation, InviteMemberReq, UserSummary } from '../types';
 
 
 
@@ -298,59 +298,53 @@ export const sessions = {
 
 export const tasks = {
 
-  list: (projectId?: string) => {
-
-    const path = projectId ? `/tasks?project_id=${projectId}` : '/tasks';
-
-    return request<{ tasks: Task[] }>(path);
-
+  list: (params?: { projectId?: string; parentId?: string; assigneeId?: string; priority?: string; tag?: string }) => {
+    const query = new URLSearchParams();
+    if (params?.projectId) query.set('project_id', params.projectId);
+    if (params?.parentId) query.set('parent_id', params.parentId);
+    if (params?.assigneeId) query.set('assignee_id', params.assigneeId);
+    if (params?.priority) query.set('priority', params.priority);
+    if (params?.tag) query.set('tag', params.tag);
+    const qs = query.toString();
+    return request<{ tasks: Task[] }>(`/tasks${qs ? '?' + qs : ''}`);
   },
-
-
 
   get: (id: string) => request<Task>(`/tasks/${id}`),
 
-
-
   create: (data: CreateTaskReq) =>
-
     request<Task>('/tasks', { method: 'POST', body: JSON.stringify(data) }),
 
-
-
   update: (id: string, data: UpdateTaskReq) =>
-
     request<Task>(`/tasks/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
 
-
-
   delete: (id: string) =>
-
     request<{ status: string }>(`/tasks/${id}`, { method: 'DELETE' }),
 
-
-
   setStatus: (id: string, status: TaskStatus) =>
-
     request<Task>(`/tasks/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
 
-
-
   // Trash
-
   listTrash: () => request<{ tasks: Task[] }>('/tasks/trash'),
 
-
-
   permanentDelete: (id: string) =>
-
     request<{ status: string }>(`/tasks/${id}/force`, { method: 'DELETE' }),
 
-
-
   restore: (id: string) =>
-
     request<{ status: string }>(`/tasks/${id}/restore`, { method: 'POST' }),
+
+  // Assignees
+  listAssignees: (id: string) =>
+    request<{ assignees: TaskAssignee[] }>(`/tasks/${id}/assignees`),
+
+  addAssignee: (id: string, data: AddAssigneeReq) =>
+    request<{ status: string }>(`/tasks/${id}/assignees`, { method: 'POST', body: JSON.stringify(data) }),
+
+  removeAssignee: (id: string, assigneeId: string) =>
+    request<{ status: string }>(`/tasks/${id}/assignees/${assigneeId}`, { method: 'DELETE' }),
+
+  // Subtasks
+  listSubtasks: (id: string) =>
+    request<{ tasks: Task[] }>(`/tasks/${id}/subtasks`),
 
 };
 
@@ -360,44 +354,28 @@ export const tasks = {
 
 export const projects = {
 
-  list: () => request<{ projects: Project[] }>('/projects'),
-
-
+  list: (status?: string) => {
+    const path = status ? `/projects?status=${status}` : '/projects';
+    return request<{ projects: Project[] }>(path);
+  },
 
   get: (id: string) => request<Project>(`/projects/${id}`),
 
-
-
   create: (req: CreateProjectReq) =>
-
     request<Project>('/projects', { method: 'POST', body: JSON.stringify(req) }),
 
-
-
   update: (id: string, req: UpdateProjectReq) =>
-
     request<Project>(`/projects/${id}`, { method: 'PUT', body: JSON.stringify(req) }),
 
-
-
   delete: (id: string) =>
-
     request<{ status: string }>(`/projects/${id}`, { method: 'DELETE' }),
-
-
 
   listTrash: () => request<{ projects: Project[] }>('/projects/trash'),
 
-
-
   permanentDelete: (id: string) =>
-
     request<{ status: string }>(`/projects/${id}/force`, { method: 'DELETE' }),
 
-
-
   restore: (id: string) =>
-
     request<{ status: string }>(`/projects/${id}/restore`, { method: 'POST' }),
 
 };

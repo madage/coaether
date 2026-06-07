@@ -77,6 +77,8 @@ export interface CreateSessionReq {
 }
 
 // === Project Types ===
+export type ProjectStatus = 'planning' | 'active' | 'completed' | 'on_hold';
+
 export interface Project {
   id: string;
   user_id: string;
@@ -84,6 +86,11 @@ export interface Project {
   description: string;
   color: string;
   task_count: number;
+  assignee_id?: string;
+  assignee_type?: AssigneeType;
+  status: ProjectStatus;
+  started_at?: string;
+  due_at?: string;
   created_at: string;
   updated_at: string;
 }
@@ -92,16 +99,28 @@ export interface CreateProjectReq {
   name: string;
   description?: string;
   color?: string;
+  assignee_id?: string;
+  assignee_type?: AssigneeType;
+  status?: ProjectStatus;
+  started_at?: string;
+  due_at?: string;
 }
 
 export interface UpdateProjectReq {
   name?: string;
   description?: string;
   color?: string;
+  assignee_id?: string | null;
+  assignee_type?: AssigneeType | null;
+  status?: ProjectStatus;
+  started_at?: string | null;
+  due_at?: string | null;
 }
 
 // === Task Types ===
 export type TaskStatus = 'todo' | 'in_progress' | 'blocked' | 'done' | 'review';
+export type Priority = 'urgent' | 'high' | 'medium' | 'low';
+export type AssigneeType = 'user' | 'agent_profile';
 
 export interface Task {
   id: string;
@@ -110,6 +129,13 @@ export interface Task {
   description: string;
   status: TaskStatus;
   project_id?: string;
+  parent_id?: string;
+  assignee_id?: string;
+  assignee_type?: AssigneeType;
+  priority: Priority;
+  tags: string[];
+  due_at?: string;
+  completed_at?: string;
   created_at: string;
   updated_at: string;
 }
@@ -118,6 +144,12 @@ export interface CreateTaskReq {
   title: string;
   description?: string;
   project_id?: string;
+  parent_id?: string;
+  assignee_id?: string;
+  assignee_type?: AssigneeType;
+  priority?: Priority;
+  tags?: string[];
+  due_at?: string;
 }
 
 export interface UpdateTaskReq {
@@ -125,6 +157,24 @@ export interface UpdateTaskReq {
   description?: string;
   status?: TaskStatus;
   project_id?: string | null;
+  parent_id?: string | null;
+  assignee_id?: string | null;
+  assignee_type?: AssigneeType | null;
+  priority?: Priority;
+  tags?: string[];
+  due_at?: string | null;
+}
+
+export interface TaskAssignee {
+  task_id: string;
+  assignee_id: string;
+  assignee_type: AssigneeType;
+  role: string;
+}
+
+export interface AddAssigneeReq {
+  assignee_id: string;
+  assignee_type: AssigneeType;
 }
 
 // === Workspace Types ===

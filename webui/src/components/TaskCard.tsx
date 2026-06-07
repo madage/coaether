@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import type { Task, TaskStatus } from '../types';
+import type { Task, TaskStatus, Priority } from '../types';
 import { useLang, type TranslationKey } from '../i18n/context';
 
 const statusColors: Record<TaskStatus, { bg: string; color: string }> = {
@@ -8,6 +8,13 @@ const statusColors: Record<TaskStatus, { bg: string; color: string }> = {
   blocked: { bg: '#d1c4e9', color: '#4527a0' },
   review: { bg: '#ffe0b2', color: '#e65100' },
   done: { bg: '#c8e6c9', color: '#2e7d32' },
+};
+
+const priorityColors: Record<Priority, { bg: string; color: string }> = {
+  urgent: { bg: '#ffcdd2', color: '#c62828' },
+  high: { bg: '#ffe0b2', color: '#e65100' },
+  medium: { bg: '#bbdefb', color: '#1565c0' },
+  low: { bg: '#e0e0e0', color: '#757575' },
 };
 
 const statusKeys: Record<TaskStatus, TranslationKey> = {
@@ -26,13 +33,18 @@ interface TaskCardProps {
   onDelete: (id: string) => void;
   onStatusChange: (id: string, status: TaskStatus) => void;
   projectsMap?: Record<string, { name: string; color: string }>;
+  subtaskCount?: number;
+  assigneeName?: string;
 }
 
-export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap }: TaskCardProps) {
+export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap, subtaskCount, assigneeName }: TaskCardProps) {
   const { t } = useLang();
   const sc = statusColors[task.status];
+  const pc = priorityColors[task.priority] || priorityColors.medium;
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  const isOverdue = task.due_at && new Date(task.due_at) < new Date() && task.status !== 'done';
 
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
@@ -70,40 +82,26 @@ export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap }
         e.currentTarget.style.boxShadow = '';
       }}
     >
-      {/* Top row: menu + project dot + status badge */}
+      {/* Top row: menu + priority + project dot + status badge */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div ref={menuRef} style={{ position: 'relative' }}>
           <button
             onClick={(e) => { e.stopPropagation(); setMenuOpen(!menuOpen); }}
             style={{
-              background: 'none',
-              border: 'none',
-              cursor: 'pointer',
-              padding: '2px 6px',
-              borderRadius: '4px',
-              color: '#999',
-              fontSize: '1.1em',
-              lineHeight: 1,
-              fontWeight: 700,
-              letterSpacing: '1px',
+              background: 'none', border: 'none', cursor: 'pointer',
+              padding: '2px 6px', borderRadius: '4px', color: '#999',
+              fontSize: '1.1em', lineHeight: 1, fontWeight: 700, letterSpacing: '1px',
             }}
           >
             ···
           </button>
-
           {menuOpen && (
             <div
               style={{
-                position: 'absolute',
-                top: '100%',
-                left: 0,
-                zIndex: 100,
-                background: '#fff',
-                borderRadius: '8px',
-                boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
-                minWidth: '140px',
-                padding: '4px 0',
-                border: '1px solid #eee',
+                position: 'absolute', top: '100%', left: 0, zIndex: 100,
+                background: '#fff', borderRadius: '8px',
+                boxShadow: '0 4px 16px rgba(0,0,0,0.15)', minWidth: '140px',
+                padding: '4px 0', border: '1px solid #eee',
               }}
             >
               <div style={{ padding: '6px 12px', fontSize: '0.75em', color: '#999', fontWeight: 500 }}>
@@ -114,14 +112,10 @@ export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap }
                   key={s}
                   onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onStatusChange(task.id, s); }}
                   style={{
-                    display: 'block',
-                    width: '100%',
-                    textAlign: 'left',
-                    padding: '6px 12px',
-                    border: 'none',
+                    display: 'block', width: '100%', textAlign: 'left',
+                    padding: '6px 12px', border: 'none',
                     background: task.status === s ? '#f0f0f0' : 'transparent',
-                    cursor: 'pointer',
-                    fontSize: '0.85em',
+                    cursor: 'pointer', fontSize: '0.85em',
                     color: task.status === s ? statusColors[s].color : '#333',
                     fontWeight: task.status === s ? 600 : 400,
                   }}
@@ -133,15 +127,9 @@ export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap }
               <button
                 onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onDelete(task.id); }}
                 style={{
-                  display: 'block',
-                  width: '100%',
-                  textAlign: 'left',
-                  padding: '6px 12px',
-                  border: 'none',
-                  background: 'transparent',
-                  cursor: 'pointer',
-                  fontSize: '0.85em',
-                  color: '#c62828',
+                  display: 'block', width: '100%', textAlign: 'left',
+                  padding: '6px 12px', border: 'none', background: 'transparent',
+                  cursor: 'pointer', fontSize: '0.85em', color: '#c62828',
                 }}
               >
                 {t('taskDelete')}
@@ -151,6 +139,17 @@ export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap }
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          {/* Priority badge */}
+          <span
+            style={{
+              fontSize: '0.7em', padding: '1px 6px', borderRadius: '8px',
+              background: pc.bg, color: pc.color, fontWeight: 600,
+              whiteSpace: 'nowrap', textTransform: 'uppercase',
+            }}
+          >
+            {task.priority}
+          </span>
+          {/* Project dot */}
           {task.project_id && projectsMap?.[task.project_id] && (
             <span
               title={projectsMap[task.project_id].name}
@@ -161,15 +160,11 @@ export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap }
               }}
             />
           )}
+          {/* Status badge */}
           <span
             style={{
-              fontSize: '0.75em',
-              padding: '2px 8px',
-              borderRadius: '10px',
-              background: sc.bg,
-              color: sc.color,
-              fontWeight: 500,
-              whiteSpace: 'nowrap',
+              fontSize: '0.75em', padding: '2px 8px', borderRadius: '10px',
+              background: sc.bg, color: sc.color, fontWeight: 500, whiteSpace: 'nowrap',
             }}
           >
             {t(statusKeys[task.status])}
@@ -190,6 +185,51 @@ export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap }
             : task.description}
         </p>
       )}
+
+      {/* Bottom row: tags, assignee, due date, subtasks */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px', marginTop: '4px' }}>
+        {/* Tags */}
+        {task.tags && task.tags.length > 0 && task.tags.slice(0, 3).map(tag => (
+          <span
+            key={tag}
+            style={{
+              fontSize: '0.7em', padding: '1px 6px', borderRadius: '6px',
+              background: '#e3f2fd', color: '#1565c0', whiteSpace: 'nowrap',
+            }}
+          >
+            {tag}
+          </span>
+        ))}
+        {task.tags && task.tags.length > 3 && (
+          <span style={{ fontSize: '0.7em', color: '#999' }}>+{task.tags.length - 3}</span>
+        )}
+
+        {/* Assignee */}
+        {assigneeName && (
+          <span style={{ fontSize: '0.75em', color: '#555' }}>
+            👤 {assigneeName}
+          </span>
+        )}
+
+        {/* Due date */}
+        {task.due_at && (
+          <span
+            style={{
+              fontSize: '0.75em', color: isOverdue ? '#c62828' : '#555',
+              fontWeight: isOverdue ? 600 : 400,
+            }}
+          >
+            {isOverdue ? '⚠ ' : '📅 '}{new Date(task.due_at).toLocaleDateString()}
+          </span>
+        )}
+
+        {/* Subtask count */}
+        {subtaskCount !== undefined && subtaskCount > 0 && (
+          <span style={{ fontSize: '0.75em', color: '#888' }}>
+            📋 {subtaskCount}
+          </span>
+        )}
+      </div>
     </div>
   );
 }

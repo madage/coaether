@@ -22,13 +22,26 @@ func NewProjectHandler(db *sql.DB) *ProjectHandler {
 	return &ProjectHandler{DB: db}
 }
 
+const projectSelectCols = `p.id, p.user_id, p.name, p.description, p.color,
+	p.assignee_id, p.assignee_type, p.status, p.started_at, p.due_at, p.created_at, p.updated_at`
+
+func (h *ProjectHandler) scanProject(scanner interface {
+	Scan(dest ...interface{}) error
+}, p *models.Project) error {
+	return scanner.Scan(
+		&p.ID, &p.UserID, &p.Name, &p.Description, &p.Color,
+		&p.AssigneeID, &p.AssigneeType, &p.Status, &p.StartedAt, &p.DueAt,
+		&p.CreatedAt, &p.UpdatedAt,
+	)
+}
+
 func (h *ProjectHandler) List(c *gin.Context) {
 	workspaceID := c.Query("workspace_id")
 	isMember, _ := c.Get("is_workspace_member")
 
-	query := `SELECT p.id, p.user_id, p.name, p.description, p.color, p.created_at, p.updated_at,
-		        COALESCE((SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND t.deleted_at IS NULL), 0) AS task_count
-		 FROM projects p WHERE p.deleted_at IS NULL`
+	query := fmt.Sprintf(`SELECT %s,
+			COALESCE((SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND t.deleted_at IS NULL), 0) AS task_count
+		 FROM projects p WHERE p.deleted_at IS NULL`, projectSelectCols)
 	args := []any{}
 	argIdx := 1
 
@@ -42,6 +55,14 @@ func (h *ProjectHandler) List(c *gin.Context) {
 		args = append(args, userID)
 		argIdx++
 	}
+
+	// Filter by status
+	if status := c.Query("status"); status != "" {
+		query += fmt.Sprintf(" AND p.status = $%d", argIdx)
+		args = append(args, status)
+		argIdx++
+	}
+
 	query += " ORDER BY p.updated_at DESC"
 
 	rows, err := h.DB.Query(query, args...)
@@ -54,7 +75,11 @@ func (h *ProjectHandler) List(c *gin.Context) {
 	projects := make([]models.Project, 0)
 	for rows.Next() {
 		var p models.Project
-		if err := rows.Scan(&p.ID, &p.UserID, &p.Name, &p.Description, &p.Color, &p.CreatedAt, &p.UpdatedAt, &p.TaskCount); err != nil {
+		if err := h.scanProject(rows, &p); err != nil {
+			continue
+		}
+		// extra scan for task_count
+		if err := rows.Scan(&p.TaskCount); err != nil {
 			continue
 		}
 		projects = append(projects, p)
@@ -82,22 +107,34 @@ func (h *ProjectHandler) Create(c *gin.Context) {
 	if color == "" {
 		color = "#1976d2"
 	}
+	status := models.ProjPlanning
+	if req.Status != nil {
+		status = *req.Status
+	}
 
 	now := time.Now()
 	project := models.Project{
-		ID:          uuid.New().String(),
-		UserID:      userID.(string),
-		Name:        req.Name,
-		Description: req.Description,
-		Color:       color,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:           uuid.New().String(),
+		UserID:       userID.(string),
+		Name:         req.Name,
+		Description:  req.Description,
+		Color:        color,
+		AssigneeID:   req.AssigneeID,
+		AssigneeType: req.AssigneeType,
+		Status:       status,
+		StartedAt:    req.StartedAt,
+		DueAt:        req.DueAt,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
 
 	_, err := h.DB.Exec(
-		`INSERT INTO projects (id, user_id, workspace_id, name, description, color, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		project.ID, project.UserID, workspaceID, project.Name, project.Description, project.Color, project.CreatedAt, project.UpdatedAt,
+		`INSERT INTO projects (id, user_id, workspace_id, name, description, color,
+		 assignee_id, assignee_type, status, started_at, due_at, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+		project.ID, project.UserID, workspaceID, project.Name, project.Description, project.Color,
+		project.AssigneeID, project.AssigneeType, project.Status, project.StartedAt, project.DueAt,
+		project.CreatedAt, project.UpdatedAt,
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create project"})
@@ -120,9 +157,9 @@ func (h *ProjectHandler) Get(c *gin.Context) {
 	isMember, _ := c.Get("is_workspace_member")
 	projectID := c.Param("id")
 
-	query := `SELECT p.id, p.user_id, p.name, p.description, p.color, p.created_at, p.updated_at,
-		        COALESCE((SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND t.deleted_at IS NULL), 0) AS task_count
-		 FROM projects p WHERE p.id = $1`
+	query := fmt.Sprintf(`SELECT %s,
+			COALESCE((SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND t.deleted_at IS NULL), 0) AS task_count
+		 FROM projects p WHERE p.id = $1`, projectSelectCols)
 	args := []any{projectID}
 	argIdx := 2
 
@@ -136,7 +173,11 @@ func (h *ProjectHandler) Get(c *gin.Context) {
 	}
 
 	var p models.Project
-	err := h.DB.QueryRow(query, args...).Scan(&p.ID, &p.UserID, &p.Name, &p.Description, &p.Color, &p.CreatedAt, &p.UpdatedAt, &p.TaskCount)
+	err := h.DB.QueryRow(query, args...).Scan(
+		&p.ID, &p.UserID, &p.Name, &p.Description, &p.Color,
+		&p.AssigneeID, &p.AssigneeType, &p.Status, &p.StartedAt, &p.DueAt,
+		&p.CreatedAt, &p.UpdatedAt, &p.TaskCount,
+	)
 
 	if err == sql.ErrNoRows {
 		c.JSON(http.StatusNotFound, gin.H{"error": "project not found"})
@@ -154,7 +195,6 @@ func (h *ProjectHandler) Update(c *gin.Context) {
 	workspaceID := c.Query("workspace_id")
 	projectID := c.Param("id")
 
-	// Check permission
 	var creatorID string
 	err := h.DB.QueryRow(`SELECT user_id FROM projects WHERE id = $1`, projectID).Scan(&creatorID)
 	if err == sql.ErrNoRows {
@@ -191,6 +231,31 @@ func (h *ProjectHandler) Update(c *gin.Context) {
 		args = append(args, *req.Color)
 		argIdx++
 	}
+	if req.AssigneeID != nil {
+		sets = append(sets, fmt.Sprintf("assignee_id = $%d", argIdx))
+		args = append(args, *req.AssigneeID)
+		argIdx++
+	}
+	if req.AssigneeType != nil {
+		sets = append(sets, fmt.Sprintf("assignee_type = $%d", argIdx))
+		args = append(args, *req.AssigneeType)
+		argIdx++
+	}
+	if req.Status != nil {
+		sets = append(sets, fmt.Sprintf("status = $%d", argIdx))
+		args = append(args, *req.Status)
+		argIdx++
+	}
+	if req.StartedAt != nil {
+		sets = append(sets, fmt.Sprintf("started_at = $%d", argIdx))
+		args = append(args, *req.StartedAt)
+		argIdx++
+	}
+	if req.DueAt != nil {
+		sets = append(sets, fmt.Sprintf("due_at = $%d", argIdx))
+		args = append(args, *req.DueAt)
+		argIdx++
+	}
 
 	if len(sets) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "no fields to update"})
@@ -224,10 +289,14 @@ func (h *ProjectHandler) Update(c *gin.Context) {
 
 	var p models.Project
 	h.DB.QueryRow(
-		`SELECT p.id, p.user_id, p.name, p.description, p.color, p.created_at, p.updated_at,
-		        COALESCE((SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND t.deleted_at IS NULL), 0) AS task_count
-		 FROM projects p WHERE p.id = $1`, projectID,
-	).Scan(&p.ID, &p.UserID, &p.Name, &p.Description, &p.Color, &p.CreatedAt, &p.UpdatedAt, &p.TaskCount)
+		fmt.Sprintf(`SELECT %s,
+			COALESCE((SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND t.deleted_at IS NULL), 0) AS task_count
+		 FROM projects p WHERE p.id = $1`, projectSelectCols), projectID,
+	).Scan(
+		&p.ID, &p.UserID, &p.Name, &p.Description, &p.Color,
+		&p.AssigneeID, &p.AssigneeType, &p.Status, &p.StartedAt, &p.DueAt,
+		&p.CreatedAt, &p.UpdatedAt, &p.TaskCount,
+	)
 
 	if h.Hub != nil {
 		h.Hub.SignalChange("projects")
@@ -279,9 +348,9 @@ func (h *ProjectHandler) ListTrash(c *gin.Context) {
 	workspaceID := c.Query("workspace_id")
 	isMember, _ := c.Get("is_workspace_member")
 
-	query := `SELECT p.id, p.user_id, p.name, p.description, p.color, p.created_at, p.updated_at,
-		        COALESCE((SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND t.deleted_at IS NULL), 0) AS task_count
-		 FROM projects p WHERE p.deleted_at IS NOT NULL`
+	query := fmt.Sprintf(`SELECT %s,
+			COALESCE((SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND t.deleted_at IS NULL), 0) AS task_count
+		 FROM projects p WHERE p.deleted_at IS NOT NULL`, projectSelectCols)
 	args := []any{}
 	argIdx := 1
 
@@ -307,7 +376,11 @@ func (h *ProjectHandler) ListTrash(c *gin.Context) {
 	projects := make([]models.Project, 0)
 	for rows.Next() {
 		var p models.Project
-		if err := rows.Scan(&p.ID, &p.UserID, &p.Name, &p.Description, &p.Color, &p.CreatedAt, &p.UpdatedAt, &p.TaskCount); err != nil {
+		if err := rows.Scan(
+			&p.ID, &p.UserID, &p.Name, &p.Description, &p.Color,
+			&p.AssigneeID, &p.AssigneeType, &p.Status, &p.StartedAt, &p.DueAt,
+			&p.CreatedAt, &p.UpdatedAt, &p.TaskCount,
+		); err != nil {
 			continue
 		}
 		projects = append(projects, p)
@@ -333,7 +406,6 @@ func (h *ProjectHandler) PermanentDelete(c *gin.Context) {
 
 	isMember, _ := c.Get("is_workspace_member")
 
-	// Unlink tasks from this project first
 	unlinkQuery := `UPDATE tasks SET project_id = NULL WHERE project_id = $1`
 	unlinkArgs := []any{projectID}
 	if workspaceID != "" && isMember.(bool) {

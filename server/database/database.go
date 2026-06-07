@@ -332,7 +332,23 @@ func Migrate() error {
 		created_at  TIMESTAMP NOT NULL DEFAULT NOW()
 	);
 
-			CREATE TABLE IF NOT EXISTS pending_invitations (
+			CREATE TABLE IF NOT EXISTS task_assignees (
+			task_id       VARCHAR(36) NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+			assignee_id   VARCHAR(36) NOT NULL,
+			assignee_type VARCHAR(16) NOT NULL,
+			role          VARCHAR(16) NOT NULL DEFAULT 'assignee',
+			PRIMARY KEY (task_id, assignee_id, assignee_type)
+		);
+
+		CREATE TABLE IF NOT EXISTS task_tags (
+			task_id VARCHAR(36) NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+			tag     VARCHAR(64) NOT NULL,
+			PRIMARY KEY (task_id, tag)
+		);
+
+		CREATE INDEX IF NOT EXISTS idx_task_tags_tag ON task_tags(tag);
+
+		CREATE TABLE IF NOT EXISTS pending_invitations (
 
 		id             VARCHAR(36) PRIMARY KEY,
 
@@ -407,6 +423,25 @@ func Migrate() error {
 		"CREATE INDEX IF NOT EXISTS idx_agent_profiles_workspace_id ON agent_profiles(workspace_id)",
 
 		"ALTER TABLE nodes ADD COLUMN IF NOT EXISTS node_secret_hash VARCHAR(128)",
+
+		// Task enhancements for project management
+		"ALTER TABLE tasks ADD COLUMN IF NOT EXISTS parent_id VARCHAR(36) REFERENCES tasks(id)",
+		"ALTER TABLE tasks ADD COLUMN IF NOT EXISTS assignee_id VARCHAR(36)",
+		"ALTER TABLE tasks ADD COLUMN IF NOT EXISTS assignee_type VARCHAR(16) DEFAULT ''",
+		"ALTER TABLE tasks ADD COLUMN IF NOT EXISTS priority VARCHAR(8) NOT NULL DEFAULT 'medium'",
+		"ALTER TABLE tasks ADD COLUMN IF NOT EXISTS due_at TIMESTAMP",
+		"ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP",
+		"CREATE INDEX IF NOT EXISTS idx_tasks_parent_id ON tasks(parent_id)",
+		"CREATE INDEX IF NOT EXISTS idx_tasks_assignee ON tasks(assignee_id)",
+		"CREATE INDEX IF NOT EXISTS idx_tasks_priority ON tasks(priority)",
+
+		// Project enhancements for project management
+		"ALTER TABLE projects ADD COLUMN IF NOT EXISTS assignee_id VARCHAR(36)",
+		"ALTER TABLE projects ADD COLUMN IF NOT EXISTS assignee_type VARCHAR(16) DEFAULT ''",
+		"ALTER TABLE projects ADD COLUMN IF NOT EXISTS status VARCHAR(16) NOT NULL DEFAULT 'planning'",
+		"ALTER TABLE projects ADD COLUMN IF NOT EXISTS started_at TIMESTAMP",
+		"ALTER TABLE projects ADD COLUMN IF NOT EXISTS due_at TIMESTAMP",
+		"CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status)",
 
 	}
 

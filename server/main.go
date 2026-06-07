@@ -222,6 +222,10 @@ func main() {
 		api.POST("/tasks/:id/restore", taskH.Restore)
 
 		api.PATCH("/tasks/:id/status", taskH.SetStatus)
+		api.POST("/tasks/:id/assignees", taskH.AddAssignee)
+		api.DELETE("/tasks/:id/assignees/:assigneeId", taskH.RemoveAssignee)
+		api.GET("/tasks/:id/assignees", taskH.ListAssignees)
+		api.GET("/tasks/:id/subtasks", taskH.ListSubtasks)
 
 		// Projects
 

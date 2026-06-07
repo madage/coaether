@@ -7,7 +7,7 @@ import { ProjectForm } from './ProjectForm';
 import { ProjectDetail } from './ProjectDetail';
 import { TaskCard } from './TaskCard';
 import { TaskForm } from './TaskForm';
-import type { Project, Task, TaskStatus } from '../types';
+import type { Project, Task, TaskStatus, ProjectStatus, CreateProjectReq, UpdateProjectReq, AssigneeType } from '../types';
 import { useWorkspace } from '../hooks/WorkspaceContext';
 
 export function ProjectList() {
@@ -19,16 +19,18 @@ export function ProjectList() {
   const [showCreate, setShowCreate] = useState(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [detailProject, setDetailProject] = useState<Project | null>(null);
+  const [filterStatus, setFilterStatus] = useState<string>('');
+
   const [showUnassigned, setShowUnassigned] = useState(false);
   const [unassignedTasks, setUnassignedTasks] = useState<Task[]>([]);
   const [unassignedCount, setUnassignedCount] = useState(0);
   const [editingUnassignedTask, setEditingUnassignedTask] = useState<Task | null>(null);
 
-  const fetchProjects = useCallback(async () => {
+  const fetchProjects = useCallback(async (status?: string) => {
     try {
       const [res, unassignedRes] = await Promise.all([
-        projectsApi.list(),
-        tasksApi.list('none'),
+        status ? projectsApi.list(status) : projectsApi.list(),
+        tasksApi.list({ projectId: 'none' }),
       ]);
       setProjectList(res.projects);
       setUnassignedCount(unassignedRes.tasks.length);
@@ -40,45 +42,66 @@ export function ProjectList() {
   }, []);
 
   useEffect(() => {
-    fetchProjects();
-  }, [fetchProjects]);
+    fetchProjects(filterStatus || undefined);
+  }, [fetchProjects, filterStatus]);
 
-  useResourceSync('projects', fetchProjects);
+  useResourceSync('projects', () => fetchProjects(filterStatus || undefined));
 
-  const handleCreate = useCallback(async (data: { name: string; description: string; color: string }) => {
+  const handleCreate = useCallback(async (data: { name: string; description: string; color: string; assignee_id?: string | null | undefined; assignee_type?: string | null | undefined; status?: ProjectStatus; started_at?: string | null | undefined; due_at?: string | null | undefined }) => {
     try {
-      await projectsApi.create(data);
+      // Convert null to undefined for API type compatibility
+      const apiData: CreateProjectReq = {
+        name: data.name,
+        description: data.description,
+        color: data.color,
+        assignee_id: data.assignee_id ?? undefined,
+        assignee_type: data.assignee_type as AssigneeType | undefined,
+        status: data.status,
+        started_at: data.started_at ?? undefined,
+        due_at: data.due_at ?? undefined,
+      };
+      await projectsApi.create(apiData);
       setShowCreate(false);
-      fetchProjects();
+      fetchProjects(filterStatus || undefined);
     } catch {
       alert('Failed to create project');
     }
-  }, [fetchProjects]);
+  }, [fetchProjects, filterStatus]);
 
-  const handleUpdate = useCallback(async (id: string, data: { name?: string; description?: string; color?: string }) => {
+  const handleUpdate = useCallback(async (id: string, data: { name?: string; description?: string; color?: string; assignee_id?: string | null | undefined; assignee_type?: string | null | undefined; status?: ProjectStatus; started_at?: string | null | undefined; due_at?: string | null | undefined }) => {
     try {
-      await projectsApi.update(id, data);
+      const apiData: UpdateProjectReq = {
+        name: data.name,
+        description: data.description,
+        color: data.color,
+        assignee_id: data.assignee_id ?? undefined,
+        assignee_type: data.assignee_type as AssigneeType | null | undefined,
+        status: data.status,
+        started_at: data.started_at ?? undefined,
+        due_at: data.due_at ?? undefined,
+      };
+      await projectsApi.update(id, apiData);
       setEditingProject(null);
       setDetailProject(null);
-      fetchProjects();
+      fetchProjects(filterStatus || undefined);
     } catch {
       alert('Failed to update project');
     }
-  }, [fetchProjects]);
+  }, [fetchProjects, filterStatus]);
 
   const handleDelete = useCallback(async (id: string) => {
     try {
       await projectsApi.delete(id);
       setDetailProject(null);
-      fetchProjects();
+      fetchProjects(filterStatus || undefined);
     } catch {
       alert('Failed to delete project');
     }
-  }, [fetchProjects]);
+  }, [fetchProjects, filterStatus]);
 
   const handleNoProjectClick = useCallback(async () => {
     try {
-      const res = await tasksApi.list('none');
+      const res = await tasksApi.list({ projectId: 'none' });
       setUnassignedTasks(res.tasks);
       setShowUnassigned(true);
     } catch {}
@@ -88,7 +111,7 @@ export function ProjectList() {
     try {
       await tasksApi.delete(id);
       setUnassignedTasks((prev) => prev.filter((t) => t.id !== id));
-      const res = await tasksApi.list('none');
+      const res = await tasksApi.list({ projectId: 'none' });
       setUnassignedCount(res.tasks.length);
     } catch {
       alert('Failed to delete task');
@@ -116,7 +139,7 @@ export function ProjectList() {
         await tasksApi.update(editingUnassignedTask.id, updateData);
       }
       setEditingUnassignedTask(null);
-      const res = await tasksApi.list('none');
+      const res = await tasksApi.list({ projectId: 'none' });
       setUnassignedTasks(res.tasks);
       setUnassignedCount(res.tasks.length);
     } catch (err) {
@@ -136,66 +159,53 @@ export function ProjectList() {
   return (
     <div style={{ padding: '24px', maxWidth: '1200px', margin: '0 auto' }}>
       {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '8px' }}>
         <h2 style={{ margin: 0 }}>{t('navProjects')}</h2>
-        {!isObserver && <button
-          onClick={() => setShowCreate(true)}
-          style={{
-            padding: '8px 20px', background: '#1976d2', color: '#fff',
-            border: 'none', borderRadius: '8px', cursor: 'pointer',
-            fontSize: '0.95em', fontWeight: 600,
-          }}
-        >
-          + {t('projectCreate')}
-        </button>}
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          {/* Status filter */}
+          <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}
+            style={{
+              padding: '6px 10px', borderRadius: '6px', border: '1px solid #ddd',
+              fontSize: '0.85em', background: '#fff',
+            }}
+          >
+            <option value="">全部状态</option>
+            <option value="planning">规划中</option>
+            <option value="active">进行中</option>
+            <option value="completed">已完成</option>
+            <option value="on_hold">挂起</option>
+          </select>
+          {!isObserver && (
+            <button onClick={() => setShowCreate(true)}
+              style={{
+                padding: '8px 20px', background: '#1976d2', color: '#fff',
+                border: 'none', borderRadius: '8px', cursor: 'pointer',
+                fontSize: '0.95em', fontWeight: 600,
+              }}
+            >+ {t('projectCreate')}</button>
+          )}
+        </div>
       </div>
 
-      {/* Grid with "No Project" card always first */}
+      {/* Grid */}
       <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-        gap: '20px',
+        display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '20px',
       }}>
-        {/* No Project card — default, always present, not deletable */}
-        <div
-          onClick={handleNoProjectClick}
+        {/* No Project card */}
+        <div onClick={handleNoProjectClick}
           style={{
-            background: '#fff',
-            borderRadius: '12px',
-            border: '2px dashed #ddd',
-            transition: 'transform 0.2s, boxShadow 0.2s',
-            cursor: 'pointer',
-            overflow: 'hidden',
-            display: 'flex',
-            flexDirection: 'column',
+            background: '#fff', borderRadius: '12px', border: '2px dashed #ddd',
+            transition: 'transform 0.2s, boxShadow 0.2s', cursor: 'pointer',
+            overflow: 'hidden', display: 'flex', flexDirection: 'column',
           }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.transform = 'translateY(-4px)';
-            e.currentTarget.style.boxShadow = '0 12px 24px rgba(0,0,0,0.15), 0 4px 8px rgba(0,0,0,0.1)';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.transform = '';
-            e.currentTarget.style.boxShadow = '';
-          }}
+          onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-4px)'; e.currentTarget.style.boxShadow = '0 12px 24px rgba(0,0,0,0.15), 0 4px 8px rgba(0,0,0,0.1)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.transform = ''; e.currentTarget.style.boxShadow = ''; }}
         >
           <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', flex: 1 }}>
-            <div style={{
-              width: '40px', height: '40px', borderRadius: '10px',
-              background: '#e0e0e0',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: '1.3em', marginBottom: '12px',
-            }}>
-              📂
-            </div>
-            <h3 style={{
-              margin: '0 0 4px', fontSize: '1.05em', color: '#999',
-            }}>{t('noProject')}</h3>
-            <p style={{
-              margin: '0 0 12px', color: '#bbb', fontSize: '0.83em', flex: 1,
-            }}>{lang === 'zh' ? '未归属到任何项目的任务' : 'Tasks without a project'}</p>
-            <div style={{ fontSize: '0.78em', color: '#ccc' }}>
-              {unassignedCount} {lang === 'zh' ? '个任务' : 'tasks'}
-            </div>
+            <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: '#e0e0e0', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.3em', marginBottom: '12px' }}>📂</div>
+            <h3 style={{ margin: '0 0 4px', fontSize: '1.05em', color: '#999' }}>{t('noProject')}</h3>
+            <p style={{ margin: '0 0 12px', color: '#bbb', fontSize: '0.83em', flex: 1 }}>{lang === 'zh' ? '未归属到任何项目的任务' : 'Tasks without a project'}</p>
+            <div style={{ fontSize: '0.78em', color: '#ccc' }}>{unassignedCount} {lang === 'zh' ? '个任务' : 'tasks'}</div>
           </div>
         </div>
 
@@ -211,12 +221,7 @@ export function ProjectList() {
       </div>
 
       {/* Create form */}
-      {showCreate && (
-        <ProjectForm
-          onClose={() => setShowCreate(false)}
-          onSave={handleCreate}
-        />
-      )}
+      {showCreate && <ProjectForm onClose={() => setShowCreate(false)} onSave={handleCreate} />}
 
       {/* Edit form */}
       {editingProject && (
@@ -233,21 +238,18 @@ export function ProjectList() {
           project={detailProject}
           onClose={() => setDetailProject(null)}
           onDelete={handleDelete}
-          onUpdate={handleUpdate}
         />
       )}
 
       {/* Unassigned tasks modal */}
       {showUnassigned && (
-        <div
-          onClick={() => setShowUnassigned(false)}
+        <div onClick={() => setShowUnassigned(false)}
           style={{
             position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
             display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000,
           }}
         >
-          <div
-            onClick={(e) => e.stopPropagation()}
+          <div onClick={(e) => e.stopPropagation()}
             style={{
               background: '#fff', borderRadius: '16px', padding: '32px',
               width: '640px', maxWidth: '90vw', maxHeight: '85vh', overflow: 'auto',
@@ -256,32 +258,20 @@ export function ProjectList() {
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <div style={{
-                  width: '48px', height: '48px', borderRadius: '12px',
-                  background: '#e0e0e0',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.5em',
-                }}>
-                  📂
-                </div>
+                <div style={{ width: '48px', height: '48px', borderRadius: '12px', background: '#e0e0e0', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.5em' }}>📂</div>
                 <h2 style={{ margin: 0, color: '#999' }}>{t('noProject')}</h2>
               </div>
-              <button onClick={() => setShowUnassigned(false)} style={{
-                width: '36px', height: '36px', borderRadius: '50%', border: 'none',
-                background: '#f5f5f5', cursor: 'pointer', fontSize: '1.2em',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666',
-              }}>✕</button>
+              <button onClick={() => setShowUnassigned(false)}
+                style={{ width: '36px', height: '36px', borderRadius: '50%', border: 'none', background: '#f5f5f5', cursor: 'pointer', fontSize: '1.2em', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666' }}
+              >✕</button>
             </div>
 
             {unassignedTasks.length === 0 ? (
-              <div style={{ textAlign: 'center', color: '#999', padding: '24px', fontSize: '0.9em' }}>
-                {t('taskEmpty')}
-              </div>
+              <div style={{ textAlign: 'center', color: '#999', padding: '24px', fontSize: '0.9em' }}>{t('taskEmpty')}</div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 {unassignedTasks.map((task) => (
-                  <TaskCard
-                    key={task.id}
-                    task={task}
+                  <TaskCard key={task.id} task={task}
                     onEdit={(t) => setEditingUnassignedTask(t)}
                     onDelete={handleUnassignedTaskDelete}
                     onStatusChange={handleUnassignedTaskStatusChange}
