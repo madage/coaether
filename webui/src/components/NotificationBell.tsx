@@ -25,6 +25,7 @@ const notifTypeIcons: Record<string, string> = {
   task_assigned: '📋',
   task_status_changed: '🔄',
   task_comment: '💬',
+  task_mention: '@',
 };
 
 export default function NotificationBell({ onWorkspaceChange, onOpenTask }: Props) {

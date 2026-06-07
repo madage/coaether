@@ -8,12 +8,14 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/coaether/server/mailer"
 	"github.com/coaether/server/models"
 )
 
 type NotificationHandler struct {
-	DB  *sql.DB
-	Hub *DashboardHub
+	DB     *sql.DB
+	Hub    *DashboardHub
+	Mailer *mailer.Mailer
 }
 
 func NewNotificationHandler(db *sql.DB, hub *DashboardHub) *NotificationHandler {
@@ -51,7 +53,31 @@ func (h *NotificationHandler) Create(userID, notifType, title, message string, t
 		h.Hub.SignalUser(userID, "notifications")
 	}
 
+	// Email notification (async)
+	if h.Mailer != nil && h.Mailer.IsConfigured() {
+		go func() {
+			var email string
+			err := h.DB.QueryRow(`SELECT email FROM users WHERE id = $1`, userID).Scan(&email)
+			if err != nil || email == "" {
+				return
+			}
+			htmlBody := fmt.Sprintf(`<div style="font-family:sans-serif;padding:20px;max-width:600px">
+				<h2 style="color:#1a1a2e;">%s</h2>
+				<p style="color:#333;line-height:1.5;">%s</p>
+				%s
+			</div>`, title, message, taskLinkHTML(taskID))
+			h.Mailer.SendNotification(email, title, htmlBody)
+		}()
+	}
+
 	return n, nil
+}
+
+func taskLinkHTML(taskID *string) string {
+	if taskID == nil || *taskID == "" {
+		return ""
+	}
+	return fmt.Sprintf(`<p><a href="/tasks/%s" style="color:#1976d2;">View Task</a></p>`, *taskID)
 }
 
 // List returns notifications for the current user, newest first, with cursor pagination.

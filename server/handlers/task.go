@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -15,9 +16,10 @@ import (
 )
 
 type TaskHandler struct {
-	DB       *sql.DB
-	Hub      *DashboardHub
-	Notifier *NotificationHandler
+	DB         *sql.DB
+	Hub        *DashboardHub
+	Notifier   *NotificationHandler
+	RuleEngine *RuleEngine
 }
 
 func NewTaskHandler(db *sql.DB) *TaskHandler {
@@ -251,6 +253,22 @@ func (h *TaskHandler) Create(c *gin.Context) {
 			"Task Assigned",
 			fmt.Sprintf("You have been assigned to \"%s\"", req.Title),
 			&taskID)
+	}
+
+	// Evaluate automation rules
+	if h.RuleEngine != nil {
+		aid := ""
+		atp := ""
+		if req.AssigneeID != nil {
+			aid = *req.AssigneeID
+		}
+		if req.AssigneeType != nil {
+			atp = *req.AssigneeType
+		}
+		h.RuleEngine.Evaluate("on_task_create", taskID, ExtractTaskContext(taskID, req.Title, aid, atp))
+		if aid != "" {
+			h.RuleEngine.Evaluate("on_assignee_change", taskID, ExtractAssigneeContext(taskID, aid, atp))
+		}
 	}
 
 	c.JSON(http.StatusCreated, task)
@@ -526,6 +544,11 @@ func (h *TaskHandler) Update(c *gin.Context) {
 					&t.ID)
 			}
 		}
+	}
+
+	// Evaluate automation rules on status change
+	if h.RuleEngine != nil {
+		h.RuleEngine.Evaluate("on_status_change", taskID, ExtractStatusContext(taskID, string(t.Status)))
 	}
 
 	c.JSON(http.StatusOK, t)
@@ -847,6 +870,12 @@ func (h *TaskHandler) AddAssignee(c *gin.Context) {
 					&taskID)
 			}
 		}
+
+	// Evaluate automation rules on assignee change
+	if h.RuleEngine != nil {
+		h.RuleEngine.Evaluate("on_assignee_change", taskID, ExtractAssigneeContext(taskID, req.AssigneeID, req.AssigneeType))
+	}
+
 	c.JSON(http.StatusCreated, gin.H{"status": "added"})
 }
 
@@ -944,12 +973,12 @@ func (h *TaskHandler) ListComments(c *gin.Context) {
 	rows, err := h.DB.Query(`
 		SELECT c.id, c.task_id, c.user_id, COALESCE(u.username, '') AS username,
 			c.agent_profile_id, COALESCE(ap.name, '') AS agent_name, COALESCE(ap.avatar, '') AS agent_avatar,
-			c.content, c.created_at, c.updated_at
+			c.content, c.parent_id, c.created_at, c.updated_at
 		FROM task_comments c
 		LEFT JOIN users u ON u.id = c.user_id
 		LEFT JOIN agent_profiles ap ON ap.id = c.agent_profile_id
 		WHERE c.task_id = $1
-		ORDER BY c.created_at ASC`, taskID)
+		ORDER BY COALESCE(c.parent_id, c.id), c.created_at ASC`, taskID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query comments"})
 		return
@@ -962,7 +991,7 @@ func (h *TaskHandler) ListComments(c *gin.Context) {
 		if err := rows.Scan(
 			&cm.ID, &cm.TaskID, &cm.UserID, &cm.Username,
 			&cm.AgentProfileID, &cm.AgentName, &cm.AgentAvatar,
-			&cm.Content, &cm.CreatedAt, &cm.UpdatedAt,
+			&cm.Content, &cm.ParentID, &cm.CreatedAt, &cm.UpdatedAt,
 		); err != nil {
 			continue
 		}
@@ -1002,15 +1031,16 @@ func (h *TaskHandler) CreateComment(c *gin.Context) {
 		UserID:        userID.(string),
 		AgentProfileID: req.AgentProfileID,
 		Content:       req.Content,
+		ParentID:      req.ParentID,
 		CreatedAt:     now,
 		UpdatedAt:     now,
 	}
 
 	_, err := h.DB.Exec(
-		`INSERT INTO task_comments (id, task_id, user_id, agent_profile_id, content, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		`INSERT INTO task_comments (id, task_id, user_id, agent_profile_id, content, parent_id, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
 		comment.ID, comment.TaskID, comment.UserID, comment.AgentProfileID,
-		comment.Content, comment.CreatedAt, comment.UpdatedAt,
+		comment.Content, comment.ParentID, comment.CreatedAt, comment.UpdatedAt,
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create comment"})
@@ -1021,7 +1051,7 @@ func (h *TaskHandler) CreateComment(c *gin.Context) {
 	h.DB.QueryRow(`
 		SELECT c.id, c.task_id, c.user_id, COALESCE(u.username, '') AS username,
 			c.agent_profile_id, COALESCE(ap.name, '') AS agent_name, COALESCE(ap.avatar, '') AS agent_avatar,
-			c.content, c.created_at, c.updated_at
+			c.content, c.parent_id, c.created_at, c.updated_at
 		FROM task_comments c
 		LEFT JOIN users u ON u.id = c.user_id
 		LEFT JOIN agent_profiles ap ON ap.id = c.agent_profile_id
@@ -1029,7 +1059,7 @@ func (h *TaskHandler) CreateComment(c *gin.Context) {
 	).Scan(
 		&comment.ID, &comment.TaskID, &comment.UserID, &comment.Username,
 		&comment.AgentProfileID, &comment.AgentName, &comment.AgentAvatar,
-		&comment.Content, &comment.CreatedAt, &comment.UpdatedAt,
+		&comment.Content, &comment.ParentID, &comment.CreatedAt, &comment.UpdatedAt,
 	)
 
 	if h.Hub != nil {
@@ -1054,8 +1084,46 @@ func (h *TaskHandler) CreateComment(c *gin.Context) {
 						&taskID)
 				}
 			}
+
+			// Notify @mentioned users
+			mentioned := parseMentions(req.Content)
+			for _, username := range mentioned {
+				var uid string
+				if err := h.DB.QueryRow(`SELECT id FROM users WHERE username = $1`, username).Scan(&uid); err != nil {
+					continue
+				}
+				if uid == commenterStr {
+					continue
+				}
+				h.Notifier.Create(uid, string(models.NotifTaskMention),
+					fmt.Sprintf("You were mentioned in \"%s\"", taskTitle),
+					req.Content,
+					&taskID)
+			}
 		}
+
+	// Evaluate automation rules on comment
+	if h.RuleEngine != nil {
+		h.RuleEngine.Evaluate("on_comment", taskID, ExtractCommentContext(taskID, req.Content))
+	}
+
 	c.JSON(http.StatusCreated, comment)
+}
+
+// parseMentions extracts @username mentions from a comment string.
+func parseMentions(content string) []string {
+	re := regexp.MustCompile(`@(\w{2,64})`)
+	matches := re.FindAllStringSubmatch(content, -1)
+	seen := make(map[string]bool)
+	var result []string
+	for _, m := range matches {
+		name := m[1]
+		if !seen[name] {
+			seen[name] = true
+			result = append(result, name)
+		}
+	}
+	return result
 }
 
 func (h *TaskHandler) DeleteComment(c *gin.Context) {

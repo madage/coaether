@@ -14,6 +14,10 @@ interface TaskDetailProps {
 const statusOptions: TaskStatus[] = ['todo', 'in_progress', 'blocked', 'review', 'done'];
 const priorityOptions: Priority[] = ['urgent', 'high', 'medium', 'low'];
 
+function highlightMentions(html: string): string {
+  return html.replace(/@(\w{2,64})/g, '<span style="color:#1976d2;font-weight:500;">@$1</span>');
+}
+
 export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailProps) {
   const { t, lang } = useLang();
   const { workspaceId } = useWorkspace();
@@ -40,6 +44,8 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
   const [commentInput, setCommentInput] = useState('');
   const commentEditorRef = useRef<HTMLDivElement>(null);
   const [posting, setPosting] = useState(false);
+  const [replyToId, setReplyToId] = useState<string | null>(null);
+  const replyEditorRef = useRef<HTMLDivElement>(null);
 
   // Assignee picker state
   const [showAddAssignee, setShowAddAssignee] = useState(false);
@@ -88,12 +94,13 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
     const handleEsc = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         if (confirmDeleteComment) { setConfirmDeleteComment(null); return; }
+        if (replyToId) { setReplyToId(null); return; }
         if (!showAddAssignee && !showDeleteVerify) onClose();
       }
     };
     window.addEventListener('keydown', handleEsc);
     return () => window.removeEventListener('keydown', handleEsc);
-  }, [onClose, showAddAssignee, showDeleteVerify]);
+  }, [onClose, showAddAssignee, showDeleteVerify, replyToId]);
 
   const saveField = useCallback(async (update: Record<string, unknown>) => {
     setSaving(true);
@@ -206,22 +213,136 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
     saveField({ tags: newTags });
   };
 
-  const handlePostComment = async () => {
-    const text = (commentEditorRef.current?.innerHTML || '').trim();
+  const handlePostComment = async (parentId?: string) => {
+    const ref = parentId ? replyEditorRef.current : commentEditorRef.current;
+    const text = (ref?.innerHTML || '').trim();
     const plain = text.replace(/<[^>]*>/g, '').trim();
     if (!plain || plain === '<br>' || posting) return;
     setPosting(true);
     try {
       const content = text === '<br>' ? '' : text;
-      const newComment = await commentsApi.create(currentTask.id, { content });
+      const newComment = await commentsApi.create(currentTask.id, { content, parent_id: parentId });
       setComments(prev => [...prev, newComment]);
-      if (commentEditorRef.current) commentEditorRef.current.innerHTML = '';
-      setCommentInput('');
+      if (ref) ref.innerHTML = '';
+      if (!parentId) setCommentInput('');
+      setReplyToId(null);
     } catch {
       alert('Failed to post comment');
     } finally {
       setPosting(false);
     }
+  };
+
+  const startReply = (commentId: string) => {
+    setReplyToId(replyToId === commentId ? null : commentId);
+  };
+
+  const renderComment = (c: Comment, all: Comment[], depth: number) => {
+    const isAgent = !!c.agent_profile_id;
+    const authorName = c.agent_name || c.username || t('taskDetailUnknown');
+    const avatar = isAgent ? (c.agent_avatar || '🤖') : '👤';
+    const isOwn = c.user_id === currentUser;
+    const replies = all.filter(r => r.parent_id === c.id);
+    const showReplyEditor = replyToId === c.id;
+    return (
+      <div key={c.id} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        <div style={{
+          display: 'flex', gap: '10px', padding: '10px 12px',
+          background: isAgent ? '#f0f7ff' : '#fafafa',
+          borderRadius: '8px', border: '1px solid #eee',
+          marginLeft: depth > 0 ? '32px' : 0,
+        }}>
+          <div style={{
+            width: '32px', height: '32px', borderRadius: '50%',
+            background: isAgent ? '#e3f2fd' : '#e0e0e0',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: '1em', flexShrink: 0,
+          }}>
+            {avatar}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+              <span style={{ fontWeight: 600, fontSize: '0.85em', color: '#333' }}>
+                {authorName}
+              </span>
+              {isAgent && (
+                <span style={{
+                  fontSize: '0.65em', padding: '1px 5px', borderRadius: '4px',
+                  background: '#e3f2fd', color: '#1565c0', fontWeight: 500,
+                }}>{t('taskDetailAgentBadge')}</span>
+              )}
+              <span style={{ fontSize: '0.75em', color: '#aaa' }}>
+                {new Date(c.created_at).toLocaleString()}
+              </span>
+              <div style={{ flex: 1 }} />
+              <button onClick={() => startReply(c.id)}
+                style={{
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  color: '#1976d2', padding: '0 6px', fontSize: '0.8em',
+                  lineHeight: 1, opacity: 0.6, transition: 'opacity 0.15s',
+                }}
+                onMouseEnter={e => { e.currentTarget.style.opacity = '1'; }}
+                onMouseLeave={e => { e.currentTarget.style.opacity = '0.6'; }}
+              >{'Reply'}</button>
+              {isOwn && (
+                <button onClick={(e) => { e.stopPropagation(); handleDeleteComment(c.id); }}
+                  title={confirmDeleteComment === c.id ? t('taskDetailDeleteCommentHint') : t('taskDetailDeleteCommentTitle')}
+                  style={{
+                    background: confirmDeleteComment === c.id ? '#ffcdd2' : 'none',
+                    border: 'none', cursor: 'pointer',
+                    color: confirmDeleteComment === c.id ? '#c62828' : '#bbb',
+                    padding: '0 6px', fontSize: confirmDeleteComment === c.id ? '0.75em' : '0.85em',
+                    lineHeight: 1, borderRadius: '4px',
+                    opacity: confirmDeleteComment === c.id ? 1 : 0.4,
+                    transition: 'opacity 0.15s, background 0.15s',
+                  }}
+                  onMouseEnter={e => { if (confirmDeleteComment !== c.id) { e.currentTarget.style.opacity = '1'; e.currentTarget.style.color = '#c62828'; } }}
+                  onMouseLeave={e => { if (confirmDeleteComment !== c.id) { e.currentTarget.style.opacity = '0.4'; e.currentTarget.style.color = '#bbb'; } }}
+                >{confirmDeleteComment === c.id ? t('taskDetailDeleteCommentHint') : '✕'}</button>
+              )}
+            </div>
+            <div style={{
+              fontSize: '0.9em', lineHeight: 1.5, color: '#333',
+              wordBreak: 'break-word',
+            }} dangerouslySetInnerHTML={{ __html: highlightMentions(c.content) }} />
+            {showReplyEditor && (
+              <div style={{ marginTop: '10px', paddingLeft: '8px', borderLeft: '2px solid #1976d2' }}>
+                <div
+                  ref={replyEditorRef}
+                  contentEditable
+                  suppressContentEditableWarning
+                  onPaste={(e) => { e.preventDefault(); document.execCommand('insertText', false, e.clipboardData.getData('text/plain')); }}
+                  style={{
+                    width: '100%', boxSizing: 'border-box', padding: '8px 12px', borderRadius: '8px',
+                    border: '1px solid #ddd', fontSize: '0.85em', fontFamily: 'inherit',
+                    outline: 'none', lineHeight: 1.4, minHeight: '80px',
+                    background: '#fff',
+                  }}
+                />
+                <div style={{ display: 'flex', gap: '6px', marginTop: '6px' }}>
+                  <button onClick={() => handlePostComment(c.id)}
+                    disabled={posting}
+                    style={{
+                      padding: '4px 14px', borderRadius: '4px', border: 'none',
+                      background: posting ? '#ccc' : '#1976d2',
+                      color: '#fff', cursor: posting ? 'default' : 'pointer',
+                      fontSize: '0.8em', fontWeight: 600,
+                    }}
+                  >{posting ? '...' : t('commentPost')}</button>
+                  <button onClick={() => setReplyToId(null)}
+                    style={{
+                      padding: '4px 14px', borderRadius: '4px', border: '1px solid #ddd',
+                      background: '#fff', cursor: 'pointer', fontSize: '0.8em', color: '#666',
+                    }}
+                  >{t('cancel')}</button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+        {replies.map(r => renderComment(r, all, depth + 1))}
+      </div>
+    );
   };
 
   const handleDeleteComment = async (commentId: string) => {
@@ -458,72 +579,16 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
                 {t('taskDetailComments')} ({comments.length})
               </h4>
 
-              {/* Comments list */}
+              {/* Comments list — threaded */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '12px' }}>
                 {comments.length === 0 ? (
                   <div style={{ textAlign: 'center', color: '#ccc', padding: '16px', fontSize: '0.85em' }}>
                     {t('commentEmpty')}
                   </div>
                 ) : (
-                  comments.map(c => {
-                    const isAgent = !!c.agent_profile_id;
-                    const authorName = c.agent_name || c.username || t('taskDetailUnknown');
-                    const avatar = isAgent ? (c.agent_avatar || '🤖') : '👤';
-                    const isOwn = c.user_id === currentUser;
-                    return (
-                      <div key={c.id} style={{
-                        display: 'flex', gap: '10px', padding: '10px 12px',
-                        background: isAgent ? '#f0f7ff' : '#fafafa',
-                        borderRadius: '8px', border: '1px solid #eee',
-                      }}>
-                        <div style={{
-                          width: '32px', height: '32px', borderRadius: '50%',
-                          background: isAgent ? '#e3f2fd' : '#e0e0e0',
-                          display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          fontSize: '1em', flexShrink: 0,
-                        }}>
-                          {avatar}
-                        </div>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
-                            <span style={{ fontWeight: 600, fontSize: '0.85em', color: '#333' }}>
-                              {authorName}
-                            </span>
-                            {isAgent && (
-                              <span style={{
-                                fontSize: '0.65em', padding: '1px 5px', borderRadius: '4px',
-                                background: '#e3f2fd', color: '#1565c0', fontWeight: 500,
-                              }}>{t('taskDetailAgentBadge')}</span>
-                            )}
-                            <span style={{ fontSize: '0.75em', color: '#aaa' }}>
-                              {new Date(c.created_at).toLocaleString()}
-                            </span>
-                            <div style={{ flex: 1 }} />
-                            {isOwn && (
-                              <button onClick={(e) => { e.stopPropagation(); handleDeleteComment(c.id); }}
-                                title={confirmDeleteComment === c.id ? t('taskDetailDeleteCommentHint') : t('taskDetailDeleteCommentTitle')}
-                                style={{
-                                  background: confirmDeleteComment === c.id ? '#ffcdd2' : 'none',
-                                  border: 'none', cursor: 'pointer',
-                                  color: confirmDeleteComment === c.id ? '#c62828' : '#bbb',
-                                  padding: '0 6px', fontSize: confirmDeleteComment === c.id ? '0.75em' : '0.85em',
-                                  lineHeight: 1, borderRadius: '4px',
-                                  opacity: confirmDeleteComment === c.id ? 1 : 0.4,
-                                  transition: 'opacity 0.15s, background 0.15s',
-                                }}
-                                onMouseEnter={e => { if (confirmDeleteComment !== c.id) { e.currentTarget.style.opacity = '1'; e.currentTarget.style.color = '#c62828'; } }}
-                                onMouseLeave={e => { if (confirmDeleteComment !== c.id) { e.currentTarget.style.opacity = '0.4'; e.currentTarget.style.color = '#bbb'; } }}
-                              >{confirmDeleteComment === c.id ? t('taskDetailDeleteCommentHint') : '✕'}</button>
-                            )}
-                          </div>
-                          <div style={{
-                            fontSize: '0.9em', lineHeight: 1.5, color: '#333',
-                            wordBreak: 'break-word',
-                          }} dangerouslySetInnerHTML={{ __html: c.content }} />
-                        </div>
-                      </div>
-                    );
-                  })
+                  comments
+                    .filter(c => !c.parent_id)
+                    .map(c => renderComment(c, comments, 0))
                 )}
               </div>
 

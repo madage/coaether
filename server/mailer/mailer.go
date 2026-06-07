@@ -72,6 +72,27 @@ func (m *Mailer) GenerateInvitationLink(token string) string {
 	return fmt.Sprintf("%s/invite?token=%s", m.PublicURL, token)
 }
 
+// SendNotification sends a notification email to the given address.
+func (m *Mailer) SendNotification(toEmail, subject, body string) error {
+	if m.Host == "" {
+		log.Printf("[Mailer] SMTP not configured. Notification for %s: %s", toEmail, subject)
+		return nil
+	}
+
+	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n%s",
+		m.FromAddr, toEmail, subject, body)
+
+	addr := fmt.Sprintf("%s:%s", m.Host, m.Port)
+	auth := smtp.PlainAuth("", m.User, m.Pass, m.Host)
+
+	err := smtp.SendMail(addr, auth, m.FromAddr, []string{toEmail}, []byte(msg))
+	if err != nil {
+		return fmt.Errorf("failed to send notification email: %w", err)
+	}
+	log.Printf("[Mailer] Notification sent to %s: %s", toEmail, subject)
+	return nil
+}
+
 // ExtractNameFromEmail returns the part before @ as a display name.
 func ExtractNameFromEmail(email string) string {
 	parts := strings.Split(email, "@")

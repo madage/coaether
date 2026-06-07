@@ -279,6 +279,7 @@ export interface Comment {
   agent_name?: string;
   agent_avatar?: string;
   content: string;
+  parent_id?: string;
   created_at: string;
   updated_at: string;
 }
@@ -286,10 +287,11 @@ export interface Comment {
 export interface CreateCommentReq {
   content: string;
   agent_profile_id?: string;
+  parent_id?: string;
 }
 
 // === Notification Types ===
-export type NotificationType = 'task_assigned' | 'task_status_changed' | 'task_comment';
+export type NotificationType = 'task_assigned' | 'task_status_changed' | 'task_comment' | 'task_mention';
 
 export interface AppNotification {
   id: string;
@@ -300,6 +302,50 @@ export interface AppNotification {
   task_id?: string | null;
   is_read: boolean;
   created_at: string;
+}
+
+// === Task Rule Types ===
+export interface TaskRule {
+  id: string;
+  workspace_id: string;
+  name: string;
+  description: string;
+  trigger_type: string;
+  conditions: Record<string, unknown>;
+  actions: Record<string, unknown>[];
+  enabled: boolean;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TaskRuleLog {
+  id: string;
+  rule_id: string;
+  task_id: string;
+  trigger_event: string;
+  matched: boolean;
+  result: string;
+  log: string;
+  created_at: string;
+}
+
+export interface CreateRuleReq {
+  name: string;
+  description?: string;
+  trigger_type: string;
+  conditions?: Record<string, unknown>;
+  actions?: Record<string, unknown>[];
+  enabled?: boolean;
+}
+
+export interface UpdateRuleReq {
+  name?: string;
+  description?: string;
+  trigger_type?: string;
+  conditions?: Record<string, unknown>;
+  actions?: Record<string, unknown>[];
+  enabled?: boolean;
 }
 
 // === User Management ===

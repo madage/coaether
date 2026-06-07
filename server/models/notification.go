@@ -8,6 +8,7 @@ const (
 	NotifTaskAssigned     NotificationType = "task_assigned"
 	NotifTaskStatusChanged NotificationType = "task_status_changed"
 	NotifTaskComment      NotificationType = "task_comment"
+	NotifTaskMention      NotificationType = "task_mention"
 )
 
 type AppNotification struct {

@@ -532,5 +532,79 @@ export const en = {
 
   invitationDeclined: 'Invitation declined',
 
+
+
+  // Automation Rules
+
+  ruleName: 'Rule Name',
+
+  ruleNamePlaceholder: 'My automation rule',
+
+  ruleDescription: 'Description',
+
+  ruleDescriptionPlaceholder: 'Optional description',
+
+  ruleTrigger: 'Trigger',
+
+  ruleConditions: 'Conditions (JSON)',
+
+  ruleConditionsHint: 'Format: field, op (matches/equals/contains), value',
+
+  ruleActions: 'Actions (JSON)',
+
+  ruleActionsHint: 'Array of {type, value} objects',
+
+  ruleEnabled: 'Enabled',
+
+  ruleCreate: 'Create Rule',
+
+  ruleEdit: 'Edit Rule',
+
+  ruleEmpty: 'No automation rules yet.',
+
+  ruleConfirmDelete: 'Delete this rule?',
+
+  ruleTriggerComment: 'On Comment',
+
+  ruleTriggerStatus: 'On Status Change',
+
+  ruleTriggerAssignee: 'On Assignee Change',
+
+  ruleTriggerCreate: 'On Task Create',
+
+  ruleDisable: 'Disable',
+
+  ruleEnable: 'Enable',
+
+  ruleViewLogs: 'View Logs',
+
+  ruleErrorNameRequired: 'Rule name is required',
+
+  ruleErrorJsonInvalid: 'Invalid JSON in conditions or actions',
+
+  ruleLogTitle: 'Execution Logs',
+
+  ruleLogEmpty: 'No execution logs yet.',
+
+  ruleLogTime: 'Time',
+
+  ruleLogTask: 'Task',
+
+  ruleLogEvent: 'Event',
+
+  ruleLogMatched: 'Matched',
+
+  ruleLogResult: 'Result',
+
+  navAutomation: 'Automation',
+
+  edit: 'Edit',
+
+  delete: 'Delete',
+
+  save: 'Save',
+
+  saving: 'Saving...',
+
 } as const;
 

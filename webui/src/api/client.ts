@@ -1,4 +1,4 @@
-import type { Node, Session, CreateSessionReq, Agent, AgentProfile, RuntimeEntity, Task, CreateTaskReq, UpdateTaskReq, TaskStatus, TaskAssignee, AddAssigneeReq, Priority, Project, CreateProjectReq, UpdateProjectReq, ProjectStatus, Workspace, CreateWorkspaceReq, UpdateWorkspaceReq, WorkspaceMember, AddMemberReq, UpdateMemberRoleReq, PendingInvitation, InviteMemberReq, UserSummary, Comment, CreateCommentReq, PluginInfo, AppNotification } from '../types';
+import type { Node, Session, CreateSessionReq, Agent, AgentProfile, RuntimeEntity, Task, CreateTaskReq, UpdateTaskReq, TaskStatus, TaskAssignee, AddAssigneeReq, Priority, Project, CreateProjectReq, UpdateProjectReq, ProjectStatus, Workspace, CreateWorkspaceReq, UpdateWorkspaceReq, WorkspaceMember, AddMemberReq, UpdateMemberRoleReq, PendingInvitation, InviteMemberReq, UserSummary, Comment, CreateCommentReq, PluginInfo, AppNotification, TaskRule, TaskRuleLog, CreateRuleReq, UpdateRuleReq } from '../types';
 
 
 
@@ -550,6 +550,20 @@ export const notifications = {
     request<{ status: string; count: number }>('/notifications/read-all', { method: 'PATCH' }),
   delete: (id: string) =>
     request<{ status: string }>(`/notifications/${id}`, { method: 'DELETE' }),
+};
+
+// Rules
+export const rules = {
+  list: () => request<{ rules: TaskRule[] }>('/rules'),
+  get: (id: string) => request<TaskRule>(`/rules/${id}`),
+  create: (data: CreateRuleReq) =>
+    request<{ id: string; status: string }>('/rules', { method: 'POST', body: JSON.stringify(data) }),
+  update: (id: string, data: UpdateRuleReq) =>
+    request<{ status: string }>(`/rules/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  delete: (id: string) =>
+    request<{ status: string }>(`/rules/${id}`, { method: 'DELETE' }),
+  listLogs: (id: string) =>
+    request<{ logs: TaskRuleLog[] }>(`/rules/${id}/logs`),
 };
 
 // Plugins

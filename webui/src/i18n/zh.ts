@@ -532,5 +532,79 @@ export const zh = {
 
   invitationDeclined: '已拒绝邀请',
 
+
+
+  // Automation Rules
+
+  ruleName: '规则名称',
+
+  ruleNamePlaceholder: '我的自动化规则',
+
+  ruleDescription: '描述',
+
+  ruleDescriptionPlaceholder: '可选描述',
+
+  ruleTrigger: '触发器',
+
+  ruleConditions: '条件 (JSON)',
+
+  ruleConditionsHint: '格式：field, op (matches/equals/contains), value',
+
+  ruleActions: '动作 (JSON)',
+
+  ruleActionsHint: '数组格式：{type, value} 对象',
+
+  ruleEnabled: '已启用',
+
+  ruleCreate: '创建规则',
+
+  ruleEdit: '编辑规则',
+
+  ruleEmpty: '还没有自动化规则。',
+
+  ruleConfirmDelete: '确定删除该规则？',
+
+  ruleTriggerComment: '评论时',
+
+  ruleTriggerStatus: '状态变更时',
+
+  ruleTriggerAssignee: '负责人变更时',
+
+  ruleTriggerCreate: '创建任务时',
+
+  ruleDisable: '禁用',
+
+  ruleEnable: '启用',
+
+  ruleViewLogs: '查看日志',
+
+  ruleErrorNameRequired: '规则名称不能为空',
+
+  ruleErrorJsonInvalid: '条件或动作的 JSON 格式无效',
+
+  ruleLogTitle: '执行日志',
+
+  ruleLogEmpty: '暂无执行日志。',
+
+  ruleLogTime: '时间',
+
+  ruleLogTask: '任务',
+
+  ruleLogEvent: '事件',
+
+  ruleLogMatched: '匹配',
+
+  ruleLogResult: '结果',
+
+  navAutomation: '自动化',
+
+  edit: '编辑',
+
+  delete: '删除',
+
+  save: '保存',
+
+  saving: '保存中...',
+
 } as const;
 

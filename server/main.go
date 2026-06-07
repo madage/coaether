@@ -87,7 +87,11 @@ func main() {
 
 	taskH.Hub = dashHub
 	notifH := handlers.NewNotificationHandler(database.DB, dashHub)
+	notifH.Mailer = mail
 	taskH.Notifier = notifH
+	ruleEngine := handlers.NewRuleEngine(database.DB, dashHub, notifH)
+	taskH.RuleEngine = ruleEngine
+	ruleH := handlers.NewRuleHandler(database.DB, dashHub)
 
 	projectH := handlers.NewProjectHandler(database.DB)
 
@@ -253,6 +257,14 @@ func main() {
 			api.GET("/tasks/:id/comments", taskH.ListComments)
 			api.POST("/tasks/:id/comments", taskH.CreateComment)
 			api.DELETE("/tasks/:id/comments/:commentId", taskH.DeleteComment)
+
+		// Task rules
+		api.GET("/rules", ruleH.List)
+		api.POST("/rules", ruleH.Create)
+		api.GET("/rules/:id", ruleH.Get)
+		api.PUT("/rules/:id", ruleH.Update)
+		api.DELETE("/rules/:id", ruleH.Delete)
+		api.GET("/rules/:id/logs", ruleH.ListLogs)
 
 		// Projects
 

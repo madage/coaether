@@ -96,6 +96,7 @@ type TaskComment struct {
 	AgentName     string     `json:"agent_name,omitempty"`
 	AgentAvatar   string     `json:"agent_avatar,omitempty"`
 	Content       string     `json:"content"`
+	ParentID      *string    `json:"parent_id,omitempty"`
 	CreatedAt     time.Time  `json:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at"`
 }
@@ -103,4 +104,5 @@ type TaskComment struct {
 type CreateCommentReq struct {
 	Content       string  `json:"content" binding:"required"`
 	AgentProfileID *string `json:"agent_profile_id,omitempty"`
+	ParentID      *string `json:"parent_id,omitempty"`
 }

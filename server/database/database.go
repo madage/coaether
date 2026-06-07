@@ -387,6 +387,36 @@ func Migrate() error {
 
 		CREATE INDEX IF NOT EXISTS idx_task_comments_task_id ON task_comments(task_id);
 		CREATE INDEX IF NOT EXISTS idx_task_comments_created_at ON task_comments(task_id, created_at);
+
+		CREATE TABLE IF NOT EXISTS task_rules (
+			id           VARCHAR(36) PRIMARY KEY,
+			workspace_id VARCHAR(36) NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+			name         VARCHAR(128) NOT NULL,
+			description  TEXT NOT NULL DEFAULT '',
+			trigger_type VARCHAR(32) NOT NULL,
+			conditions   JSONB NOT NULL DEFAULT '{}',
+			actions      JSONB NOT NULL DEFAULT '[]',
+			enabled      BOOLEAN NOT NULL DEFAULT true,
+			created_by   VARCHAR(36) NOT NULL REFERENCES users(id),
+			created_at   TIMESTAMP NOT NULL DEFAULT NOW(),
+			updated_at   TIMESTAMP NOT NULL DEFAULT NOW()
+		);
+		CREATE INDEX IF NOT EXISTS idx_task_rules_workspace ON task_rules(workspace_id);
+		CREATE INDEX IF NOT EXISTS idx_task_rules_trigger ON task_rules(workspace_id, trigger_type);
+
+		CREATE TABLE IF NOT EXISTS task_rule_logs (
+			id            VARCHAR(36) PRIMARY KEY,
+			rule_id       VARCHAR(36) NOT NULL REFERENCES task_rules(id) ON DELETE CASCADE,
+			task_id       VARCHAR(36) NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+			trigger_event VARCHAR(32) NOT NULL,
+			matched       BOOLEAN NOT NULL DEFAULT false,
+			result        TEXT NOT NULL DEFAULT '',
+			log           TEXT NOT NULL DEFAULT '',
+			created_at    TIMESTAMP NOT NULL DEFAULT NOW()
+		);
+		CREATE INDEX IF NOT EXISTS idx_task_rule_logs_rule ON task_rule_logs(rule_id);
+		CREATE INDEX IF NOT EXISTS idx_task_rule_logs_task ON task_rule_logs(task_id);
+
 		CREATE TABLE IF NOT EXISTS notifications (
 				id          VARCHAR(36) PRIMARY KEY,
 				user_id     VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -471,6 +501,10 @@ func Migrate() error {
 		"ALTER TABLE projects ADD COLUMN IF NOT EXISTS started_at TIMESTAMP",
 		"ALTER TABLE projects ADD COLUMN IF NOT EXISTS due_at TIMESTAMP",
 		"CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status)",
+
+		// Comment thread support
+		"ALTER TABLE task_comments ADD COLUMN IF NOT EXISTS parent_id VARCHAR(36) REFERENCES task_comments(id)",
+		"CREATE INDEX IF NOT EXISTS idx_task_comments_parent_id ON task_comments(parent_id)",
 
 	}
 
