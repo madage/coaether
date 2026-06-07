@@ -369,6 +369,7 @@ export const en = {
 
   nodeRemoveConfirm: 'Are you sure you want to remove this node?',
 
+  nodeNoPermission: 'You do not have permission to control this node',
   nodeStart: 'Start',
   nodeStop: 'Stop',
   nodeStarting: 'Starting...',

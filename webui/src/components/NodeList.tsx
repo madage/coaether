@@ -16,6 +16,7 @@ export function NodeList({ nodes, onSelect }: NodeListProps) {
   const [removing, setRemoving] = useState<string | null>(null);
   const [managing, setManaging] = useState<string | null>(null);
   const [showOffline, setShowOffline] = useState(true);
+  const [errorDialog, setErrorDialog] = useState<string | null>(null);
 
   const filteredNodes = showOffline ? nodes : nodes.filter(n => n.status === 'online' || n.status === 'busy');
 
@@ -25,7 +26,8 @@ export function NodeList({ nodes, onSelect }: NodeListProps) {
     setRemoving(nodeID);
     try {
       await nodesApi.remove(nodeID);
-    } catch {
+    } catch (err) {
+      setErrorDialog(err instanceof Error ? err.message : t('nodeNoPermission'));
       setRemoving(null);
     }
   }, [t]);
@@ -74,10 +76,11 @@ export function NodeList({ nodes, onSelect }: NodeListProps) {
     try {
       await nodesApi.start(nodeID);
       // Leave button showing "启动中..." until WebSocket updates node status
-    } catch {
+    } catch (err) {
+      setErrorDialog(err instanceof Error ? err.message : t('nodeNoPermission'));
       setManaging(null);
     }
-  }, []);
+  }, [t]);
 
   const handleStop = useCallback(async (nodeID: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -86,10 +89,11 @@ export function NodeList({ nodes, onSelect }: NodeListProps) {
     try {
       await nodesApi.stop(nodeID);
       // Leave button showing "停止中..." until WebSocket updates node status
-    } catch {
+    } catch (err) {
+      setErrorDialog(err instanceof Error ? err.message : t('nodeNoPermission'));
       setManaging(null);
     }
-  }, []);
+  }, [t]);
 
   const handleToggleAgent = useCallback(async (agent: Agent, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -110,6 +114,50 @@ export function NodeList({ nodes, onSelect }: NodeListProps) {
 
   return (
     <div>
+      {/* Error dialog modal */}
+      {errorDialog && (
+        <div
+          style={{
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+            background: 'rgba(0,0,0,0.5)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            zIndex: 1000,
+          }}
+          onClick={() => setErrorDialog(null)}
+        >
+          <div
+            style={{
+              background: '#fff',
+              borderRadius: '16px',
+              padding: '40px',
+              width: '420px',
+              maxWidth: '90vw',
+              boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+              textAlign: 'center',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ fontSize: '3em', marginBottom: '16px', color: '#e53935' }}>✕</div>
+            <h3 style={{ margin: '0 0 12px', color: '#1a1a2e', fontSize: '1.2em' }}>{t('nodeNoPermission')}</h3>
+            <p style={{ margin: '0 0 24px', color: '#666', fontSize: '0.95em', lineHeight: 1.5 }}>{errorDialog}</p>
+            <button
+              onClick={() => setErrorDialog(null)}
+              style={{
+                padding: '10px 32px',
+                background: '#1976d2',
+                color: '#fff',
+                border: 'none',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                fontSize: '0.95em',
+                fontWeight: 600,
+              }}
+            >
+              OK
+            </button>
+          </div>
+        </div>
+      )}
       {/* Filter toggle */}
       <div style={{ marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
         <label style={{ fontSize: '0.85em', color: '#666', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
