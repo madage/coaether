@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -221,9 +222,33 @@ func (r *Runtime) handleAgentMessage(env *protocol.Envelope) {
 func (r *Runtime) send(env *protocol.Envelope) {
 	r.connMu.Lock()
 	defer r.connMu.Unlock()
+	if r.conn == nil {
+		return
+	}
 	if err := r.conn.WriteJSON(env); err != nil {
 		log.Printf("[Runtime] Write error: %v", err)
 	}
+}
+
+// Shutdown gracefully disconnects from the bus and closes the WebSocket connection.
+func (r *Runtime) Shutdown() {
+	log.Println("[Runtime] Shutting down...")
+
+	r.connMu.Lock()
+	if r.conn != nil {
+		r.conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
+		bye := protocol.NewEnvelope(r.endpoint, "system://bus", protocol.MsgBye, nil)
+		if err := r.conn.WriteJSON(bye); err != nil {
+			log.Printf("[Runtime] Bye send error: %v", err)
+		}
+		r.conn.WriteMessage(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseNormalClosure, "shutdown"))
+		r.conn.Close()
+		r.conn = nil
+	}
+	r.connMu.Unlock()
+
+	log.Println("[Runtime] Shutdown complete")
 }
 
 func (r *Runtime) cleanIdleSessions() {
@@ -309,7 +334,7 @@ func loadConfig() {
 	}
 }
 
-func main() {
+func runStart() {
 	loadConfig()
 
 	serverURL := os.Getenv("SERVER_URL")
@@ -364,14 +389,26 @@ func (r *Runtime) registerBackends() {
 }
 
 func (r *Runtime) runLoop() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	go func() {
 		for {
-			err := r.Run()
-			if err != nil {
-				log.Printf("[Runtime] Connection error: %v (retry in 3s)", err)
-				time.Sleep(3 * time.Second)
-			} else {
+			select {
+			case <-ctx.Done():
 				return
+			default:
+				err := r.Run()
+				if err != nil {
+					log.Printf("[Runtime] Connection error: %v (retry in 3s)", err)
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(3 * time.Second):
+					}
+				} else {
+					return
+				}
 			}
 		}
 	}()
@@ -379,5 +416,8 @@ func (r *Runtime) runLoop() {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig
-	log.Println("[Runtime] Shutdown")
+	signal.Stop(sig)
+	log.Println("[Runtime] Shutting down...")
+	cancel()
+	r.Shutdown()
 }

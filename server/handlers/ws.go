@@ -51,34 +51,39 @@ func NewDashboardHub(db *sql.DB, jwtSecret string, bus *protocol.MessageBus) *Da
 
 // HandleDashboardWS handles WebSocket connections from the UI dashboard
 // for real-time node/session list updates.
+// Auth: prefers user_id query param (matching /ws/bus pattern), falls back to JWT token.
 func (h *DashboardHub) HandleDashboardWS(c *gin.Context) {
-	token := c.Query("token")
-	if token == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing token"})
-		return
-	}
+	userID := c.Query("user_id")
 
-	// Verify JWT
-	parsedToken, err := jwt.Parse(token, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, jwt.ErrSignatureInvalid
-		}
-		return []byte(h.JWTSecret), nil
-	})
-	if err != nil || !parsedToken.Valid {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
-		return
-	}
-
-	claims, ok := parsedToken.Claims.(jwt.MapClaims)
-	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token claims"})
-		return
-	}
-	userID, _ := claims["user_id"].(string)
 	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user"})
-		return
+		// Fallback: JWT token auth
+		token := c.Query("token")
+		if token == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "missing user_id or token"})
+			return
+		}
+
+		parsedToken, err := jwt.Parse(token, func(token *jwt.Token) (interface{}, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, jwt.ErrSignatureInvalid
+			}
+			return []byte(h.JWTSecret), nil
+		})
+		if err != nil || !parsedToken.Valid {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+			return
+		}
+
+		claims, ok := parsedToken.Claims.(jwt.MapClaims)
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token claims"})
+			return
+		}
+		userID, _ = claims["user_id"].(string)
+		if userID == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user"})
+			return
+		}
 	}
 
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)

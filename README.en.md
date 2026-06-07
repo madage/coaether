@@ -388,6 +388,31 @@ The install script will automatically:
 - Create auto-start service (LaunchAgent on macOS / Startup folder on Windows)
 - Start agent-runtime and connect to Message Bus
 
+### 7. Node Runtime CLI Management
+
+agent-runtime now supports CLI commands for management:
+
+```bash
+# Start (first-time with token, subsequent uses saved secret)
+agent-runtime start -s <server>:8088 -t <token>
+
+# Check running status
+agent-runtime status
+
+# Graceful shutdown
+agent-runtime stop
+
+# Test server connectivity
+agent-runtime connect -s <server>:8088 -t <token>
+
+# Configuration management
+agent-runtime config list          # List all config
+agent-runtime config set KEY=VALUE # Modify config
+
+# Show version
+agent-runtime version
+```
+
 > Agent Runtime backend registration priority: Claude CLI → Claude API (ANTHROPIC_API_KEY) → Echo (fallback)
 
 ---
@@ -410,16 +435,17 @@ The install script will automatically:
 
 > When SMTP is not configured, invitation links are logged to the server console and can still be used.
 
-### Agent Runtime (agent-runtime/.env)
+### Agent Runtime (~/.coaether/env)
 
 | Variable | Description | Default | Required |
 |----------|-------------|---------|----------|
 | `SERVER_URL` | Server address | `localhost:8088` | No |
-| `NODE_TOKEN` | Node registration token | - | **Yes** |
+| `NODE_TOKEN` | Node registration token | - | **Yes** for first-time / No for reconnect |
+| `NODE_SECRET` | Persistent secret (auto-saved after first registration) | - | No |
+| `NODE_ID` | Node ID (used with secret for reconnect) | - | No |
 | `RUNTIME_NAME` | Node display name | hostname | No |
-| `AGENT_BACKEND` | AI backend mode (`cli` / `api`) | `cli` | No |
-| `API_KEY` | API key (for api mode) | - | No |
-| `API_MODEL` | Model name (for api mode) | `claude-sonnet-4-6` | No |
+
+> All config values can be overridden by CLI flags, e.g. `agent-runtime start -s <addr> -t <token>`.
 
 ---
 
@@ -496,7 +522,14 @@ coaether/
 │   └── vite.config.ts
 │
 ├── agent-runtime/            # AI Agent runtime
-│   ├── runtime.go            # Entry: connect Message Bus, register backends
+│   ├── main.go               # CLI entry point (Cobra)
+│   ├── runtime.go            # Core: connect Message Bus, register backends
+│   ├── root.go               # Root command definition
+│   ├── start.go              # start command
+│   ├── stop.go               # stop command: graceful shutdown
+│   ├── status.go             # status command
+│   ├── connect.go            # connect command: connection diagnostic
+│   ├── config.go             # config command: config management
 │   ├── backends/             # AI backend adapters
 │   │   ├── claude_cli.go     # Claude CLI mode (stream-json, preferred)
 │   │   ├── claude.go         # Claude API mode (ANTHROPIC_API_KEY)

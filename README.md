@@ -388,6 +388,31 @@ powershell -c "iex ((Invoke-WebRequest -Uri 'http://<server>:8088/api/nodes/inst
 - 创建开机自启服务（LaunchAgent / Startup 文件夹）
 - 启动 agent-runtime 并连接 Message Bus
 
+### 7. 节点 Runtime CLI 管理
+
+agent-runtime 支持命令行管理，安装后可用以下命令操作：
+
+```bash
+# 启动（首次注册用令牌，后续自动使用保存的密钥）
+agent-runtime start -s <server>:8088 -t <token>
+
+# 查看运行状态
+agent-runtime status
+
+# 优雅关闭
+agent-runtime stop
+
+# 测试服务器连接
+agent-runtime connect -s <server>:8088 -t <token>
+
+# 管理配置
+agent-runtime config list          # 查看所有配置
+agent-runtime config set KEY=VALUE # 修改配置
+
+# 查看版本
+agent-runtime version
+```
+
 > Agent Runtime 后端注册顺序：Claude CLI → Claude API (ANTHROPIC_API_KEY) → Echo (测试用)
 
 ---
@@ -410,16 +435,17 @@ powershell -c "iex ((Invoke-WebRequest -Uri 'http://<server>:8088/api/nodes/inst
 
 > SMTP 未配置时，邀请链接会输出到服务端日志，仍可正常使用。
 
-### Agent Runtime (agent-runtime/.env)
+### Agent Runtime (~/.coaether/env)
 
 | 变量 | 说明 | 默认值 | 必填 |
 |------|------|--------|------|
 | `SERVER_URL` | 服务端地址 | `localhost:8088` | 否 |
-| `NODE_TOKEN` | 节点注册 token | - | **是** |
+| `NODE_TOKEN` | 节点注册 token | - | 首次注册 **是** / 后续否 |
+| `NODE_SECRET` | 持久连接密钥（首次注册后自动保存） | - | 否 |
+| `NODE_ID` | 节点 ID（密钥重连时使用） | - | 否 |
 | `RUNTIME_NAME` | 节点显示名称 | 主机名 | 否 |
-| `AGENT_BACKEND` | AI 后端模式 (`cli` / `api`) | `cli` | 否 |
-| `API_KEY` | API 模式时的密钥 | - | 否 |
-| `API_MODEL` | API 模式时的模型名 | `claude-sonnet-4-6` | 否 |
+
+> 所有配置项均可通过 CLI 参数覆盖，例如 `agent-runtime start -s <addr> -t <token>`。
 
 ---
 
@@ -481,12 +507,19 @@ coaether/
 │   └── vite.config.ts
 │
 ├── agent-runtime/            # AI Agent 运行时
-│   ├── runtime.go            # 入口：连接 Message Bus，注册后端
-│   ├── backends/             # AI 后端适配器
-│   │   ├── claude_cli.go     # Claude CLI 模式（stream-json，首选）
-│   │   ├── claude.go         # Claude API 模式（ANTHROPIC_API_KEY）
-│   │   └── echo.go           # 测试用 Echo 后端（fallback）
-│   └── bin/                  # 本地编译输出
+│   ├── main.go               # CLI 入口点 (Cobra)
+│   ├── runtime.go             # 核心：连接 Message Bus，注册后端
+│   ├── root.go                # 根命令定义
+│   ├── start.go               # start 命令：启动并连接
+│   ├── stop.go                # stop 命令：优雅关闭
+│   ├── status.go              # status 命令：查看状态
+│   ├── connect.go             # connect 命令：连接诊断
+│   ├── config.go              # config 命令：配置管理
+│   ├── backends/              # AI 后端适配器
+│   │   ├── claude_cli.go      # Claude CLI 模式（stream-json，首选）
+│   │   ├── claude.go          # Claude API 模式（ANTHROPIC_API_KEY）
+│   │   └── echo.go            # 测试用 Echo 后端（fallback）
+│   └── bin/                   # 本地编译输出
 │       ├── darwin-arm64/
 │       └── darwin-amd64/
 │
