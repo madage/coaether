@@ -26,6 +26,9 @@ var startCmd = &cobra.Command{
 		if name, _ := cmd.Flags().GetString("name"); name != "" {
 			os.Setenv("RUNTIME_NAME", name)
 		}
+		if nodeID, _ := cmd.Flags().GetString("node-id"); nodeID != "" {
+			os.Setenv("NODE_ID", nodeID)
+		}
 		runStart()
 		return nil
 	},
@@ -36,4 +39,5 @@ func init() {
 	startCmd.Flags().StringP("token", "t", "", "一次性注册令牌 (从 Web UI 生成)")
 	startCmd.Flags().String("secret", "", "持久连接密钥 (首次注册后自动保存)")
 	startCmd.Flags().StringP("name", "n", "", "节点名称 (默认: 主机名)")
+	startCmd.Flags().String("node-id", "", "节点 UUID (持久连接时必需，从 Web UI 获取)")
 }

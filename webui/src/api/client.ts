@@ -184,7 +184,7 @@ export const nodes = {
     request<{ status: string }>(`/nodes/${nodeID}`, { method: 'DELETE' }),
 
   start: (id: string) =>
-    request<{ status: string; pid?: number }>(`/nodes/${id}/start`, { method: 'POST' }),
+    request<{ status: string; command?: string; command_ps1?: string; server?: string; node_id?: string }>(`/nodes/${id}/start`, { method: 'POST' }),
 
   stop: (id: string) =>
     request<{ status: string }>(`/nodes/${id}/stop`, { method: 'POST' }),

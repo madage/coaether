@@ -17,6 +17,7 @@ export function NodeList({ nodes, onSelect }: NodeListProps) {
   const [managing, setManaging] = useState<string | null>(null);
   const [showOffline, setShowOffline] = useState(true);
   const [errorDialog, setErrorDialog] = useState<string | null>(null);
+  const [commandDialog, setCommandDialog] = useState<{command: string; command_ps1: string} | null>(null);
 
   const filteredNodes = showOffline ? nodes : nodes.filter(n => n.status === 'online' || n.status === 'busy');
 
@@ -71,14 +72,13 @@ export function NodeList({ nodes, onSelect }: NodeListProps) {
 
   const handleStart = useCallback(async (nodeID: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    const key = `start:${nodeID}`;
-    setManaging(key);
     try {
-      await nodesApi.start(nodeID);
-      // Leave button showing "启动中..." until WebSocket updates node status
+      const res = await nodesApi.start(nodeID);
+      if (res.command) {
+        setCommandDialog({ command: res.command, command_ps1: res.command_ps1 || res.command });
+      }
     } catch (err) {
       setErrorDialog(err instanceof Error ? err.message : t('nodeNoPermission'));
-      setManaging(null);
     }
   }, [t]);
 
@@ -151,6 +151,96 @@ export function NodeList({ nodes, onSelect }: NodeListProps) {
                 cursor: 'pointer',
                 fontSize: '0.95em',
                 fontWeight: 600,
+              }}
+            >
+              OK
+            </button>
+          </div>
+        </div>
+      )}
+      {/* Start command dialog */}
+      {commandDialog && (
+        <div
+          style={{
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+            background: 'rgba(0,0,0,0.5)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            zIndex: 1000,
+          }}
+          onClick={() => setCommandDialog(null)}
+        >
+          <div
+            style={{
+              background: '#fff',
+              borderRadius: '16px',
+              padding: '32px',
+              width: '640px',
+              maxWidth: '90vw',
+              maxHeight: '80vh',
+              overflow: 'auto',
+              boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ margin: '0 0 16px', color: '#1a1a2e', fontSize: '1.2em' }}>{t('startCommandTitle')}</h3>
+            <p style={{ margin: '0 0 16px', color: '#666', fontSize: '0.9em' }}>{t('startCommandHint')}</p>
+
+            {/* macOS / Linux */}
+            <div style={{ marginBottom: '16px' }}>
+              <div style={{ fontSize: '0.85em', fontWeight: 600, color: '#555', marginBottom: '6px' }}>{t('startCommandMac')}</div>
+              <div style={{
+                background: '#1a1a2e', color: '#e0e0e0', padding: '12px 16px',
+                borderRadius: '8px', fontSize: '0.85em', fontFamily: 'monospace',
+                wordBreak: 'break-all', lineHeight: 1.5, position: 'relative',
+              }}>
+                <div>{commandDialog.command}</div>
+                <button
+                  onClick={() => { navigator.clipboard.writeText(commandDialog.command); }}
+                  style={{
+                    position: 'absolute', top: '8px', right: '8px',
+                    padding: '4px 10px', background: '#333', color: '#fff',
+                    border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8em',
+                  }}
+                >
+                  {t('copyCommand')}
+                </button>
+              </div>
+            </div>
+
+            {/* Windows (PowerShell) */}
+            <div style={{ marginBottom: '20px' }}>
+              <div style={{ fontSize: '0.85em', fontWeight: 600, color: '#555', marginBottom: '6px' }}>{t('startCommandWindows')}</div>
+              <div style={{
+                background: '#1a1a2e', color: '#e0e0e0', padding: '12px 16px',
+                borderRadius: '8px', fontSize: '0.85em', fontFamily: 'monospace',
+                wordBreak: 'break-all', lineHeight: 1.5, position: 'relative',
+              }}>
+                <div>{commandDialog.command_ps1}</div>
+                <button
+                  onClick={() => { navigator.clipboard.writeText(commandDialog.command_ps1); }}
+                  style={{
+                    position: 'absolute', top: '8px', right: '8px',
+                    padding: '4px 10px', background: '#333', color: '#fff',
+                    border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8em',
+                  }}
+                >
+                  {t('copyCommand')}
+                </button>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setCommandDialog(null)}
+              style={{
+                padding: '10px 32px',
+                background: '#1976d2',
+                color: '#fff',
+                border: 'none',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                fontSize: '0.95em',
+                fontWeight: 600,
+                float: 'right',
               }}
             >
               OK
@@ -282,47 +372,44 @@ export function NodeList({ nodes, onSelect }: NodeListProps) {
                   </div>
                 </div>
 
-                {/* Start/Stop buttons at bottom-right */}
-                {node.can_manage ? (
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '12px' }}>
-                    {node.can_manage && node.status === 'offline' && (
-                      <button
-                        onClick={(e) => handleStart(node.id, e)}
-                        disabled={managing === `start:${node.id}`}
-                        style={{
-                          padding: '10px 28px',
-                          background: managing === `start:${node.id}` ? '#a5d6a7' : '#4caf50',
-                          color: '#fff',
-                          border: 'none',
-                          borderRadius: '8px',
-                          cursor: managing === `start:${node.id}` ? 'not-allowed' : 'pointer',
-                          fontSize: '0.95em',
-                          fontWeight: 600,
-                        }}
-                      >
-                        {managing === `start:${node.id}` ? t('nodeStarting') : t('nodeStart')}
-                      </button>
-                    )}
-                    {node.can_manage && node.status !== 'offline' && (
-                      <button
-                        onClick={(e) => handleStop(node.id, e)}
-                        disabled={managing === `stop:${node.id}`}
-                        style={{
-                          padding: '10px 28px',
-                          background: managing === `stop:${node.id}` ? '#ef9a9a' : '#e53935',
-                          color: '#fff',
-                          border: 'none',
-                          borderRadius: '8px',
-                          cursor: managing === `stop:${node.id}` ? 'not-allowed' : 'pointer',
-                          fontSize: '0.95em',
-                          fontWeight: 600,
-                        }}
-                      >
-                        {managing === `stop:${node.id}` ? t('nodeStopping') : t('nodeStop')}
-                      </button>
-                    )}
-                  </div>
-                ) : null}
+                {/* Start/Stop buttons — always visible, permission checked on click */}
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '12px' }}>
+                  {node.status === 'offline' ? (
+                    <button
+                      onClick={(e) => handleStart(node.id, e)}
+                      disabled={managing === `start:${node.id}`}
+                      style={{
+                        padding: '10px 28px',
+                        background: managing === `start:${node.id}` ? '#a5d6a7' : '#4caf50',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: '8px',
+                        cursor: managing === `start:${node.id}` ? 'not-allowed' : 'pointer',
+                        fontSize: '0.95em',
+                        fontWeight: 600,
+                      }}
+                    >
+                      {managing === `start:${node.id}` ? t('nodeStarting') : t('nodeStart')}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={(e) => handleStop(node.id, e)}
+                      disabled={managing === `stop:${node.id}`}
+                      style={{
+                        padding: '10px 28px',
+                        background: managing === `stop:${node.id}` ? '#ef9a9a' : '#e53935',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: '8px',
+                        cursor: managing === `stop:${node.id}` ? 'not-allowed' : 'pointer',
+                        fontSize: '0.95em',
+                        fontWeight: 600,
+                      }}
+                    >
+                      {managing === `stop:${node.id}` ? t('nodeStopping') : t('nodeStop')}
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
 

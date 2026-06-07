@@ -159,6 +159,41 @@ func (h *BusHandler) HandleWS(c *gin.Context) {
 				return
 			}
 			if status != "pending" {
+				// Used token + offline node → reconnect with fresh secret
+				if status == "used" {
+					var existingNodeID string
+					if err := h.DB.QueryRow(
+						`SELECT node_id FROM node_join_tokens WHERE token = $1`, token,
+					).Scan(&existingNodeID); err == nil && existingNodeID != "" {
+						var nodeStatus string
+						if err := h.DB.QueryRow(
+							`SELECT status FROM nodes WHERE id = $1`, existingNodeID,
+						).Scan(&nodeStatus); err == nil && nodeStatus == "offline" {
+							secretBytes := make([]byte, 32)
+							rand.Read(secretBytes)
+							nodeSecret := hex.EncodeToString(secretBytes)
+							secretHash := sha256.Sum256([]byte(nodeSecret))
+							secretHashHex := hex.EncodeToString(secretHash[:])
+							h.DB.Exec(
+								`UPDATE nodes SET status='online', last_seen=NOW(), ip=$2, node_secret_hash=$3 WHERE id=$1`,
+								existingNodeID, c.ClientIP(), secretHashHex,
+							)
+							endpointID = "runtime://" + existingNodeID
+							metadata["node_id"] = existingNodeID
+							metadata["user_id"] = tokenUserID
+							metadata["node_name"] = nodeName
+							regPayload := &protocol.Payload{
+								Metadata: map[string]any{
+									"node_secret": nodeSecret,
+									"node_id":     existingNodeID,
+								},
+							}
+							h.writeJSON(conn, protocol.NewEnvelope("system://bus", "", "registration", regPayload))
+							log.Printf("[Bus] Reconnected existing node %s via used token", existingNodeID)
+							goto afterFirstTime
+						}
+					}
+				}
 				conn.Close()
 				log.Printf("[Bus] Token already %s", status)
 				return
@@ -189,10 +224,13 @@ func (h *BusHandler) HandleWS(c *gin.Context) {
 			h.DB.Exec(
 				`INSERT INTO nodes (id, user_id, name, os, arch, status, version, ip,
 					max_sessions, last_seen, created_at, node_secret_hash)
-				 VALUES ($1, $2, $3, $4, $5, 'online', $6, $7, $8, NOW(), NOW(), $9)`,
+					 VALUES ($1, $2, $3, $4, $5, 'online', $6, $7, $8, NOW(), NOW(), $9)`,
 				nodeID, tokenUserID, nodeName, "unknown", "unknown",
 				"0.1.0", c.ClientIP(), 3, secretHashHex,
 			)
+
+			// Save node_id on token for future reconnection
+			h.DB.Exec(`UPDATE node_join_tokens SET node_id = $1 WHERE token = $2`, nodeID, token)
 
 			// Send registration message with node_secret to runtime
 			regPayload := &protocol.Payload{
@@ -211,10 +249,10 @@ func (h *BusHandler) HandleWS(c *gin.Context) {
 		return
 	}
 
-	// Register with the bus and set custom delivery function
-	h.Bus.Register(endpointID, conn, metadata)
-	log.Printf("[Bus] Connected: %s", endpointID)
-		// Broadcast online status to dashboards (node record already created/updated above)
+		afterFirstTime:
+		h.Bus.Register(endpointID, conn, metadata)
+		log.Printf("[Bus] Connected: %s", endpointID)
+			// Broadcast online status to dashboards (node record already created/updated above)
 		if epType == "runtime" && h.Hub != nil {
 			nodeID := metadata["node_id"].(string)
 			nodeName := metadata["node_name"].(string)

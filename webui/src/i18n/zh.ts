@@ -374,6 +374,10 @@ export const zh = {
   nodeStop: '停止',
   nodeStarting: '启动中...',
   nodeStopping: '停止中...',
+  startCommandTitle: '启动节点',
+  startCommandMac: 'macOS / Linux',
+  startCommandWindows: 'Windows (PowerShell)',
+  startCommandHint: '在目标节点上运行以下命令以启动 Agent Runtime：',
 
   alreadyHasNode: '你已有一个活跃节点，请先移除它。',
 

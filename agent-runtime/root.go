@@ -14,9 +14,9 @@ var rootCmd = &cobra.Command{
 	Long: `CoAether Agent Runtime 连接到 CoAether 服务器并提供 AI 代理能力。
 
 支持通过令牌首次注册和通过持久密钥重新连接两种方式。`,
-	Run: func(cmd *cobra.Command, args []string) {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		// Default: run start
-		startCmd.Run(cmd, args)
+		return startCmd.RunE(cmd, args)
 	},
 }
 

@@ -195,17 +195,10 @@ func (h *DashboardHub) sendDashboardInit(nc *DashboardConn, userID string, works
 		log.Printf("[Dashboard] Failed to query nodes for init: %v", err)
 	}
 
-	// Compute can_manage for each node
-	runtimePath := findRuntimePath()
-	localIPs := getLocalIPs()
+	// Compute can_manage for each node (online bus nodes can be stopped)
 	for i := range nodes {
-		if runtimePath != "" {
-			for _, ip := range localIPs {
-				if nodes[i].IP == ip {
-					nodes[i].CanManage = true
-					break
-				}
-			}
+		if h.Bus != nil && h.Bus.GetEndpoint("runtime://"+nodes[i].ID) != nil {
+			nodes[i].CanManage = true
 		}
 	}
 

@@ -5,16 +5,12 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -165,21 +161,9 @@ func (h *NodeHandler) List(c *gin.Context) {
 
 	}
 
-	// Determine which nodes can be managed
-	runtimePath := findRuntimePath()
-	localIPs := getLocalIPs()
+	// Determine which nodes can be managed (online bus nodes can be stopped)
 	for i := range nodes {
-		// Local binary found → can start/stop
-		if runtimePath != "" {
-			for _, ip := range localIPs {
-				if nodes[i].IP == ip {
-					nodes[i].CanManage = true
-					break
-				}
-			}
-		}
-		// Online runtime on bus → can stop (even if not local)
-		if !nodes[i].CanManage && h.Bus != nil && h.Bus.GetEndpoint("runtime://"+nodes[i].ID) != nil {
+		if h.Bus != nil && h.Bus.GetEndpoint("runtime://"+nodes[i].ID) != nil {
 			nodes[i].CanManage = true
 		}
 	}
@@ -725,7 +709,7 @@ $SERVER_URL="%s"
 $SERVER_BASE="%s://%s"
 
 $ARCH="amd64"
-$DIR="$env:USERPROFILE\.coaether"
+$DIR="$env:USERPROFILE\\.coaether"
 
 # Check if already installed
 if (Test-Path "$DIR\env") {
@@ -740,7 +724,7 @@ New-Item -ItemType Directory -Force -Path $DIR | Out-Null
 # Download binary
 Write-Host "Downloading agent-runtime for windows/${ARCH}..."
 try {
-    Invoke-WebRequest -Uri "${SERVER_BASE}/api/nodes/bin/windows/${ARCH}" -OutFile "$DIR\agent-runtime.exe" -TimeoutSec 30 -ErrorAction Stop
+    Invoke-WebRequest -Uri "${SERVER_BASE}/api/nodes/bin/windows/${ARCH}" -OutFile "$DIR\\agent-runtime.exe" -TimeoutSec 30 -ErrorAction Stop
 } catch {
     Write-Host "Failed to download agent-runtime: $_"
     exit 1
@@ -778,13 +762,13 @@ $STARTUP = [Environment]::GetFolderPath("Startup")
 $VBS_PATH = "$STARTUP\coaether-agent.vbs"
 $VBS = @'
 Set WshShell = CreateObject("WScript.Shell")
-WshShell.Run chr(34) & "'" + "$DIR\agent-runtime.exe" + "'" & chr(34), 0, False
+WshShell.Run chr(34) & "'" + "$DIR\\agent-runtime.exe" + "'" & chr(34), 0, False
 '@
 $VBS | Out-File -FilePath $VBS_PATH -Encoding ascii
 
 # Start the agent
 Write-Host "Starting agent-runtime..."
-Start-Process -WindowStyle Hidden -FilePath "$DIR\agent-runtime.exe"
+Start-Process -WindowStyle Hidden -FilePath "$DIR\\agent-runtime.exe"
 
 Write-Host ""
 Write-Host "CoAether agent installed and started as a background process."
@@ -851,85 +835,7 @@ func (h *NodeHandler) DownloadBinary(c *gin.Context) {
 
 }
 
-// findRuntimePath locates the agent-runtime binary on this machine.
-func findRuntimePath() string {
-	home, err := os.UserHomeDir()
-	if err == nil && home != "" {
-		exe := "agent-runtime"
-		if runtime.GOOS == "windows" {
-			exe = "agent-runtime.exe"
-		}
-		p := filepath.Join(home, ".coaether", exe)
-		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
-			return p
-		}
-	}
-	// Fall back to PATH lookup
-	exe := "agent-runtime"
-	if runtime.GOOS == "windows" {
-		exe = "agent-runtime.exe"
-	}
-	if p, err := exec.LookPath(exe); err == nil {
-		return p
-	}
-	return ""
-}
-
-// getLocalIPs returns all non-loopback IPv4 addresses of this host.
-func getLocalIPs() []string {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return []string{"127.0.0.1", "::1"}
-	}
-	var ips []string
-	for _, addr := range addrs {
-		if ipnet, ok := addr.(*net.IPNet); ok {
-			ips = append(ips, ipnet.IP.String())
-		}
-	}
-	return ips
-}
-
-// saveNodeSecretToEnv persists the node_secret and node_id to ~/.coaether/env
-// so the runtime can reconnect on restart without needing a new token.
-func saveNodeSecretToEnv(secret, nodeID, serverAddr string) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		log.Printf("[StartNode] Cannot save secret to env: %v", err)
-		return
-	}
-	envPath := filepath.Join(home, ".coaether", "env")
-	data, err := os.ReadFile(envPath)
-	if err != nil {
-		data = []byte("SERVER_URL=" + serverAddr + "\nNODE_TOKEN=\nNODE_SECRET=\nRUNTIME_NAME=\n")
-	}
-	lines := strings.Split(string(data), "\n")
-	updated := map[string]string{
-		"SERVER_URL":  serverAddr,
-		"NODE_SECRET": secret,
-		"NODE_ID":     nodeID,
-	}
-	for i, line := range lines {
-		for key, val := range updated {
-			if strings.HasPrefix(line, key+"=") {
-				lines[i] = key + "=" + val
-				delete(updated, key)
-				break
-			}
-		}
-	}
-	// Add any remaining keys that weren't found
-	for key, val := range updated {
-		lines = append(lines, key+"="+val)
-	}
-	if err := os.WriteFile(envPath, []byte(strings.Join(lines, "\n")), 0644); err != nil {
-		log.Printf("[StartNode] Failed to write env file: %v", err)
-	} else {
-		log.Printf("[StartNode] Saved node secret to %s", envPath)
-	}
-}
-
-// StartNode starts the agent-runtime on the local machine.
+// StartNode generates a command for the user to run agent-runtime on the target machine.
 func (h *NodeHandler) StartNode(c *gin.Context) {
 	nodeID := c.Param("id")
 
@@ -939,28 +845,7 @@ func (h *NodeHandler) StartNode(c *gin.Context) {
 		return
 	}
 
-	runtimePath := findRuntimePath()
-	if runtimePath == "" {
-		c.JSON(http.StatusNotFound, gin.H{"error": "agent-runtime binary not found on this server"})
-		return
-	}
-
-	// Check if already running
-	var pid int
-	out, err := exec.Command(runtimePath, "status", "--json").Output()
-	if err == nil {
-		var st struct {
-			Status string `json:"status"`
-			PID    int    `json:"pid"`
-		}
-		if json.Unmarshal(out, &st) == nil && st.Status == "running" {
-			pid = st.PID
-			c.JSON(http.StatusOK, gin.H{"status": "already_running", "pid": pid})
-			return
-		}
-	}
-
-	// Generate a fresh node_secret for this node so agent-runtime can connect
+	// Generate a fresh node_secret for this node
 	secretBytes := make([]byte, 32)
 	if _, err := rand.Read(secretBytes); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate secret"})
@@ -979,32 +864,26 @@ func (h *NodeHandler) StartNode(c *gin.Context) {
 	}
 
 	// Determine server address for the runtime to connect to
-	serverAddr := os.Getenv("SERVER_URL")
-	if serverAddr == "" {
-		serverAddr = "localhost:8088"
+	ip := getServerIP()
+	_, port, _ := net.SplitHostPort(c.Request.Host)
+	if port == "" {
+		port = "8088"
 	}
+	serverAddr := net.JoinHostPort(ip, port)
 
-	// Save the secret to ~/.coaether/env so the runtime can reconnect on restart
-	saveNodeSecretToEnv(nodeSecret, nodeID, serverAddr)
+	// Build command for user to run on the target machine
+	command := fmt.Sprintf("nohup ~/.coaether/agent-runtime start --server %s --secret %s --node-id %s > ~/.coaether/agent.log 2>&1 &",
+		serverAddr, nodeSecret, nodeID)
+	commandPS1 := fmt.Sprintf("Start-Process -WindowStyle Hidden -FilePath \"$env:USERPROFILE\\.coaether\\agent-runtime.exe\" -ArgumentList \"start --server %s --secret %s --node-id %s\"",
+		serverAddr, nodeSecret, nodeID)
 
-	// Start the runtime with the secret
-	cmd := exec.Command(runtimePath, "start", "--server", serverAddr, "--secret", nodeSecret)
-	cmd.Stderr = os.Stderr
-	cmd.Stdout = os.Stdout
-	if err := cmd.Start(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start runtime: " + err.Error()})
-		return
-	}
-
-	// Immediately broadcast online status to dashboards
-	if h.Hub != nil {
-		h.Hub.BroadcastToDashboards("node_status", map[string]interface{}{
-			"node_id": nodeID,
-			"status":  "online",
-		})
-	}
-
-	c.JSON(http.StatusOK, gin.H{"status": "started", "pid": cmd.Process.Pid})
+	c.JSON(http.StatusOK, gin.H{
+		"status":      "command_generated",
+		"command":     command,
+		"command_ps1": commandPS1,
+		"server":      serverAddr,
+		"node_id":     nodeID,
+	})
 }
 
 // StopNode stops the agent-runtime on the local machine.
@@ -1017,69 +896,29 @@ func (h *NodeHandler) StopNode(c *gin.Context) {
 		return
 	}
 
-	// Try to stop via Message Bus first (works for all connected runtime nodes)
-	if h.Bus != nil {
-		ep := h.Bus.GetEndpoint("runtime://" + nodeID)
-		if ep != nil {
-			env := protocol.NewEnvelope("system://bus", "runtime://"+nodeID, protocol.MsgNodeStop, nil)
-			delivered := h.Bus.Deliver(env)
-			if delivered > 0 {
-				log.Printf("[StopNode] Sent stop command via bus to %s", nodeID)
-				c.JSON(http.StatusOK, gin.H{"status": "stopped", "method": "bus"})
-				return
-			}
-		}
-	}
-
-	runtimePath := findRuntimePath()
-
-	// Try graceful stop via binary (local node, uses PID file)
-	if runtimePath != "" {
-		cmd := exec.Command(runtimePath, "stop")
-		cmd.Stderr = os.Stderr
-		cmd.Stdout = os.Stdout
-		err := cmd.Run()
-		if err == nil {
-			c.JSON(http.StatusOK, gin.H{"status": "stopped"})
-			return
-		}
-		log.Printf("[StopNode] stop command failed, falling back to process lookup: %v", err)
-	}
-
-	// Fallback: kill agent-runtime processes directly
-	killed := killAgentRuntimes()
-	if killed > 0 {
-		log.Printf("[StopNode] Killed %d agent-runtime process(es)", killed)
-		c.JSON(http.StatusOK, gin.H{"status": "stopped", "method": "fallback", "killed": killed})
+	// Stop via Message Bus (works for all connected runtime nodes)
+	if h.Bus == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "message bus not available"})
 		return
 	}
 
-	c.JSON(http.StatusNotFound, gin.H{"error": "no running agent-runtime process found"})
+	ep := h.Bus.GetEndpoint("runtime://" + nodeID)
+	if ep == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "node is not connected"})
+		return
+	}
+
+	env := protocol.NewEnvelope("system://bus", "runtime://"+nodeID, protocol.MsgNodeStop, nil)
+	delivered := h.Bus.Deliver(env)
+	if delivered > 0 {
+		log.Printf("[StopNode] Sent stop command via bus to %s", nodeID)
+		c.JSON(http.StatusOK, gin.H{"status": "stopped"})
+		return
+	}
+
+	c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to deliver stop command"})
 }
 
-// killAgentRuntimes kills all agent-runtime processes on the local machine.
-// Returns the number of processes killed.
-func killAgentRuntimes() int {
-	if runtime.GOOS == "windows" {
-		cmd := exec.Command("taskkill", "/F", "/IM", "agent-runtime.exe")
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err == nil {
-			return 1
-		}
-		// taskkill may fail if process already gone
-		return 0
-	}
-	cmd := exec.Command("pkill", "agent-runtime")
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err == nil {
-		return 1
-	}
-	return 0
-}
-
-// canControlNode checks whether the current user is allowed to control a node.
-// A user can control a node if they are the node owner, or if they are
-// a workspace admin (admin/owner) within the current workspace context.
 func (h *NodeHandler) canControlNode(c *gin.Context, nodeID string) (bool, string) {
 	userID, _ := c.Get("user_id")
 

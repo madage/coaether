@@ -374,6 +374,10 @@ export const en = {
   nodeStop: 'Stop',
   nodeStarting: 'Starting...',
   nodeStopping: 'Stopping...',
+  startCommandTitle: 'Start Node',
+  startCommandMac: 'macOS / Linux',
+  startCommandWindows: 'Windows (PowerShell)',
+  startCommandHint: 'Run this command on the target machine to start the agent:',
 
   alreadyHasNode: 'You already have an active node. Remove it first.',
 
