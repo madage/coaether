@@ -888,7 +888,7 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
                 <optgroup label={t('agents')}>
                   {agentProfiles.map(a => (
                     <option key={`agent_profile:${a.id}`} value={`agent_profile:${a.id}`}>
-                      {a.avatar || '🤖'} {a.name}
+                      {a.avatar || '🤖'} {a.name} ({a.current_load}/{a.max_concurrency})
                     </option>
                   ))}
                 </optgroup>

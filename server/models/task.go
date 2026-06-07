@@ -51,6 +51,7 @@ type CreateTaskReq struct {
 	Priority     *Priority `json:"priority,omitempty"`
 	Tags         []string  `json:"tags,omitempty"`
 	DueAt        *time.Time `json:"due_at,omitempty"`
+	AutoAssign   bool       `json:"auto_assign,omitempty"`
 }
 
 type UpdateTaskReq struct {
@@ -97,12 +98,14 @@ type TaskComment struct {
 	AgentAvatar   string     `json:"agent_avatar,omitempty"`
 	Content       string     `json:"content"`
 	ParentID      *string    `json:"parent_id,omitempty"`
+	IsAgentComment bool      `json:"is_agent_comment"`
 	CreatedAt     time.Time  `json:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at"`
 }
 
 type CreateCommentReq struct {
-	Content       string  `json:"content" binding:"required"`
+	Content        string  `json:"content" binding:"required"`
 	AgentProfileID *string `json:"agent_profile_id,omitempty"`
-	ParentID      *string `json:"parent_id,omitempty"`
+	ParentID       *string `json:"parent_id,omitempty"`
+	IsAgentComment bool    `json:"is_agent_comment,omitempty"`
 }

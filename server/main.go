@@ -97,6 +97,7 @@ func main() {
 	taskH.Notifier = notifH
 	ruleEngine := handlers.NewRuleEngine(database.DB, dashHub, notifH)
 	taskH.RuleEngine = ruleEngine
+	taskH.AgentScheduler = agentSched
 	ruleH := handlers.NewRuleHandler(database.DB, dashHub)
 
 	projectH := handlers.NewProjectHandler(database.DB)

@@ -16,10 +16,11 @@ import (
 )
 
 type TaskHandler struct {
-	DB         *sql.DB
-	Hub        *DashboardHub
-	Notifier   *NotificationHandler
-	RuleEngine *RuleEngine
+	DB             *sql.DB
+	Hub            *DashboardHub
+	Notifier       *NotificationHandler
+	RuleEngine     *RuleEngine
+	AgentScheduler *AgentScheduler
 }
 
 func NewTaskHandler(db *sql.DB) *TaskHandler {
@@ -271,7 +272,45 @@ func (h *TaskHandler) Create(c *gin.Context) {
 		}
 	}
 
+	// Auto-assign to an agent profile if requested
+	if req.AutoAssign && h.AgentScheduler != nil {
+		h.autoAssignTask(taskID, workspaceID)
+	}
+
 	c.JSON(http.StatusCreated, task)
+}
+
+func (h *TaskHandler) autoAssignTask(taskID, workspaceID string) {
+	rows, err := h.DB.Query(`
+		SELECT id FROM agent_profiles
+		WHERE workspace_id = $1 AND enabled = true
+			AND COALESCE(current_load, 0) < COALESCE(max_concurrency, 1)
+		ORDER BY current_load ASC, last_active_at DESC NULLS LAST
+		LIMIT 1`, workspaceID)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	if !rows.Next() {
+		return
+	}
+
+	var agentID string
+	rows.Scan(&agentID)
+
+	queueID := uuid.New().String()
+	now := time.Now()
+	h.DB.Exec(
+		`INSERT INTO task_agent_queue (id, task_id, agent_profile_id, status, assigned_at, created_at)
+		 VALUES ($1, $2, $3, 'queued', $4, $4)`,
+		queueID, taskID, agentID, now,
+	)
+	h.DB.Exec(`UPDATE agent_profiles SET current_load = current_load + 1, last_active_at = $1 WHERE id = $2`, now, agentID)
+
+	if h.Hub != nil {
+		h.Hub.SignalChange("task_agent_queue")
+	}
 }
 
 func (h *TaskHandler) Get(c *gin.Context) {
@@ -973,7 +1012,7 @@ func (h *TaskHandler) ListComments(c *gin.Context) {
 	rows, err := h.DB.Query(`
 		SELECT c.id, c.task_id, c.user_id, COALESCE(u.username, '') AS username,
 			c.agent_profile_id, COALESCE(ap.name, '') AS agent_name, COALESCE(ap.avatar, '') AS agent_avatar,
-			c.content, c.parent_id, c.created_at, c.updated_at
+			c.content, c.parent_id, c.is_agent_comment, c.created_at, c.updated_at
 		FROM task_comments c
 		LEFT JOIN users u ON u.id = c.user_id
 		LEFT JOIN agent_profiles ap ON ap.id = c.agent_profile_id
@@ -1002,11 +1041,6 @@ func (h *TaskHandler) ListComments(c *gin.Context) {
 }
 
 func (h *TaskHandler) CreateComment(c *gin.Context) {
-	if !middleware.CanWrite(c) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions"})
-		return
-	}
-
 	taskID := c.Param("id")
 	userID, _ := c.Get("user_id")
 
@@ -1014,6 +1048,14 @@ func (h *TaskHandler) CreateComment(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+
+	// Agent autonomous comments bypass user permission check
+	if !req.IsAgentComment || req.AgentProfileID == nil || *req.AgentProfileID == "" {
+		if !middleware.CanWrite(c) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions"})
+			return
+		}
 	}
 
 	// Verify task exists
@@ -1037,10 +1079,10 @@ func (h *TaskHandler) CreateComment(c *gin.Context) {
 	}
 
 	_, err := h.DB.Exec(
-		`INSERT INTO task_comments (id, task_id, user_id, agent_profile_id, content, parent_id, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		`INSERT INTO task_comments (id, task_id, user_id, agent_profile_id, content, parent_id, is_agent_comment, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 		comment.ID, comment.TaskID, comment.UserID, comment.AgentProfileID,
-		comment.Content, comment.ParentID, comment.CreatedAt, comment.UpdatedAt,
+		comment.Content, comment.ParentID, req.IsAgentComment, comment.CreatedAt, comment.UpdatedAt,
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create comment"})
@@ -1051,7 +1093,7 @@ func (h *TaskHandler) CreateComment(c *gin.Context) {
 	h.DB.QueryRow(`
 		SELECT c.id, c.task_id, c.user_id, COALESCE(u.username, '') AS username,
 			c.agent_profile_id, COALESCE(ap.name, '') AS agent_name, COALESCE(ap.avatar, '') AS agent_avatar,
-			c.content, c.parent_id, c.created_at, c.updated_at
+			c.content, c.parent_id, c.is_agent_comment, c.created_at, c.updated_at
 		FROM task_comments c
 		LEFT JOIN users u ON u.id = c.user_id
 		LEFT JOIN agent_profiles ap ON ap.id = c.agent_profile_id
@@ -1059,7 +1101,7 @@ func (h *TaskHandler) CreateComment(c *gin.Context) {
 	).Scan(
 		&comment.ID, &comment.TaskID, &comment.UserID, &comment.Username,
 		&comment.AgentProfileID, &comment.AgentName, &comment.AgentAvatar,
-		&comment.Content, &comment.ParentID, &comment.CreatedAt, &comment.UpdatedAt,
+		&comment.Content, &comment.ParentID, &comment.IsAgentComment, &comment.CreatedAt, &comment.UpdatedAt,
 	)
 
 	if h.Hub != nil {
