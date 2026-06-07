@@ -538,7 +538,7 @@ function App() {
         </div>
 
         <nav style={{ display: 'flex', flexDirection: 'column', padding: '8px' }}>
-          {(['nodes', 'tasks', 'projects', 'agents', 'rules', ...(auth.workspace_role === 'owner' || auth.workspace_role === 'admin' ? ['plugins'] : []), 'trash'] as Page[]).map((p) => (
+          {(['nodes', 'tasks', 'rules', 'projects', 'agents', ...(auth.workspace_role === 'owner' || auth.workspace_role === 'admin' ? ['plugins'] : []), 'trash'] as Page[]).map((p) => (
             <button
               key={p}
               onClick={() => setPage(p)}
