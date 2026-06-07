@@ -606,6 +606,25 @@ export const en = {
 
   saving: 'Saving...',
 
+  // Skills
+  skillLibrary: 'Skill Library',
+  skillCreate: 'Create',
+  skillEdit: 'Edit Skill',
+  skillExtract: 'Extract',
+  skillExtractFromTask: 'Extract Skill from Task',
+  skillEmpty: 'No skills yet. Create one or extract from a completed task.',
+  skillNameLabel: 'Name',
+  skillNamePlaceholder: 'Skill name',
+  skillDescriptionLabel: 'Description',
+  skillDescriptionPlaceholder: 'Optional description',
+  skillContent: 'Content',
+  skillContentPlaceholder: 'Skill content / prompt template...',
+  skillUsage: 'Used',
+  skillFromTask: 'From task',
+  skillTaskId: 'Task ID',
+  skillTaskIdPlaceholder: 'Enter task ID...',
+  navSkills: 'Skills',
+
   // Agent Profile Enhancement
 
   systemPrompt: 'System Prompt',

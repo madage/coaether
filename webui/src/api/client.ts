@@ -1,4 +1,4 @@
-import type { Node, Session, CreateSessionReq, Agent, AgentProfile, RuntimeEntity, Task, CreateTaskReq, UpdateTaskReq, TaskStatus, TaskAssignee, AddAssigneeReq, Priority, Project, CreateProjectReq, UpdateProjectReq, ProjectStatus, Workspace, CreateWorkspaceReq, UpdateWorkspaceReq, WorkspaceMember, AddMemberReq, UpdateMemberRoleReq, PendingInvitation, InviteMemberReq, UserSummary, Comment, CreateCommentReq, PluginInfo, AppNotification, TaskRule, TaskRuleLog, CreateRuleReq, UpdateRuleReq } from '../types';
+import type { Node, Session, CreateSessionReq, Agent, AgentProfile, RuntimeEntity, Task, CreateTaskReq, UpdateTaskReq, TaskStatus, TaskAssignee, AddAssigneeReq, Priority, Project, CreateProjectReq, UpdateProjectReq, ProjectStatus, Workspace, CreateWorkspaceReq, UpdateWorkspaceReq, WorkspaceMember, AddMemberReq, UpdateMemberRoleReq, PendingInvitation, InviteMemberReq, UserSummary, Comment, CreateCommentReq, PluginInfo, AppNotification, TaskRule, TaskRuleLog, CreateRuleReq, UpdateRuleReq, Skill, CreateSkillReq, ExtractSkillReq } from '../types';
 
 
 
@@ -613,6 +613,20 @@ export const plugins = {
       method: 'POST',
       body: JSON.stringify({ url, branch }),
     }),
+};
+
+// Skills
+export const skills = {
+  list: () => request<{ skills: Skill[] }>('/skills'),
+  get: (id: string) => request<Skill>(`/skills/${id}`),
+  create: (data: CreateSkillReq) =>
+    request<{ id: string; status: string }>('/skills', { method: 'POST', body: JSON.stringify(data) }),
+  update: (id: string, data: Partial<CreateSkillReq>) =>
+    request<{ status: string }>(`/skills/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  delete: (id: string) =>
+    request<{ status: string }>(`/skills/${id}`, { method: 'DELETE' }),
+  extractFromTask: (data: ExtractSkillReq) =>
+    request<{ id: string; status: string; name: string }>('/skills/extract-from-task', { method: 'POST', body: JSON.stringify(data) }),
 };
 
 // User Management

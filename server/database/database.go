@@ -432,6 +432,22 @@ func Migrate() error {
 			CREATE INDEX IF NOT EXISTS idx_notifications_user_unread ON notifications(user_id, is_read);
 			CREATE INDEX IF NOT EXISTS idx_notifications_user_time ON notifications(user_id, created_at DESC);
 
+			CREATE TABLE IF NOT EXISTS skills (
+				id              VARCHAR(36) PRIMARY KEY,
+				workspace_id    VARCHAR(36) NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+				name            VARCHAR(128) NOT NULL,
+				description     TEXT NOT NULL DEFAULT '',
+				content         TEXT NOT NULL,
+				tags            JSONB NOT NULL DEFAULT '[]',
+				source_task_id  VARCHAR(36) REFERENCES tasks(id) ON DELETE SET NULL,
+				source_agent_id VARCHAR(36) REFERENCES agent_profiles(id) ON DELETE SET NULL,
+				usage_count     INT NOT NULL DEFAULT 0,
+				created_at      TIMESTAMP NOT NULL DEFAULT NOW(),
+				updated_at      TIMESTAMP NOT NULL DEFAULT NOW()
+			);
+			CREATE INDEX IF NOT EXISTS idx_skills_workspace_id ON skills(workspace_id);
+			CREATE INDEX IF NOT EXISTS idx_skills_tags ON skills USING GIN(tags);
+
 
 
 	`

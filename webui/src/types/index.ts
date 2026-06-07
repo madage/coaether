@@ -310,6 +310,33 @@ export interface AppNotification {
   created_at: string;
 }
 
+// === Skill Types ===
+export interface Skill {
+  id: string;
+  workspace_id: string;
+  name: string;
+  description: string;
+  content: string;
+  tags: string[];
+  source_task_id?: string;
+  source_agent_id?: string;
+  usage_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateSkillReq {
+  name: string;
+  description?: string;
+  content: string;
+  tags?: string[];
+}
+
+export interface ExtractSkillReq {
+  task_id: string;
+  agent_profile_id?: string;
+}
+
 // === Task Rule Types ===
 export interface TaskRule {
   id: string;

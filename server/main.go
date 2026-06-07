@@ -83,6 +83,9 @@ func main() {
 	profileH := handlers.NewAgentProfileHandler(database.DB)
 	profileH.Hub = dashHub
 
+	skillH := handlers.NewSkillHandler(database.DB)
+	skillH.Hub = dashHub
+
 	taskH := handlers.NewTaskHandler(database.DB)
 
 	taskH.Hub = dashHub
@@ -265,6 +268,14 @@ func main() {
 		api.PUT("/rules/:id", ruleH.Update)
 		api.DELETE("/rules/:id", ruleH.Delete)
 		api.GET("/rules/:id/logs", ruleH.ListLogs)
+
+		// Skills
+		api.GET("/skills", skillH.List)
+		api.POST("/skills", skillH.Create)
+		api.GET("/skills/:id", skillH.Get)
+		api.PUT("/skills/:id", skillH.Update)
+		api.DELETE("/skills/:id", skillH.Delete)
+		api.POST("/skills/extract-from-task", skillH.ExtractFromTask)
 
 		// Projects
 

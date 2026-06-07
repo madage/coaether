@@ -606,6 +606,25 @@ export const zh = {
 
   saving: '保存中...',
 
+  // Skills
+  skillLibrary: '技能库',
+  skillCreate: '创建',
+  skillEdit: '编辑技能',
+  skillExtract: '提取',
+  skillExtractFromTask: '从任务提取技能',
+  skillEmpty: '还没有技能。创建一个或从已完成任务提取。',
+  skillNameLabel: '名称',
+  skillNamePlaceholder: '技能名称',
+  skillDescriptionLabel: '描述',
+  skillDescriptionPlaceholder: '可选描述',
+  skillContent: '内容',
+  skillContentPlaceholder: '技能内容 / 提示词模板...',
+  skillUsage: '使用次数',
+  skillFromTask: '来自任务',
+  skillTaskId: '任务 ID',
+  skillTaskIdPlaceholder: '输入任务 ID...',
+  navSkills: '技能库',
+
   // Agent Profile Enhancement
 
   systemPrompt: '系统提示词',
