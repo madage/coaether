@@ -43,6 +43,7 @@ export function AgentForm({ onClose, onCreated }: AgentFormProps) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [systemPrompt, setSystemPrompt] = useState('');
+  const [instructions, setInstructions] = useState('');
   const [tags, setTags] = useState('');
   const [nodeList, setNodeList] = useState<Node[]>([]);
   const [selectedNode, setSelectedNode] = useState('');
@@ -86,6 +87,7 @@ export function AgentForm({ onClose, onCreated }: AgentFormProps) {
         name: name.trim(),
         description: description.trim(),
         system_prompt: systemPrompt.trim(),
+        instructions: instructions.trim(),
         agent_id: selectedAgent,
         node_id: selectedNode,
         tags: tags.split(',').map(t => t.trim()).filter(Boolean),
@@ -187,6 +189,19 @@ export function AgentForm({ onClose, onCreated }: AgentFormProps) {
               placeholder={t('systemPromptPlaceholder')}
               rows={3}
               style={{ ...inputStyle, resize: 'vertical', fontFamily: 'monospace', fontSize: '0.85em' }}
+            />
+          </div>
+
+          <div style={{ marginBottom: '16px' }}>
+            <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
+              {t('instructions')}
+            </label>
+            <textarea
+              value={instructions}
+              onChange={(e) => setInstructions(e.target.value)}
+              placeholder={t('instructionsPlaceholder')}
+              rows={3}
+              style={{ ...inputStyle, resize: 'vertical', fontSize: '0.85em' }}
             />
           </div>
 

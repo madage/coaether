@@ -49,6 +49,7 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
   const [editName, setEditName] = useState(profile.name);
   const [editDesc, setEditDesc] = useState(profile.description);
   const [editSystemPrompt, setEditSystemPrompt] = useState(profile.system_prompt || '');
+  const [editInstructions, setEditInstructions] = useState(profile.instructions || '');
   const [editTags, setEditTags] = useState(profile.tags?.join(', ') || '');
   const [editMaxConcurrency, setEditMaxConcurrency] = useState(profile.max_concurrency || 1);
   const [editNodeId, setEditNodeId] = useState(profile.node_id || '');
@@ -84,6 +85,7 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
       name: editName,
       description: editDesc,
       system_prompt: editSystemPrompt,
+      instructions: editInstructions,
       agent_id: editAgentId,
       node_id: editNodeId || undefined,
       max_concurrency: editMaxConcurrency,
@@ -96,6 +98,7 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
     setEditName(profile.name);
     setEditDesc(profile.description);
     setEditSystemPrompt(profile.system_prompt || '');
+    setEditInstructions(profile.instructions || '');
     setEditTags(profile.tags?.join(', ') || '');
     setEditMaxConcurrency(profile.max_concurrency || 1);
     setEditAgentId(profile.agent_id);
@@ -224,6 +227,18 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
             </div>
             <div>
               <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
+                {t('instructions')}
+              </label>
+              <textarea
+                value={editInstructions}
+                onChange={(e) => setEditInstructions(e.target.value)}
+                placeholder={t('instructionsPlaceholder')}
+                rows={3}
+                style={{ ...inputStyle, resize: 'vertical', fontSize: '0.85em' }}
+              />
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
                 {t('abilityTags')}
               </label>
               <input
@@ -276,6 +291,17 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
                 </div>
                 <p style={{ margin: 0, color: '#666', fontSize: '0.85em', lineHeight: 1.6, fontFamily: 'monospace', background: '#f5f5f5', padding: '10px', borderRadius: '6px', whiteSpace: 'pre-wrap' }}>
                   {profile.system_prompt}
+                </p>
+              </div>
+            )}
+
+            {profile.instructions && (
+              <div style={{ marginBottom: '16px' }}>
+                <div style={{ fontWeight: 600, color: '#333', fontSize: '0.9em', marginBottom: '8px' }}>
+                  {t('instructions')}
+                </div>
+                <p style={{ margin: 0, color: '#555', fontSize: '0.95em', lineHeight: 1.6, background: '#fef7e0', padding: '10px', borderRadius: '6px', whiteSpace: 'pre-wrap' }}>
+                  {profile.instructions}
                 </p>
               </div>
             )}

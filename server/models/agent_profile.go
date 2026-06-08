@@ -12,6 +12,7 @@ type AgentProfile struct {
 	Avatar         string           `json:"avatar"`
 	Description    string           `json:"description"`
 	SystemPrompt   string           `json:"system_prompt"`
+	Instructions   string           `json:"instructions"`
 	AgentID        string           `json:"agent_id"`
 	NodeID         string           `json:"node_id"`
 	Version        string           `json:"version"`

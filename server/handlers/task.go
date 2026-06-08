@@ -325,20 +325,30 @@ func (h *TaskHandler) processAgentTask(taskID, agentProfileID, queueID string) {
 
 // autoProcessTask creates a session on the message bus and delivers the task prompt
 // to the connected agent runtime. It is shared between TaskHandler and AgentScheduler.
+
+// buildTaskPrompt constructs the work prompt combining task details with agent instructions.
+func buildTaskPrompt(title, description, instructions string) string {
+	prompt := fmt.Sprintf("Task: %s\n\nDescription: %s", title, description)
+	if instructions != "" {
+		prompt += "\n\nInstructions: " + instructions
+	}
+	return prompt
+}
+
 func autoProcessTask(db *sql.DB, bus *protocol.MessageBus, taskID, agentProfileID, queueID string) {
 	if bus == nil {
 		return
 	}
 
 	// Get task details + agent profile node_id + task owner
-	var title, description, workspaceID, nodeID, userID string
+	var title, description, workspaceID, nodeID, userID, instructions string
 	err := db.QueryRow(`
-		SELECT t.title, COALESCE(t.description,''), t.workspace_id, ap.node_id, t.user_id
+		SELECT t.title, COALESCE(t.description,''), t.workspace_id, ap.node_id, t.user_id, COALESCE(ap.instructions,'')
 		FROM tasks t
 		JOIN agent_profiles ap ON ap.id = $2
 		WHERE t.id = $1 AND t.deleted_at IS NULL`,
 		taskID, agentProfileID,
-	).Scan(&title, &description, &workspaceID, &nodeID, &userID)
+	).Scan(&title, &description, &workspaceID, &nodeID, &userID, &instructions)
 	if err != nil || nodeID == "" {
 		return // can't process without a node
 	}
@@ -359,7 +369,7 @@ func autoProcessTask(db *sql.DB, bus *protocol.MessageBus, taskID, agentProfileI
 	// Create a session
 	sessionID := uuid.New().String()
 	now := time.Now()
-	prompt := fmt.Sprintf("Task: %s\n\nDescription: %s\n\nPlease work on this task.", title, description)
+	prompt := buildTaskPrompt(title, description, instructions)
 
 	bus.CreateSession(sessionID, map[string]protocol.MemberRole{
 		"system://api": protocol.RoleOwner,
@@ -411,14 +421,14 @@ func autoProcessReview(db *sql.DB, bus *protocol.MessageBus, taskID, agentProfil
 		return
 	}
 
-	var title, description, workspaceID, nodeID, userID string
+	var title, description, workspaceID, nodeID, userID, instructions string
 	err := db.QueryRow(`
-		SELECT t.title, COALESCE(t.description,''), t.workspace_id, ap.node_id, t.user_id
+		SELECT t.title, COALESCE(t.description,''), t.workspace_id, ap.node_id, t.user_id, COALESCE(ap.instructions,'')
 		FROM tasks t
 		JOIN agent_profiles ap ON ap.id = $2
 		WHERE t.id = $1 AND t.deleted_at IS NULL`,
 		taskID, agentProfileID,
-	).Scan(&title, &description, &workspaceID, &nodeID, &userID)
+	).Scan(&title, &description, &workspaceID, &nodeID, &userID, &instructions)
 	if err != nil || nodeID == "" {
 		return
 	}
@@ -438,18 +448,12 @@ func autoProcessReview(db *sql.DB, bus *protocol.MessageBus, taskID, agentProfil
 	sessionID := uuid.New().String()
 	now := time.Now()
 
-	reviewPrompt := fmt.Sprintf(
-		"Task: %s\n\nDescription: %s\n\nThis task was completed by another agent and needs your review. Review their work:\n\n---\n%s\n---\n\nApprove the work or provide feedback on what needs to change.",
-		title, description, resultSummary,
-	)
-	if resultSummary == "" {
-		reviewPrompt = fmt.Sprintf(
-			"Task: %s\n\nDescription: %s\n\nThis task needs your review. Please review the current state and either approve it or provide feedback on what needs to change.",
-			title, description,
-		)
+	reviewPrompt := buildTaskPrompt(title, description, instructions)
+	if resultSummary != "" {
+		reviewPrompt += "\n\nCompleted work to review:\n\n---\n" + resultSummary + "\n---\n\nApprove the work or provide feedback on what needs to change."
 	}
 
-	bus.CreateSession(sessionID, map[string]protocol.MemberRole{
+		bus.CreateSession(sessionID, map[string]protocol.MemberRole{
 		"system://api": protocol.RoleOwner,
 	})
 

@@ -36,6 +36,7 @@ export interface AgentProfile {
   avatar: string;
   description: string;
   system_prompt: string;
+  instructions: string;
   agent_id: string;
   node_id?: string;
   version: string;

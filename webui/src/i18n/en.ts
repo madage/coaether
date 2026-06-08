@@ -638,6 +638,10 @@ export const en = {
 
   abilityTagsPlaceholder: 'e.g. frontend, backend, database',
 
+  instructions: 'Behavior Instructions',
+
+  instructionsPlaceholder: 'Define communication style, tone, and behavior guidelines to make the agent more personable...',
+
   agentLoad: 'Load',
 
   agentLoadInfo: '{current}/{max} tasks running',

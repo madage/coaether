@@ -524,6 +524,7 @@ func Migrate() error {
 
 		// Agent as Colleague: Phase 1 — Profile enhancements
 		"ALTER TABLE agent_profiles ADD COLUMN IF NOT EXISTS system_prompt TEXT NOT NULL DEFAULT ''",
+			"ALTER TABLE agent_profiles ADD COLUMN IF NOT EXISTS instructions TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE agent_profiles ADD COLUMN IF NOT EXISTS skills JSONB NOT NULL DEFAULT '[]'",
 		"ALTER TABLE agent_profiles ADD COLUMN IF NOT EXISTS max_concurrency INT NOT NULL DEFAULT 1",
 		"ALTER TABLE agent_profiles ADD COLUMN IF NOT EXISTS current_load INT NOT NULL DEFAULT 0",

@@ -638,6 +638,10 @@ export const zh = {
 
   abilityTagsPlaceholder: '例如：前端、后端、数据库',
 
+  instructions: '行为指令',
+
+  instructionsPlaceholder: '定义智能体与用户沟通的语气、风格和行为准则，使其更具个性...',
+
   agentLoad: '负载',
 
   agentLoadInfo: '{current}/{max} 个任务运行中',
