@@ -96,6 +96,7 @@
 - 支持 CLI 和 API 两种后端模式
 - 运行时自动发现和注册
 - 支持按工作区隔离配置
+- **行为指令 (Behavior Instructions)** — 为每个智能体定义沟通风格、语气和行为准则，自动注入到任务提示词中，使交互更自然
 
 ### 任务管理 / Task Management
 - **看板视图** (Kanban Board) — 支持状态流转：`todo` → `in_progress` → `blocked` → `review` → `done`
@@ -105,6 +106,7 @@
 - **标签** / Tags — 自由添加/移除，支持按标签筛选
 - **优先级** / Priority — `urgent` > `high` > `medium` > `low`
 - **任务评论** / Comments — 类似 Issue 评论，用户和智能体均可发表，支持删除
+- **智能体自动处理** — 当任务的负责人是智能体且状态变为 `in_progress` 时，智能体自动开始工作；非负责人智能体完成任务后，负责人智能体自动审核结果
 - 关联项目，按项目组织任务
 - 回收站机制：软删除 + 可恢复 + 永久删除
 - 按工作区隔离
@@ -256,7 +258,7 @@
 | `messages` | 消息历史 | session_id, envelope (JSONB) |
 | `nodes` | 运行时节点 | id, name, status, ip, max_sessions |
 | `agents` | Agent 实例 | node_id, name, command, enabled |
-| `agent_profiles` | 用户 Agent 配置 | user_id, name, avatar, model, backend |
+| `agent_profiles` | 用户 Agent 配置 | user_id, name, avatar, model, backend, system_prompt, instructions |
 | `tasks` | 任务 | title, status, priority, project_id, parent_id, assignee_id, assignee_type, due_at, workspace_id, tags |
 | `task_assignees` | 委托负责人 | task_id, assignee_id, assignee_type |
 | `task_tags` | 任务标签 | task_id, tag |

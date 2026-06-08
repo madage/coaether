@@ -96,10 +96,12 @@ The system uses a **dual WebSocket channel** architecture:
 - Supports CLI and API backend modes
 - Automatic runtime discovery and registration
 - Workspace-scoped configuration
+- **Behavior Instructions** — Define communication style, tone, and guidelines per agent; injected into auto-task prompts for more natural interactions
 
 ### Task Management
-- Kanban board view, status flow: `todo` → `in_progress` → `blocked` → `done` → `review`
+- Kanban board view, status flow: `todo` → `in_progress` → `blocked` → `review` → `done`
 - Link to projects, organize tasks by project
+- **Agent Auto-Processing** — When a task's assignee is an agent profile and status changes to `in_progress`, the agent automatically starts working; when a non-assignee agent completes a task, the assignee agent auto-reviews the result
 - Trash mechanism: soft delete + restore + permanent delete
 - Workspace isolation
 
@@ -236,7 +238,7 @@ All communication uses JSON `Envelope` format:
 | `messages` | Message history | session_id, envelope (JSONB) |
 | `nodes` | Runtime nodes | id, name, status, ip, max_sessions |
 | `agents` | Agent instances | node_id, name, command, enabled |
-| `agent_profiles` | User Agent configs | user_id, name, avatar, model, backend |
+| `agent_profiles` | User Agent configs | user_id, name, avatar, model, backend, system_prompt, instructions |
 | `tasks` | Tasks | title, status, project_id, workspace_id |
 | `projects` | Projects | name, color, workspace_id |
 
