@@ -641,7 +641,9 @@ func (r *Runtime) handleSessionComplete(sessionID, result, stopReason string, is
 	bodyBytes, _ := json.Marshal(body)
 
 	u := fmt.Sprintf("%s/api/node/queue/%s/status?%s", baseURL, queueID, auth)
-	resp, err := http.Post(u, "application/json", bytes.NewBuffer(bodyBytes))
+	req4, _ := http.NewRequest("PUT", u, bytes.NewBuffer(bodyBytes))
+	req4.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req4)
 	if err != nil {
 		log.Printf("[Runtime] Queue update failed: %v", err)
 		return
@@ -799,7 +801,9 @@ func (r *Runtime) updateQueueStatus(queueID, status, resultSummary string) {
 	bodyBytes, _ := json.Marshal(body)
 
 	u := fmt.Sprintf("%s/api/node/queue/%s/status?%s", baseURL, queueID, auth)
-	resp, err := http.Post(u, "application/json", bytes.NewBuffer(bodyBytes))
+	req5, _ := http.NewRequest("PUT", u, bytes.NewBuffer(bodyBytes))
+	req5.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req5)
 	if err != nil {
 		log.Printf("[Runtime] Queue status update failed: %v", err)
 		return
