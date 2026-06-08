@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useLang } from '../i18n/context';
-import { agents as agentsApi, nodes as nodesApi } from '../api/client';
+import { agents as agentsApi, nodes as nodesApi, agentQueue as agentQueueApi, agentProfiles as agentProfilesApi } from '../api/client';
+import { useResourceSync } from '../hooks/useResourceSync';
 import type { Node, Agent } from '../types';
 import { MathConfirmDialog } from './MathConfirmDialog';
 
@@ -20,6 +21,34 @@ export function NodeList({ nodes, onSelect }: NodeListProps) {
   const [errorDialog, setErrorDialog] = useState<string | null>(null);
   const [commandDialog, setCommandDialog] = useState<{command: string; command_ps1: string} | null>(null);
   const [mathConfirmAction, setMathConfirmAction] = useState<{ type: 'stop' | 'remove'; nodeID: string } | null>(null);
+  const [workingAgentIds, setWorkingAgentIds] = useState<Set<string>>(new Set());
+
+  const fetchWorkingAgents = useCallback(async () => {
+    try {
+      const [queueRes, profilesRes] = await Promise.all([
+        agentQueueApi.list(),
+        agentProfilesApi.list(),
+      ]);
+      const activeProfileIds = new Set(
+        queueRes.queue
+          .filter(q => q.status === 'processing')
+          .map(q => q.agent_profile_id)
+      );
+      const working = new Set<string>();
+      for (const p of profilesRes.profiles) {
+        if (activeProfileIds.has(p.id) && p.agent_id) {
+          working.add(p.agent_id);
+        }
+      }
+      setWorkingAgentIds(working);
+    } catch {
+      // silently fail
+    }
+  }, []);
+
+  useEffect(() => { fetchWorkingAgents(); }, [fetchWorkingAgents]);
+
+  useResourceSync('task_agent_queue', fetchWorkingAgents);
 
   const filteredNodes = showOffline ? nodes : nodes.filter(n => n.status === 'online' || n.status === 'busy');
 
@@ -125,6 +154,7 @@ export function NodeList({ nodes, onSelect }: NodeListProps) {
 
   return (
     <div>
+      <style>{`@keyframes agent-spin { to { transform: rotate(360deg); } }`}</style>
       {/* Error dialog modal */}
       {errorDialog && (
         <div
@@ -468,7 +498,21 @@ export function NodeList({ nodes, onSelect }: NodeListProps) {
                       }}
                     >
                       <div>
-                        <span style={{ fontWeight: 500 }}>{agent.name}</span>
+                        <span style={{ fontWeight: 500 }}>
+                          {workingAgentIds.has(agent.id) && (
+                            <span
+                              title="Agent working..."
+                              style={{
+                                display: 'inline-block', width: '10px', height: '10px',
+                                borderRadius: '50%', border: '2px solid #e0e0e0',
+                                borderTopColor: '#ff9800',
+                                animation: 'agent-spin 0.8s linear infinite',
+                                marginRight: '6px', verticalAlign: 'middle',
+                              }}
+                            />
+                          )}
+                          {agent.name}
+                        </span>
                         <span style={{ fontSize: '0.8em', color: '#999', marginLeft: '8px' }}>
                           {agent.command} {agent.version ? `(${agent.version})` : ''}
                         </span>

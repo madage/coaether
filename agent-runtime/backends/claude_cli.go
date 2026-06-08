@@ -631,6 +631,90 @@ func jsonEscape(s string) string {
 	return buf.String()
 }
 
+// Evaluate starts a transient claude subprocess, sends a prompt, and returns the response.
+// Used by the runtime to evaluate whether an @mention requires work or just a reply.
+func (b *ClaudeCLIBackend) Evaluate(prompt string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	args := []string{
+		"--output-format", "stream-json",
+		"--input-format", "stream-json",
+		"--dangerously-skip-permissions",
+		"--verbose",
+	}
+	cmd := exec.CommandContext(ctx, b.command, args...)
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return "", fmt.Errorf("stdin pipe: %w", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", fmt.Errorf("stdout pipe: %w", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("start: %w", err)
+	}
+
+	// Send the evaluation prompt
+	msg := fmt.Sprintf(`{"type":"user","message":{"role":"user","content":%s}}`, jsonEscape(prompt))
+	io.WriteString(stdin, msg+"\n")
+	stdin.Close()
+
+	// Read response — collect assistant text until result event
+	var responseText strings.Builder
+	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+
+		var evt streamJSONEvent
+		if err := json.Unmarshal([]byte(line), &evt); err != nil {
+			continue
+		}
+
+		switch evt.Type {
+		case "assistant":
+			if evt.Message != nil {
+				var msg assistantMessage
+				if err := json.Unmarshal(*evt.Message, &msg); err != nil {
+					continue
+				}
+				for _, block := range msg.Content {
+					if block.Type == "text" {
+						responseText.WriteString(block.Text)
+					}
+				}
+			}
+		case "result":
+			// Clean up and return
+			cmd.Process.Kill()
+			cmd.Wait()
+			return strings.TrimSpace(responseText.String()), nil
+		}
+	}
+
+	// Process exited or scanner ended before result event
+	cmd.Process.Kill()
+	cmd.Wait()
+
+	if err := scanner.Err(); err != nil {
+		return strings.TrimSpace(responseText.String()), fmt.Errorf("scanner: %w", err)
+	}
+
+	result := strings.TrimSpace(responseText.String())
+	if result == "" {
+		return "", fmt.Errorf("no response from claude")
+	}
+	return result, nil
+}
+
 // ---- plumbing ----
 
 func (b *ClaudeCLIBackend) sendToBus(env *protocol.Envelope) {

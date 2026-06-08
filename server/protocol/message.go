@@ -37,6 +37,10 @@ const (
 
 	// Node management
 	MsgNodeStop = "node.stop"
+
+	// Agent task events (server → runtime)
+	MsgAgentTaskTrigger = "agent.task_trigger"
+	MsgAgentMention     = "agent.mention"
 )
 
 // Envelope is the universal message wrapper for all bus communication.

@@ -203,6 +203,7 @@ func main() {
 	r.PUT("/api/node/queue/:id/status", nodeAgentH.UpdateQueueStatus)
 	r.GET("/api/node/tasks/:id", nodeAgentH.GetTask)
 	r.POST("/api/node/sessions", nodeAgentH.CreateSession)
+	r.POST("/api/node/tasks/:id/comments", nodeAgentH.CreateAgentComment)
 
 	// Auth required
 

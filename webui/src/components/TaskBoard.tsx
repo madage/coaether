@@ -61,8 +61,9 @@ export function TaskBoard({ initialTaskId, onTaskOpened }: { initialTaskId?: str
 
   const fetchProcessingTasks = useCallback(async () => {
     try {
-      const res = await agentQueueApi.list({ status: 'processing' });
-      setProcessingTasks(new Set(res.queue.map(q => q.task_id)));
+      const res = await agentQueueApi.list();
+      const active = res.queue.filter(q => q.status === 'processing');
+      setProcessingTasks(new Set(active.map(q => q.task_id)));
     } catch {
       // silently fail
     }

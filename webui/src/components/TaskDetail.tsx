@@ -75,8 +75,8 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
 
   useEffect(() => {
     // Check if this task is currently being processed by an agent
-    agentQueueApi.list({ status: 'processing' }).then(res => {
-      setIsProcessing(res.queue.some(q => q.task_id === currentTask.id));
+    agentQueueApi.list().then(res => {
+      setIsProcessing(res.queue.some(q => q.status === 'processing' && q.task_id === currentTask.id));
     }).catch(() => {});
   }, [currentTask.id]);
 

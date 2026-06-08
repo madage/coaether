@@ -536,6 +536,10 @@ func Migrate() error {
 			// Agent as Colleague: Phase 3 — Task auto_assign flag
 			"ALTER TABLE tasks ADD COLUMN IF NOT EXISTS auto_assign BOOLEAN NOT NULL DEFAULT false",
 
+			// Agent as Colleague: Phase 4 — Queue trigger metadata
+			"ALTER TABLE task_agent_queue ADD COLUMN IF NOT EXISTS trigger_type VARCHAR(32) DEFAULT ''",
+			"ALTER TABLE task_agent_queue ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'",
+
 	}
 
 	for _, a := range alterations {

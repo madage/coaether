@@ -76,14 +76,18 @@ func (h *AgentScheduler) List(c *gin.Context) {
 	items := make([]models.TaskAgentQueue, 0)
 	for rows.Next() {
 		var item models.TaskAgentQueue
+		var snapshot sql.NullString
 		if err := rows.Scan(&item.ID, &item.TaskID, &item.AgentProfileID, &item.Status,
 			&item.AssignedAt, &item.ClaimedAt, &item.CompletedAt, &item.ResultSummary,
-			&item.Snapshot, &item.CreatedAt); err != nil {
+			&snapshot, &item.CreatedAt); err != nil {
 			continue
+		}
+		if snapshot.Valid && snapshot.String != "" {
+			raw := json.RawMessage(snapshot.String)
+			item.Snapshot = &raw
 		}
 		items = append(items, item)
 	}
-
 	c.JSON(http.StatusOK, gin.H{"queue": items})
 }
 

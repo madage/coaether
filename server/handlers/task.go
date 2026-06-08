@@ -916,6 +916,38 @@ func (h *TaskHandler) SetStatus(c *gin.Context) {
 		h.Hub.SignalChange("tasks")
 	}
 
+	// Auto-process: if status changed to in_progress and assigned to an agent
+	if req.Status == "in_progress" && t.AssigneeType != nil && *t.AssigneeType == "agent_profile" && t.AssigneeID != nil {
+		agentProfileID := *t.AssigneeID
+		var canProcess bool
+		h.DB.QueryRow(
+			`SELECT COALESCE(current_load, 0) < COALESCE(max_concurrency, 1) FROM agent_profiles WHERE id = $1 AND enabled = true`,
+			agentProfileID,
+		).Scan(&canProcess)
+
+		if canProcess {
+			queueID := uuid.New().String()
+			now := time.Now()
+
+			h.DB.Exec(
+				`INSERT INTO task_agent_queue (id, task_id, agent_profile_id, status, trigger_type, assigned_at, created_at)
+				 VALUES ($1, $2, $3, 'queued', 'status_change', $4, $4)`,
+				queueID, taskID, agentProfileID, now,
+			)
+			h.DB.Exec(`UPDATE agent_profiles SET current_load = current_load + 1, last_active_at = $1 WHERE id = $2`,
+				now, agentProfileID)
+
+			if h.Hub != nil {
+				h.Hub.SignalChange("task_agent_queue")
+			}
+
+			// Auto-process via MessageBus if runtime is connected
+			if h.MessageBus != nil {
+				autoProcessTask(h.DB, h.MessageBus, taskID, agentProfileID, queueID)
+			}
+		}
+	}
+
 	// Notify assignees about status change
 	if h.Notifier != nil {
 		actorID, _ := c.Get("user_id")
@@ -1123,7 +1155,7 @@ func (h *TaskHandler) ListComments(c *gin.Context) {
 		if err := rows.Scan(
 			&cm.ID, &cm.TaskID, &cm.UserID, &cm.Username,
 			&cm.AgentProfileID, &cm.AgentName, &cm.AgentAvatar,
-			&cm.Content, &cm.ParentID, &cm.CreatedAt, &cm.UpdatedAt,
+			&cm.Content, &cm.ParentID, &cm.IsAgentComment, &cm.CreatedAt, &cm.UpdatedAt,
 		); err != nil {
 			continue
 		}
@@ -1235,6 +1267,62 @@ func (h *TaskHandler) CreateComment(c *gin.Context) {
 					req.Content,
 					&taskID)
 			}
+
+			// Notify @mentioned agent profiles
+			var wsID string
+			h.DB.QueryRow(`SELECT workspace_id FROM tasks WHERE id = $1`, taskID).Scan(&wsID)
+			for _, name := range mentioned {
+				var ap struct {
+					ID     string
+					NodeID string
+				}
+				err := h.DB.QueryRow(
+					`SELECT id, node_id FROM agent_profiles WHERE workspace_id = $1 AND name = $2 AND enabled = true`,
+					wsID, name,
+				).Scan(&ap.ID, &ap.NodeID)
+				if err != nil || ap.NodeID == "" {
+					continue
+				}
+
+				queueID := uuid.New().String()
+				now := time.Now()
+				metadata, _ := json.Marshal(map[string]string{
+					"trigger_type":    "mention",
+					"comment_id":      comment.ID,
+					"comment_content": req.Content,
+				})
+
+				h.DB.Exec(
+					`INSERT INTO task_agent_queue (id, task_id, agent_profile_id, status, trigger_type, metadata, assigned_at, created_at)
+					 VALUES ($1, $2, $3, 'queued', 'mention', $4, $5, $5)`,
+					queueID, taskID, ap.ID, metadata, now,
+				)
+				h.DB.Exec(`UPDATE agent_profiles SET current_load = current_load + 1, last_active_at = $1 WHERE id = $2`,
+					now, ap.ID)
+
+				if h.Hub != nil {
+					h.Hub.SignalChange("task_agent_queue")
+				}
+
+				// Send instant mention event to the runtime via MessageBus
+				if h.MessageBus != nil {
+					runtimeEndpoint := "runtime://" + ap.NodeID
+					mentionEnv := protocol.NewEnvelope("system://api", runtimeEndpoint, protocol.MsgAgentMention,
+						&protocol.Payload{
+							Metadata: map[string]any{
+								"task_id":           taskID,
+								"task_title":        taskTitle,
+								"queue_id":          queueID,
+								"comment_id":        comment.ID,
+								"comment_content":   req.Content,
+								"agent_profile_id":  ap.ID,
+							},
+						},
+					)
+					h.MessageBus.Deliver(mentionEnv)
+					log.Printf("[Task] Sent MsgAgentMention to %s for agent %s", runtimeEndpoint, ap.ID[:8])
+				}
+			}
 		}
 
 	// Evaluate automation rules on comment
@@ -1246,8 +1334,9 @@ func (h *TaskHandler) CreateComment(c *gin.Context) {
 }
 
 // parseMentions extracts @username mentions from a comment string.
+// Supports Unicode characters (e.g., Chinese) in addition to ASCII \w.
 func parseMentions(content string) []string {
-	re := regexp.MustCompile(`@(\w{2,64})`)
+	re := regexp.MustCompile(`@([\p{L}\p{N}_]{2,64})`)
 	matches := re.FindAllStringSubmatch(content, -1)
 	seen := make(map[string]bool)
 	var result []string

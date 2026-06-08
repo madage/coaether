@@ -44,6 +44,12 @@ webui/build/
 .DS_Store
 Thumbs.db
 
+# === Startup scripts ===
+start.bat
+start.ps1
+stop.bat
+stop.ps1
+
 # === Environment & Secrets ===
 .env
 .env.local

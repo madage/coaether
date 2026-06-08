@@ -16,6 +16,9 @@ func NewEchoBackend() *EchoBackend {
 
 func (b *EchoBackend) Name() string    { return "Echo" }
 func (b *EchoBackend) Version() string { return "1.0.0" }
+func (b *EchoBackend) Evaluate(prompt string) (string, error) {
+	return "REPLY: Acknowledged via Echo backend.", nil
+}
 
 func (b *EchoBackend) HandleMessage(env *protocol.Envelope) (*protocol.Envelope, error) {
 	content := env.Payload.Content

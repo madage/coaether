@@ -16,14 +16,16 @@ const (
 )
 
 type TaskAgentQueue struct {
-	ID             string          `json:"id"`
-	TaskID         string          `json:"task_id"`
-	AgentProfileID string          `json:"agent_profile_id"`
-	Status         string          `json:"status"`
-	AssignedAt     *time.Time      `json:"assigned_at,omitempty"`
-	ClaimedAt      *time.Time      `json:"claimed_at,omitempty"`
-	CompletedAt    *time.Time      `json:"completed_at,omitempty"`
-	ResultSummary  string          `json:"result_summary"`
-	Snapshot       json.RawMessage `json:"snapshot,omitempty"`
-	CreatedAt      time.Time       `json:"created_at"`
+	ID             string           `json:"id"`
+	TaskID         string           `json:"task_id"`
+	AgentProfileID string           `json:"agent_profile_id"`
+	Status         string           `json:"status"`
+	TriggerType    string           `json:"trigger_type,omitempty"`    // status_change | mention
+	Metadata       *json.RawMessage `json:"metadata,omitempty"`       // trigger context
+	AssignedAt     *time.Time       `json:"assigned_at,omitempty"`
+	ClaimedAt      *time.Time       `json:"claimed_at,omitempty"`
+	CompletedAt    *time.Time       `json:"completed_at,omitempty"`
+	ResultSummary  string           `json:"result_summary"`
+	Snapshot       *json.RawMessage `json:"snapshot,omitempty"`
+	CreatedAt      time.Time        `json:"created_at"`
 }

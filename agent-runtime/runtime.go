@@ -225,6 +225,9 @@ func (r *Runtime) handleMessage(env *protocol.Envelope) {
 		r.Shutdown()
 		os.Exit(0)
 
+	case protocol.MsgAgentMention:
+		r.handleAgentMention(env)
+
 	default:
 		log.Printf("[Runtime] Unhandled type: %s", env.Type)
 	}
@@ -301,7 +304,9 @@ type queueItem struct {
 	TaskID         string `json:"task_id"`
 	AgentProfileID string `json:"agent_profile_id"`
 	Status         string `json:"status"`
+	TriggerType    string `json:"trigger_type"`
 	AgentName      string `json:"agent_name"`
+	CreatedAt      string `json:"created_at"`
 }
 
 type queueResponse struct {
@@ -334,7 +339,13 @@ func (r *Runtime) pollQueue() {
 
 	// GET /api/node/queue?node_id=...&node_secret=...
 	u := fmt.Sprintf("%s/api/node/queue?node_id=%s&node_secret=%s", baseURL, r.NodeID, r.Secret)
-	resp, err := http.Get(u)
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			Proxy: nil,
+		},
+	}
+	resp, err := client.Get(u)
 	if err != nil {
 		log.Printf("[Runtime] Queue poll failed: %v", err)
 		return
@@ -343,6 +354,7 @@ func (r *Runtime) pollQueue() {
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
+		log.Printf("[Runtime] Queue poll unexpected status %d: %s", resp.StatusCode, string(body))
 		return
 	}
 
@@ -378,7 +390,9 @@ func (r *Runtime) processQueueItem(item queueItem) {
 	// 2. Set status to processing
 	statusURL := fmt.Sprintf("%s/api/node/queue/%s/status?%s", baseURL, item.ID, auth)
 	body := `{"status":"processing"}`
-	resp, err = http.Post(statusURL, "application/json", bytes.NewBufferString(body))
+		req, _ := http.NewRequest("PUT", statusURL, bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err = http.DefaultClient.Do(req)
 	if err != nil {
 		log.Printf("[Runtime] Status update failed: %v", err)
 		return
@@ -440,6 +454,7 @@ type Backend interface {
 	Name() string
 	Version() string
 	HandleMessage(env *protocol.Envelope) (*protocol.Envelope, error)
+	Evaluate(prompt string) (string, error)
 }
 
 // loadConfig reads ~/.coaether/env and sets env vars if not already set.
@@ -637,6 +652,169 @@ func (r *Runtime) handleSessionComplete(sessionID, result, stopReason string, is
 	} else {
 		log.Printf("[Runtime] Queue update returned %d", resp.StatusCode)
 	}
+}
+
+// handleAgentMention processes an @mention event from the server.
+// It evaluates whether the agent should work on the task or just reply.
+func (r *Runtime) handleAgentMention(env *protocol.Envelope) {
+	if env.Payload == nil || env.Payload.Metadata == nil {
+		return
+	}
+	meta := env.Payload.Metadata
+
+	taskID, _ := meta["task_id"].(string)
+	queueID, _ := meta["queue_id"].(string)
+	commentContent, _ := meta["comment_content"].(string)
+	taskTitle, _ := meta["task_title"].(string)
+	agentProfileID, _ := meta["agent_profile_id"].(string)
+
+	if taskID == "" || queueID == "" {
+		log.Printf("[Runtime] Incomplete mention event: missing task_id or queue_id")
+		return
+	}
+
+	log.Printf("[Runtime] Agent mentioned in task %s (queue: %s)", taskID[:8], queueID[:8])
+
+	// Get task details for evaluation context
+	baseURL := "http://" + r.ServerURL
+	auth := fmt.Sprintf("node_id=%s&node_secret=%s", r.NodeID, r.Secret)
+
+	taskDesc := ""
+	taskURL := fmt.Sprintf("%s/api/node/tasks/%s?%s", baseURL, taskID, auth)
+	resp, err := http.Get(taskURL)
+	if err == nil {
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		var taskResp struct {
+			Task struct {
+				Description string `json:"description"`
+			} `json:"task"`
+		}
+		json.Unmarshal(body, &taskResp)
+		taskDesc = taskResp.Task.Description
+	}
+
+	// Build evaluation prompt
+	evalPrompt := fmt.Sprintf(`You have been @mentioned in a comment on the task "%s".
+
+Task Description: %s
+
+Comment: %s
+
+Respond with exactly one of these two formats:
+- WORK: <brief reason> — if this task needs your work
+- REPLY: <your response> — if a simple reply is sufficient`, taskTitle, taskDesc, commentContent)
+
+	// Use the first available backend to evaluate
+	var evalResult string
+	for _, backend := range r.backends {
+		evalResult, err = backend.Evaluate(evalPrompt)
+		if err != nil {
+			log.Printf("[Runtime] Evaluation error: %v", err)
+			return
+		}
+		break
+	}
+
+	evalResult = strings.TrimSpace(evalResult)
+	log.Printf("[Runtime] Evaluation result: %s", truncateStr(evalResult, 200))
+
+	switch {
+	case strings.HasPrefix(evalResult, "REPLY:"):
+		reply := strings.TrimSpace(strings.TrimPrefix(evalResult, "REPLY:"))
+		if reply == "" {
+			reply = "Acknowledged."
+		}
+		r.postAgentComment(taskID, agentProfileID, queueID, reply)
+		r.updateQueueStatus(queueID, "completed", reply)
+
+	case strings.HasPrefix(evalResult, "WORK:"):
+		// Set queue to processing (server will set task to in_progress)
+		r.updateQueueStatus(queueID, "processing", "")
+
+		// Create a session for task processing
+		sessionURL := fmt.Sprintf("%s/api/node/sessions?%s", baseURL, auth)
+		sessionReq := map[string]string{
+			"task_id":  taskID,
+			"agent_id": "claude",
+			"queue_id": queueID,
+		}
+		sessionBody, _ := json.Marshal(sessionReq)
+		resp, err := http.Post(sessionURL, "application/json", bytes.NewBuffer(sessionBody))
+		if err != nil {
+			log.Printf("[Runtime] Session creation failed: %v", err)
+			return
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusCreated {
+			var sr struct {
+				SessionID string `json:"session_id"`
+			}
+			json.NewDecoder(resp.Body).Decode(&sr)
+			log.Printf("[Runtime] Session %s created for mentioned task %s", sr.SessionID[:8], taskID[:8])
+		} else {
+			log.Printf("[Runtime] Session creation returned %d", resp.StatusCode)
+		}
+
+	default:
+		log.Printf("[Runtime] Unrecognized evaluation result, defaulting to REPLY")
+		r.postAgentComment(taskID, agentProfileID, queueID, "Acknowledged.")
+		r.updateQueueStatus(queueID, "completed", "Acknowledged.")
+	}
+}
+
+// postAgentComment posts a comment on a task on behalf of an agent profile.
+func (r *Runtime) postAgentComment(taskID, agentProfileID, queueID, content string) {
+	baseURL := "http://" + r.ServerURL
+	auth := fmt.Sprintf("node_id=%s&node_secret=%s", r.NodeID, r.Secret)
+
+	body := map[string]string{
+		"content":          content,
+		"agent_profile_id": agentProfileID,
+		"queue_id":         queueID,
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	u := fmt.Sprintf("%s/api/node/tasks/%s/comments?%s", baseURL, taskID, auth)
+	resp, err := http.Post(u, "application/json", bytes.NewBuffer(bodyBytes))
+	if err != nil {
+		log.Printf("[Runtime] Post comment failed: %v", err)
+		return
+	}
+	resp.Body.Close()
+	log.Printf("[Runtime] Posted agent comment on task %s (status: %d)", taskID[:8], resp.StatusCode)
+}
+
+// updateQueueStatus updates a queue item's status on the server.
+func (r *Runtime) updateQueueStatus(queueID, status, resultSummary string) {
+	baseURL := "http://" + r.ServerURL
+	auth := fmt.Sprintf("node_id=%s&node_secret=%s", r.NodeID, r.Secret)
+
+	body := map[string]string{
+		"status": status,
+	}
+	if resultSummary != "" {
+		body["result_summary"] = resultSummary
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	u := fmt.Sprintf("%s/api/node/queue/%s/status?%s", baseURL, queueID, auth)
+	resp, err := http.Post(u, "application/json", bytes.NewBuffer(bodyBytes))
+	if err != nil {
+		log.Printf("[Runtime] Queue status update failed: %v", err)
+		return
+	}
+	resp.Body.Close()
+	log.Printf("[Runtime] Queue %s → %s (status: %d)", queueID[:8], status, resp.StatusCode)
+}
+
+// truncateStr truncates a string for logging.
+func truncateStr(s string, maxLen int) string {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
+		return s
+	}
+	return string(runes[:maxLen]) + "..."
 }
 
 func (r *Runtime) runLoop() {

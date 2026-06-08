@@ -142,6 +142,52 @@ func (b *ClaudeBackend) HandleMessage(env *protocol.Envelope) (*protocol.Envelop
 	}), nil
 }
 
+func (b *ClaudeBackend) Evaluate(prompt string) (string, error) {
+	reqBody := anthropicRequest{
+		Model:     b.model,
+		MaxTokens: 512,
+		System:    "You are an AI assistant evaluating a task mention. Respond with exactly one of two formats: WORK: <reason> or REPLY: <response>.",
+		Messages:  []anthropicMessage{{Role: "user", Content: prompt}},
+	}
+
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", fmt.Errorf("marshal: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", b.apiKey)
+	req.Header.Set("anthropic-version", "2023-06-01")
+
+	resp, err := b.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("API request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("API error %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result anthropicResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decode: %w", err)
+	}
+
+	var sb strings.Builder
+	for _, c := range result.Content {
+		if c.Type == "text" {
+			sb.WriteString(c.Text)
+		}
+	}
+	return strings.TrimSpace(sb.String()), nil
+}
+
 func extractText(blocks []protocol.ContentBlock) string {
 	var parts []string
 	for _, b := range blocks {
