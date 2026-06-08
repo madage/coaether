@@ -135,6 +135,7 @@ func main() {
 	pluginH := handlers.NewPluginHandler(pluginMgr)
 
 	nodeAgentH := handlers.NewNodeAgentHandler(database.DB, messageBus)
+	nodeAgentH.Hub = dashHub
 
 	// Router
 

@@ -18,6 +18,7 @@ import (
 
 type NodeAgentHandler struct {
 	DB  *sql.DB
+	Hub *DashboardHub
 	Bus *protocol.MessageBus
 }
 
@@ -158,6 +159,9 @@ func (h *NodeAgentHandler) ClaimQueueItem(c *gin.Context) {
 
 	log.Printf("[NodeAgent] Node %s claimed queue item %s", auth.NodeID, queueID)
 	c.JSON(http.StatusOK, gin.H{"status": "claimed"})
+	if h.Hub != nil {
+		h.Hub.SignalChange("task_agent_queue")
+	}
 }
 
 // UpdateQueueStatus updates a queue item's status.
@@ -216,6 +220,9 @@ func (h *NodeAgentHandler) UpdateQueueStatus(c *gin.Context) {
 
 	log.Printf("[NodeAgent] Queue item %s → %s", queueID, req.Status)
 	c.JSON(http.StatusOK, gin.H{"status": "updated"})
+	if h.Hub != nil {
+		h.Hub.SignalChange("task_agent_queue")
+	}
 }
 
 // GetTask returns task details (title + description) for a task.
