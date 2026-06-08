@@ -324,15 +324,15 @@ func (h *TaskHandler) processAgentTask(taskID, agentProfileID, queueID string) {
 		return
 	}
 
-	// Get task details + agent profile node_id
-	var title, description, workspaceID, nodeID string
+	// Get task details + agent profile node_id + task owner
+	var title, description, workspaceID, nodeID, userID string
 	err := h.DB.QueryRow(`
-		SELECT t.title, COALESCE(t.description,''), t.workspace_id, ap.node_id
+		SELECT t.title, COALESCE(t.description,''), t.workspace_id, ap.node_id, t.user_id
 		FROM tasks t
 		JOIN agent_profiles ap ON ap.id = $2
 		WHERE t.id = $1 AND t.deleted_at IS NULL`,
 		taskID, agentProfileID,
-	).Scan(&title, &description, &workspaceID, &nodeID)
+	).Scan(&title, &description, &workspaceID, &nodeID, &userID)
 	if err != nil || nodeID == "" {
 		return // can't process without a node
 	}
@@ -361,8 +361,8 @@ func (h *TaskHandler) processAgentTask(taskID, agentProfileID, queueID string) {
 
 	h.DB.Exec(
 		`INSERT INTO sessions (id, user_id, node_id, agent_id, status, prompt, workspace, created_at, updated_at)
-		 VALUES ($1, '', $2, 'claude', $3, $4, $5, $6, $6)`,
-		sessionID, nodeID, models.SessionPending, prompt, workspaceID, now,
+		 VALUES ($1, $2, $3, 'claude', $4, $5, $6, $7, $7)`,
+		sessionID, userID, nodeID, models.SessionPending, prompt, workspaceID, now,
 	)
 
 	// Send session.create to the runtime
