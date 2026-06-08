@@ -931,7 +931,7 @@ func (h *TaskHandler) SetStatus(c *gin.Context) {
 
 			h.DB.Exec(
 				`INSERT INTO task_agent_queue (id, task_id, agent_profile_id, status, trigger_type, assigned_at, created_at)
-				 VALUES ($1, $2, $3, 'queued', 'status_change', $4, $4)`,
+				 VALUES ($1, $2, $3, 'processing', 'status_change', $4, $4)`,
 				queueID, taskID, agentProfileID, now,
 			)
 			h.DB.Exec(`UPDATE agent_profiles SET current_load = current_load + 1, last_active_at = $1 WHERE id = $2`,

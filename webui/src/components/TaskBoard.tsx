@@ -130,13 +130,16 @@ export function TaskBoard({ initialTaskId, onTaskOpened }: { initialTaskId?: str
     }
   }, [workspaceId]);
 
-  useResourceSync('tasks', () => fetchTasks({
-    projectId: filterProjectId || undefined,
-    priority: filterPriority || undefined,
-    tag: filterTag || undefined,
-    assigneeId: filterAssigneeId || undefined,
-    delegatedAssigneeId: filterDelegatedId || undefined,
-  }));
+  useResourceSync('tasks', () => {
+    fetchTasks({
+      projectId: filterProjectId || undefined,
+      priority: filterPriority || undefined,
+      tag: filterTag || undefined,
+      assigneeId: filterAssigneeId || undefined,
+      delegatedAssigneeId: filterDelegatedId || undefined,
+    });
+    fetchProcessingTasks();
+  });
 
   useResourceSync('task_agent_queue', fetchProcessingTasks);
 
