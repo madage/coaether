@@ -58,6 +58,7 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
   const [editMaxReviewLoops, setEditMaxReviewLoops] = useState(profile.max_review_loops ?? 3);
   const [editMaxDepth, setEditMaxDepth] = useState(profile.max_depth ?? 5);
   const [editCompletionBehavior, setEditCompletionBehavior] = useState(profile.completion_behavior || 'auto_done');
+  const [editCapabilities, setEditCapabilities] = useState<string[]>(profile.capabilities || []);
   const [editNodeId, setEditNodeId] = useState(profile.node_id || '');
   const [editAgentId, setEditAgentId] = useState(profile.agent_id);
   const [nodeList, setNodeList] = useState<Node[]>([]);
@@ -86,6 +87,22 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
     });
   }, [editNodeId, editing]);
 
+  const availableCapabilities = [
+    { id: 'create_sub_task', label: 'create_sub_task', desc: lang === 'zh' ? '创建子任务' : 'Create sub-tasks' },
+    { id: 'assign_task', label: 'assign_task', desc: lang === 'zh' ? '分配任务' : 'Assign tasks' },
+    { id: 'review_task', label: 'review_task', desc: lang === 'zh' ? '审核任务' : 'Review tasks' },
+    { id: 'add_comment', label: 'add_comment', desc: lang === 'zh' ? '添加评论' : 'Add comments' },
+    { id: 'get_task_detail', label: 'get_task_detail', desc: lang === 'zh' ? '查看任务详情' : 'View task details' },
+    { id: 'list_sub_tasks', label: 'list_sub_tasks', desc: lang === 'zh' ? '列出子任务' : 'List sub-tasks' },
+    { id: 'update_task_status', label: 'update_task_status', desc: lang === 'zh' ? '更新任务状态' : 'Update task status' },
+  ];
+
+  const toggleCapability = (cap: string) => {
+    setEditCapabilities(prev =>
+      prev.includes(cap) ? prev.filter(c => c !== cap) : [...prev, cap]
+    );
+  };
+
   const handleSave = () => {
     onSave?.(profile.id, {
       name: editName,
@@ -102,6 +119,7 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
       max_review_loops: editMaxReviewLoops,
       max_depth: editMaxDepth,
       completion_behavior: editCompletionBehavior,
+      capabilities: editCapabilities,
     });
     setEditing(false);
   };
@@ -121,6 +139,7 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
     setEditSkills(profile.skills?.join(', ') || '');
     setEditAgentId(profile.agent_id);
     setEditNodeId(profile.node_id || '');
+    setEditCapabilities(profile.capabilities || []);
     setEditing(false);
   };
 
@@ -281,6 +300,30 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
             </div>
             <div>
               <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
+                {t('agentCapabilities')}
+              </label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                {availableCapabilities.map(cap => (
+                  <label key={cap.id} style={{
+                    display: 'flex', alignItems: 'center', gap: '4px',
+                    padding: '4px 10px', borderRadius: '6px', cursor: 'pointer',
+                    background: editCapabilities.includes(cap.id) ? '#e3f2fd' : '#f5f5f5',
+                    border: editCapabilities.includes(cap.id) ? '1px solid #1976d2' : '1px solid #ddd',
+                    fontSize: '0.8em', userSelect: 'none',
+                  }}>
+                    <input
+                      type="checkbox"
+                      checked={editCapabilities.includes(cap.id)}
+                      onChange={() => toggleCapability(cap.id)}
+                      style={{ margin: 0 }}
+                    />
+                    <span style={{ color: editCapabilities.includes(cap.id) ? '#1565c0' : '#666' }}>{cap.desc}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
                 {t('agentSkills')}
               </label>
               <input
@@ -430,6 +473,22 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
                       background: '#f3e5f5', color: '#6a1b9a', padding: '2px 10px',
                       borderRadius: '10px', fontSize: '0.8em', fontWeight: 500,
                     }}>{skill}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {profile.capabilities && profile.capabilities.length > 0 && (
+              <div style={{ marginBottom: '16px' }}>
+                <div style={{ fontWeight: 600, color: '#333', fontSize: '0.9em', marginBottom: '8px' }}>
+                  {t('agentCapabilities')}
+                </div>
+                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                  {profile.capabilities.map((cap, i) => (
+                    <span key={i} style={{
+                      background: '#e8f5e9', color: '#2e7d32', padding: '2px 10px',
+                      borderRadius: '10px', fontSize: '0.8em', fontWeight: 500,
+                    }}>{cap}</span>
                   ))}
                 </div>
               </div>

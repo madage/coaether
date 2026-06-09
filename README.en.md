@@ -96,6 +96,7 @@ The system uses a **dual WebSocket channel** architecture:
 - Supports CLI and API backend modes
 - Automatic runtime discovery and registration
 - Workspace-scoped configuration
+- **Capability System** — Each agent profile has a set of capabilities (`create_sub_task`, `assign_task`, `review_task`, `add_comment`, `get_task_detail`, `list_sub_tasks`, `update_task_status`) that govern which tools the agent can use; configurable at creation and editable in the detail modal
 - **Behavior Instructions** — Define communication style, tone, and guidelines per agent; injected into auto-task prompts for more natural interactions
 
 ### Task Management
@@ -108,9 +109,27 @@ The system uses a **dual WebSocket channel** architecture:
 - Trash mechanism: soft delete + restore + permanent delete
 - Workspace isolation
 
+### Task Management (Detail)
+- **Kanban Board** — Status transitions: `todo` → `in_progress` → `blocked` → `review` → `done`
+- **Task Detail** (GitHub Issue style) — Inline editing for title, description, subtask list, comments; right sidebar for status, priority, assignee, tags, due date, project
+- **Three-level responsibility** — Creator → Assignee → Delegated Assignees
+- **Subtasks** — Linked via `parent_id`
+- **Priority levels** — `urgent` > `high` > `medium` > `low`
+- **Task Comments** — Issue-style, postable by both users and agents
+- Linked to projects
+
+### Automation Rules
+- **Trigger→Condition→Action** engine: "When X happens, if condition Y, execute action Z"
+- **4 trigger types**: `on_comment`, `on_status_change`, `on_assignee_change`, `on_task_create`
+- **5 action types**: `set_priority`, `set_status`, `set_assignee`, `add_tag`, `webhook`
+- **Conditions**: `equals`, `contains`, `matches` (regex), `is_null`, `not_exists`
+- **Rule management UI**: create/edit/delete/toggle with execution logs
+
 ### Project Management
-- Color labels, descriptions
-- Linked task count
+- Color labels, descriptions, linked task count
+- Status transitions: `planning` → `active` → `completed` / `on_hold`
+- Polymorphic assignee (user or agent)
+- Start/due dates support
 - Trash mechanism (soft delete/restore/permanent delete)
 - Workspace isolation
 
@@ -241,9 +260,15 @@ All communication uses JSON `Envelope` format:
 | `messages` | Message history | session_id, envelope (JSONB) |
 | `nodes` | Runtime nodes | id, name, status, ip, max_sessions |
 | `agents` | Agent instances | node_id, name, command, enabled |
-| `agent_profiles` | User Agent configs | user_id, name, avatar, model, backend, system_prompt, instructions |
-| `tasks` | Tasks | title, status, project_id, workspace_id |
-| `projects` | Projects | name, color, workspace_id |
+| `agent_profiles` | User Agent profiles | user_id, name, avatar, model, backend, system_prompt, instructions, capabilities, skills |
+| `tasks` | Tasks | title, status, priority, project_id, parent_id, assignee_id, assignee_type, due_at, workspace_id, tags, completion_behavior |
+| `task_assignees` | Delegated assignees | task_id, assignee_id, assignee_type |
+| `task_comments` | Task comments | task_id, user_id, agent_profile_id, content, parent_id |
+| `task_agent_queue` | Agent processing queue | task_id, agent_profile_id, status, trigger_type, metadata (JSONB) |
+| `task_rules` | Automation rules | workspace_id, name, trigger_type, conditions (JSONB), actions (JSONB) |
+| `task_rule_logs` | Rule execution logs | rule_id, task_id, trigger_event, matched |
+| `projects` | Projects | name, color, status, assignee, started_at, due_at, workspace_id |
+| `workflows` | Workflows | title, status, token_budget, tokens_used |
 
 ---
 
@@ -283,6 +308,13 @@ All communication uses JSON `Envelope` format:
 - `DELETE /api/agents/profiles/:id` — Delete
 - `GET /api/agents/runtimes` — Available runtimes
 
+### Agent Queue
+- `GET /api/agents/queue` — Query queue with filters
+- `POST /api/agents/auto-assign/:taskId` — Auto assign agent to task
+- `POST /api/agents/queue/:id/claim` — Claim queue item
+- `PUT /api/agents/queue/:id/status` — Update queue status
+- `GET /api/agents/queue/agents` — Query agent load info
+
 ### Sessions
 - `POST /api/sessions` — Create
 - `GET /api/sessions` — List (supports `?workspace_id=` filter)
@@ -290,19 +322,37 @@ All communication uses JSON `Envelope` format:
 - `GET /api/sessions/:id/messages` — Message history
 
 ### Tasks
-- `GET /api/tasks` — List
+- `GET /api/tasks` — List (supports `?project_id=`, `?parent_id=`, `?assignee_id=`, `?priority=`, `?tag=` filtering)
 - `POST /api/tasks` — Create
 - `GET /api/tasks/trash` — Trash
+- `GET /api/tasks/:id` — Detail
 - `PUT /api/tasks/:id` — Update
 - `DELETE /api/tasks/:id` — Soft delete
 - `DELETE /api/tasks/:id/force` — Permanent delete
 - `POST /api/tasks/:id/restore` — Restore
 - `PATCH /api/tasks/:id/status` — Update status
+- `POST /api/tasks/:id/assignees` — Add delegated assignee
+- `DELETE /api/tasks/:id/assignees/:assigneeId` — Remove delegated assignee
+- `GET /api/tasks/:id/assignees` — Delegated assignees list
+- `GET /api/tasks/:id/subtasks` — Subtasks list
+- `GET /api/tasks/:id/comments` — Comments list
+- `POST /api/tasks/:id/comments` — Create comment
+- `DELETE /api/tasks/:id/comments/:commentId` — Delete comment
+- `POST /api/tasks/:id/review` — Review task (approve/reject)
+
+### Task Rules
+- `GET /api/rules?workspace_id=` — List rules
+- `POST /api/rules?workspace_id=` — Create rule
+- `GET /api/rules/:id` — Get rule detail
+- `PUT /api/rules/:id` — Update rule
+- `DELETE /api/rules/:id` — Delete rule
+- `GET /api/rules/:id/logs` — Rule execution logs
 
 ### Projects
-- `GET /api/projects` — List
+- `GET /api/projects` — List (supports `?status=` filtering)
 - `POST /api/projects` — Create
 - `GET /api/projects/trash` — Trash
+- `GET /api/projects/:id` — Detail
 - `PUT /api/projects/:id` — Update
 - `DELETE /api/projects/:id` — Soft delete
 - `DELETE /api/projects/:id/force` — Permanent delete
@@ -322,12 +372,23 @@ All communication uses JSON `Envelope` format:
 - `PATCH /api/agents/:id` — Enable/disable Agent
 - `DELETE /api/nodes/:id` — Remove node
 
+### Workflows
+- `GET /api/workflows` — List workflows
+- `POST /api/workflows` — Create workflow
+- `GET /api/workflows/:id` — Workflow detail with task summary
+- `PATCH /api/workflows/:id/status` — Update workflow status
+- `GET /api/workflows/:id/tasks` — List workflow tasks
+- `POST /api/workflows/attach` — Attach task to workflow
+
 ### WebSocket
 - `GET /ws/dashboard?token={jwt}` — Dashboard real-time notifications
 - `GET /ws/bus?type=ui&user_id={id}` — Message Bus routing
 
 ### User Management
 - `GET /api/users` — User list (admin/owner)
+- `DELETE /api/users/:id` — Delete user (admin/owner)
+
+> Full API documentation available in [Coaether项目API接口文档.md](Coaether项目API接口文档.md)
 - `DELETE /api/users/:id` — Delete user (admin/owner)
 
 ---
@@ -497,6 +558,10 @@ coaether/
 │   │   │   ├── NodeList.tsx        # Node card list (status / Agent / delete)
 │   │   │   ├── TaskBoard.tsx       # Task kanban board
 │   │   │   ├── ProjectList.tsx     # Project list
+│   │   │   ├── AgentDetailModal.tsx  # Agent detail & edit modal
+│   │   │   ├── AgentForm.tsx         # Agent creation form
+│   │   │   ├── AgentQueuePanel.tsx   # Agent queue status panel
+│   │   │   ├── WorkflowList.tsx      # Workflow list
 │   │   │   ├── NotificationBell.tsx # Notification bell
 │   │   │   ├── AgentList.tsx       # Agent list
 │   │   │   ├── Sidebar.tsx         # Sidebar

@@ -97,6 +97,7 @@ The system uses a **dual WebSocket channel** architecture:
 - Supports CLI and API backend modes
 - Runtime auto-discovery and registration
 - Supports workspace-scoped configuration
+- **Capability System** — Each agent profile has a set of capabilities (`create_sub_task`, `assign_task`, `review_task`, `add_comment`, `get_task_detail`, `list_sub_tasks`, `update_task_status`) that govern which tools the agent can use; configurable at creation and editable in the detail modal
 - **Behavior Instructions** — Define communication style, tone, and guidelines per agent; injected into auto-task prompts for more natural interactions
 
 ### Task Management
@@ -262,11 +263,12 @@ All communication is based on JSON `Envelope` format:
 | `messages` | Message history | session_id, envelope (JSONB) |
 | `nodes` | Runtime nodes | id, name, status, ip, max_sessions |
 | `agents` | Agent instances | node_id, name, command, enabled |
-| `agent_profiles` | User Agent profiles | user_id, name, avatar, model, backend, system_prompt, instructions, skills, review_sample_rate, max_concurrency, max_depth, max_review_loops, completion_behavior |
-| `tasks` | Tasks | title, status, priority, project_id, parent_id, assignee_id, assignee_type, due_at, workspace_id, tags |
+| `agent_profiles` | User Agent profiles | user_id, name, avatar, model, backend, system_prompt, instructions, capabilities, skills, review_sample_rate, max_concurrency, max_depth, max_review_loops, completion_behavior |
+| `tasks` | Tasks | title, status, priority, project_id, parent_id, assignee_id, assignee_type, due_at, workspace_id, tags, completion_behavior |
 | `task_assignees` | Delegated assignees | task_id, assignee_id, assignee_type |
 | `task_tags` | Task tags | task_id, tag |
 | `task_comments` | Task comments | task_id, user_id, agent_profile_id, content, parent_id |
+| `task_agent_queue` | Agent processing queue | task_id, agent_profile_id, status, trigger_type, metadata (JSONB) |
 | `task_rules` | Automation rules | workspace_id, name, trigger_type, conditions (JSONB), actions (JSONB) |
 | `task_rule_logs` | Rule execution logs | rule_id, task_id, trigger_event, matched |
 | `projects` | Projects | name, color, status, assignee, started_at, due_at, workspace_id |
@@ -309,6 +311,13 @@ All communication is based on JSON `Envelope` format:
 - `DELETE /api/agents/profiles/:id` — Delete
 - `GET /api/agents/runtimes` — Available runtimes list
 
+### Agent Queue
+- `GET /api/agents/queue` — Query queue with filters
+- `POST /api/agents/auto-assign/:taskId` — Auto assign agent to task
+- `POST /api/agents/queue/:id/claim` — Claim queue item
+- `PUT /api/agents/queue/:id/status` — Update queue status
+- `GET /api/agents/queue/agents` — Query agent load info
+
 ### Sessions
 - `POST /api/sessions` — Create
 - `GET /api/sessions` — List (supports `?workspace_id=` filtering)
@@ -332,6 +341,7 @@ All communication is based on JSON `Envelope` format:
 - `GET /api/tasks/:id/comments` — Comments list
 - `POST /api/tasks/:id/comments` — Create comment
 - `DELETE /api/tasks/:id/comments/:commentId` — Delete comment
+- `POST /api/tasks/:id/review` — Review task (approve/reject)
 
 ### Task Rules
 - `GET /api/rules?workspace_id=` — List rules
@@ -553,6 +563,11 @@ coaether/
 │   │   │   ├── RuleForm.tsx         # Rule create/edit form modal
 │   │   │   ├── RuleLogModal.tsx     # Rule execution log viewer
 │   │   │   ├── AgentList.tsx        # Agent list
+│   │   │   ├── AgentDetailModal.tsx  # Agent detail & edit modal
+│   │   │   ├── AgentForm.tsx         # Agent creation form
+│   │   │   ├── AgentQueuePanel.tsx   # Agent queue status panel
+│   │   │   ├── WorkflowList.tsx      # Workflow list
+│   │   │   ├── TrashView.tsx         # Trash view (tasks & projects)
 │   │   │   ├── Sidebar.tsx          # Sidebar
 │   │   │   ├── LoginForm.tsx        # Login form
 │   │   │   ├── AddNodeDialog.tsx    # Add Node dialog (platform selection/command copy)

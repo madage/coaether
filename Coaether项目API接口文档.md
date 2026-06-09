@@ -1019,12 +1019,12 @@ GET /api/invitations/pending
   "current_load": 1,
   "tags": ["前端", "React"],
   "skills": ["typescript", "css"],
+  "capabilities": ["create_sub_task", "assign_task", "get_task_detail", "list_sub_tasks", "update_task_status"],
   "last_active_at": "datetime",
   "created_at": "datetime",
   "updated_at": "datetime",
   // Harness 扩展字段
   "protocol_version": "legacy | v1.0",
-  "capabilities": {},
   "permissions": {},
   "max_depth": 5,
   "max_review_loops": 3,
@@ -1076,7 +1076,8 @@ POST /api/agents/profiles?workspace_id=<workspace_id>
   "node_id": "关联的节点 ID（可选）",
   "avatar": "🖥️",
   "tags": ["后端", "Go"],
-  "max_concurrency": 3
+  "max_concurrency": 3,
+  "capabilities": ["create_sub_task", "assign_task", "get_task_detail"]
 }
 ```
 
@@ -1113,7 +1114,8 @@ PUT /api/agents/profiles/:id?workspace_id=<workspace_id>
   "review_timeout": 240,
   "max_review_loops": 3,
   "max_depth": 5,
-  "completion_behavior": "auto_review"
+  "completion_behavior": "auto_review",
+  "capabilities": ["create_sub_task", "assign_task", "get_task_detail"]
 }
 ```
 
