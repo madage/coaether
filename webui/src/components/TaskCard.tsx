@@ -164,6 +164,18 @@ export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap, 
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          {/* Status badge */}
+          <span
+            style={{
+              fontSize: '0.7em', padding: '1px 6px', borderRadius: '8px',
+              background: statusColors[task.status].bg,
+              color: statusColors[task.status].color,
+              fontWeight: 500,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {t(statusKeys[task.status])}
+          </span>
           {/* Priority badge */}
           <span
             style={{

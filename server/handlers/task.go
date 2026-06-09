@@ -1233,7 +1233,7 @@ func (h *TaskHandler) ListComments(c *gin.Context) {
 		LEFT JOIN users u ON u.id = c.user_id
 		LEFT JOIN agent_profiles ap ON ap.id = c.agent_profile_id
 		WHERE c.task_id = $1
-		ORDER BY COALESCE(c.parent_id, c.id), c.created_at ASC`, taskID)
+		ORDER BY c.created_at ASC`, taskID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query comments"})
 		return

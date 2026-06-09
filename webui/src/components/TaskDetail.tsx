@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useLang } from '../i18n/context';
 import { tasks as tasksApi, projects as projectsApi, workspaceMembers as workspaceMembersApi, agentProfiles as agentProfilesApi, comments as commentsApi, agentQueue as agentQueueApi } from '../api/client';
 import { useWorkspace } from '../hooks/WorkspaceContext';
@@ -14,8 +14,11 @@ interface TaskDetailProps {
 const statusOptions: TaskStatus[] = ['todo', 'in_progress', 'blocked', 'review', 'done'];
 const priorityOptions: Priority[] = ['urgent', 'high', 'medium', 'low'];
 
-function highlightMentions(html: string): string {
-  return html.replace(/@(\w{2,64})/g, '<span style="color:#1976d2;font-weight:500;">@$1</span>');
+function highlightMentions(html: string, agentNames: Set<string> = new Set()): string {
+  return html.replace(/@([\w一-鿿]{2,48})/g, (match, name) => {
+    const color = agentNames.has(name) ? '#2e7d32' : '#1976d2';
+    return `<span style="color:${color};font-weight:500;">@${name}</span>`;
+  });
 }
 
 export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailProps) {
@@ -41,6 +44,7 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
 
   // Comments
   const [comments, setComments] = useState<Comment[]>([]);
+  const [commentSortAsc, setCommentSortAsc] = useState(true);
   const [commentInput, setCommentInput] = useState('');
   const commentEditorRef = useRef<HTMLDivElement>(null);
   const [posting, setPosting] = useState(false);
@@ -112,6 +116,9 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
     ...members.map(m => ({ id: m.user_id, name: m.username, type: 'user' as const })),
     ...agentProfiles.map(a => ({ id: a.id, name: a.name, type: 'agent' as const })),
   ];
+
+  // Agent name set for mention highlighting
+  const agentNames = useMemo(() => new Set(agentProfiles.map(a => a.name)), [agentProfiles]);
 
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
@@ -327,7 +334,7 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
             <div style={{
               fontSize: '0.9em', lineHeight: 1.5, color: '#333',
               wordBreak: 'break-word',
-            }} dangerouslySetInnerHTML={{ __html: highlightMentions(c.content) }} />
+            }} dangerouslySetInnerHTML={{ __html: highlightMentions(c.content, agentNames) }} />
             {showReplyEditor && (
               <div style={{ marginTop: '10px', paddingLeft: '8px', borderLeft: '2px solid #1976d2', position: 'relative' }}>
                 {mentionOpen && mentionEditor === 'reply' && (
@@ -350,8 +357,8 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
                         }}
                       >
                         <span>{item.type === 'user' ? '👤' : '🤖'}</span>
-                        <span>{item.name}</span>
-                        <span style={{ marginLeft: 'auto', fontSize: '0.75em', color: '#999' }}>
+                        <span style={{ color: item.type === 'agent' ? '#2e7d32' : '#1976d2' }}>{item.name}</span>
+                        <span style={{ marginLeft: 'auto', fontSize: '0.75em', color: item.type === 'agent' ? '#2e7d32' : '#1976d2' }}>
                           {item.type === 'user' ? 'user' : 'agent'}
                         </span>
                       </div>
@@ -567,6 +574,13 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
     done: { bg: '#c8e6c9', color: '#2e7d32' },
   };
 
+  const priorityColors: Record<Priority, { bg: string; color: string }> = {
+    urgent: { bg: '#ffcdd2', color: '#c62828' },
+    high: { bg: '#ffe0b2', color: '#e65100' },
+    medium: { bg: '#bbdefb', color: '#1565c0' },
+    low: { bg: '#e0e0e0', color: '#757575' },
+  };
+
   const priorityLabel: Record<Priority, string> = {
     urgent: t('priorityUrgent'),
     high: t('priorityHigh'),
@@ -631,6 +645,13 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
               background: sc.bg, color: sc.color, fontWeight: 500,
             }}>
               {statusLabel[currentTask.status]}
+            </span>
+            <span style={{
+              fontSize: '0.7em', padding: '2px 8px', borderRadius: '10px',
+              background: pc.bg, color: pc.color, fontWeight: 600,
+              textTransform: 'uppercase',
+            }}>
+              {priorityLabel[currentTask.priority]}
             </span>
             {isProcessing && (
               <span
@@ -748,9 +769,25 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
 
             {/* Comments */}
             <div style={{ marginBottom: '24px' }}>
-              <h4 style={{ margin: '0 0 12px', fontSize: '0.85em', color: '#999', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                {t('taskDetailComments')} ({comments.length})
-              </h4>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                <h4 style={{ margin: 0, fontSize: '0.85em', color: '#999', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  {t('taskDetailComments')} ({comments.length})
+                </h4>
+                <button
+                  onClick={() => setCommentSortAsc(!commentSortAsc)}
+                  title={commentSortAsc ? 'Switch to newest first' : 'Switch to oldest first'}
+                  style={{
+                    background: 'none', border: '1px solid #ddd', borderRadius: '4px',
+                    cursor: 'pointer', padding: '2px 6px', fontSize: '0.75em', color: '#888',
+                    display: 'flex', alignItems: 'center', gap: '3px',
+                    transition: 'background 0.15s',
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.background = '#f5f5f5'; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'none'; }}
+                >
+                  {commentSortAsc ? '↑ Oldest' : '↓ Newest'}
+                </button>
+              </div>
 
               {/* Comments list — threaded */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '12px' }}>
@@ -759,8 +796,12 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
                     {t('commentEmpty')}
                   </div>
                 ) : (
-                  comments
+                  [...comments]
                     .filter(c => !c.parent_id)
+                    .sort((a, b) => {
+                      const diff = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+                      return commentSortAsc ? diff : -diff;
+                    })
                     .map(c => renderComment(c, comments, 0))
                 )}
               </div>
@@ -799,8 +840,8 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
                           }}
                         >
                           <span>{item.type === 'user' ? '👤' : '🤖'}</span>
-                          <span>{item.name}</span>
-                          <span style={{ marginLeft: 'auto', fontSize: '0.75em', color: '#999' }}>
+                          <span style={{ color: item.type === 'agent' ? '#2e7d32' : '#1976d2' }}>{item.name}</span>
+                          <span style={{ marginLeft: 'auto', fontSize: '0.75em', color: item.type === 'agent' ? '#2e7d32' : '#1976d2' }}>
                             {item.type === 'user' ? 'user' : 'agent'}
                           </span>
                         </div>
@@ -863,29 +904,49 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
             {/* Status */}
             <div>
               <div style={sidebarLabelStyle}>{t('taskStatus')}</div>
-              <select
-                value={currentTask.status}
-                onChange={(e) => handleStatusChange(e.target.value as TaskStatus)}
-                style={editableSelectStyle}
-              >
-                {statusOptions.map(s => (
-                  <option key={s} value={s}>{statusLabel[s]}</option>
-                ))}
-              </select>
+              <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{
+                  width: '10px', height: '10px', borderRadius: '50%',
+                  background: sc.color, flexShrink: 0,
+                }} />
+                <select
+                  value={currentTask.status}
+                  onChange={(e) => handleStatusChange(e.target.value as TaskStatus)}
+                  style={editableSelectStyle}
+                >
+                  {statusOptions.map(s => (
+                    <option key={s} value={s} style={{
+                      background: statusColors[s].bg,
+                      color: statusColors[s].color,
+                      fontWeight: currentTask.status === s ? 600 : 400,
+                    }}>{statusLabel[s]}</option>
+                  ))}
+                </select>
+              </div>
             </div>
 
             {/* Priority */}
             <div>
               <div style={sidebarLabelStyle}>{t('taskDetailPriority')}</div>
-              <select
-                value={currentTask.priority}
-                onChange={(e) => handlePriorityChange(e.target.value as Priority)}
-                style={editableSelectStyle}
-              >
-                {priorityOptions.map(p => (
-                  <option key={p} value={p}>{priorityLabel[p]}</option>
-                ))}
-              </select>
+              <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{
+                  width: '10px', height: '10px', borderRadius: '50%',
+                  background: pc.color, flexShrink: 0,
+                }} />
+                <select
+                  value={currentTask.priority}
+                  onChange={(e) => handlePriorityChange(e.target.value as Priority)}
+                  style={editableSelectStyle}
+                >
+                  {priorityOptions.map(p => (
+                    <option key={p} value={p} style={{
+                      background: priorityColors[p].bg,
+                      color: priorityColors[p].color,
+                      fontWeight: currentTask.priority === p ? 600 : 400,
+                    }}>{priorityLabel[p]}</option>
+                  ))}
+                </select>
+              </div>
             </div>
 
             {/* Assignee (Responsible Person) */}
