@@ -768,9 +768,13 @@ Respond with exactly one of these two formats:
 		}
 
 	default:
-		log.Printf("[Runtime] Unrecognized evaluation result, defaulting to REPLY")
-		r.postAgentComment(taskID, agentProfileID, queueID, "Acknowledged.")
-		r.updateQueueStatus(queueID, "completed", "Acknowledged.")
+		log.Printf("[Runtime] Unrecognized evaluation result, using as reply")
+		reply := evalResult
+		if len([]rune(reply)) > 2000 {
+			reply = string([]rune(reply)[:2000]) + "\n\n...（过长已截断）"
+		}
+		r.postAgentComment(taskID, agentProfileID, queueID, reply)
+		r.updateQueueStatus(queueID, "completed", reply)
 	}
 }
 

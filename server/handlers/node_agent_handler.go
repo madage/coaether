@@ -166,7 +166,7 @@ func (h *NodeAgentHandler) ClaimQueueItem(c *gin.Context) {
 
 // UpdateQueueStatus updates a queue item's status.
 func (h *NodeAgentHandler) UpdateQueueStatus(c *gin.Context) {
-	_, ok := h.authenticate(c)
+	auth, ok := h.authenticate(c)
 	if !ok {
 		return
 	}
@@ -204,16 +204,7 @@ func (h *NodeAgentHandler) UpdateQueueStatus(c *gin.Context) {
 			WHERE id = (SELECT agent_profile_id FROM task_agent_queue WHERE id = $1)`, queueID)
 		// Update task status when agent completes successfully
 		if req.Status == "completed" {
-			var targetStatus string
-			h.DB.QueryRow(`
-				SELECT CASE WHEN t.assignee_type = 'agent_profile' AND t.assignee_id = q.agent_profile_id
-					THEN 'done' ELSE 'review' END
-				FROM task_agent_queue q
-				JOIN tasks t ON t.id = q.task_id
-				WHERE q.id = $1`, queueID).Scan(&targetStatus)
-			if targetStatus == "" {
-				targetStatus = "review"
-			}
+			targetStatus := "review"
 			h.DB.Exec(`UPDATE tasks SET status = $1, updated_at = $2
 				WHERE id = (SELECT task_id FROM task_agent_queue WHERE id = $3)
 				AND deleted_at IS NULL`, targetStatus, now, queueID)
@@ -230,9 +221,9 @@ func (h *NodeAgentHandler) UpdateQueueStatus(c *gin.Context) {
 							summary = string([]rune(summary)[:5000]) + "\n\n...\uff08\u7ed3\u679c\u8fc7\u957f\u5df2\u622a\u65ad\uff09"
 						}
 						h.DB.Exec(
-							`INSERT INTO task_comments (id, task_id, agent_profile_id, content, is_agent_comment, created_at, updated_at)
-							 VALUES ($1, $2, $3, $4, true, $5, $5)`,
-							commentID, taskID, agentProfileID, summary, now)
+							`INSERT INTO task_comments (id, task_id, user_id, agent_profile_id, content, is_agent_comment, created_at, updated_at)
+							 VALUES ($1, $2, $3, $4, $5, true, $6, $6)`,
+							commentID, taskID, auth.UserID, agentProfileID, summary, now)
 					}
 				}
 
