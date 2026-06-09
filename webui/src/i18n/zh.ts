@@ -175,6 +175,8 @@ export const zh = {
 
   taskStatusDone: '完成',
 
+  taskStatusCompleted: '已完成',
+  taskStatusStuck: '熔断',
   taskStatusReview: '审核',
 
   taskTitle: '标题',
@@ -241,6 +243,30 @@ export const zh = {
   taskDetailConfirmDeleteMsg: '确定要删除该任务吗？此操作不可撤销。',
   taskDetailDeleteCommentHint: '再次点击确认删除',
   taskDetailDeleteCommentTitle: '删除评论',
+
+  // Review
+  reviewApprove: '批准',
+  reviewReject: '驳回',
+  reviewComment: '审核意见',
+  reviewCommentPlaceholder: '输入审核意见...',
+  reviewApproved: '已批准',
+  reviewRejected: '已驳回',
+  reviewApproveSuccess: '任务已批准',
+  reviewRejectSuccess: '任务已驳回',
+  reviewAgentLoopCount: '智能体轮次',
+  reviewMaxLoops: '最大轮次',
+  reviewMeltdown: '熔断',
+
+  // Workflow
+  taskWorkflow: '工作流',
+  taskAgentLoops: '智能体循环',
+  taskAgentLoopCount: '当前轮次',
+  taskMaxAgentLoops: '最大轮次',
+  taskCompletionBehavior: '完成行为',
+  completionBehaviorAutoDone: '自动完成',
+  completionBehaviorAutoReview: '自动审核',
+  completionBehaviorSampleReview: '抽检',
+  completionBehaviorNeedsReview: '需要人工审核',
 
   // Agents
 

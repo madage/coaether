@@ -6,8 +6,10 @@ const statusColors: Record<TaskStatus, { bg: string; color: string }> = {
   todo: { bg: '#e0e0e0', color: '#616161' },
   in_progress: { bg: '#bbdefb', color: '#1565c0' },
   blocked: { bg: '#d1c4e9', color: '#4527a0' },
+  completed: { bg: '#d4edda', color: '#155724' },
   review: { bg: '#ffe0b2', color: '#e65100' },
   done: { bg: '#c8e6c9', color: '#2e7d32' },
+  stuck: { bg: '#f8d7da', color: '#721c24' },
 };
 
 const priorityColors: Record<Priority, { bg: string; color: string }> = {
@@ -21,8 +23,10 @@ const statusKeys: Record<TaskStatus, TranslationKey> = {
   todo: 'taskStatusTodo',
   in_progress: 'taskStatusInProgress',
   blocked: 'taskStatusBlocked',
+  completed: 'taskStatusCompleted',
   review: 'taskStatusReview',
   done: 'taskStatusDone',
+  stuck: 'taskStatusStuck',
 };
 
 const priorityKeys: Record<Priority, TranslationKey> = {
@@ -32,7 +36,7 @@ const priorityKeys: Record<Priority, TranslationKey> = {
   low: 'priorityLow',
 };
 
-const allStatuses: TaskStatus[] = ['todo', 'in_progress', 'blocked', 'review', 'done'];
+const allStatuses: TaskStatus[] = ['todo', 'in_progress', 'blocked', 'completed', 'review', 'done'];
 
 interface TaskCardProps {
   task: Task;
@@ -186,6 +190,22 @@ export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap, 
           >
             {t(priorityKeys[task.priority])}
           </span>
+          {/* Completion behavior badge for agent tasks */}
+          {task.completion_behavior && task.completion_behavior !== 'auto_done' && (
+            <span
+              title={t('taskCompletionBehavior')}
+              style={{
+                fontSize: '0.65em', padding: '1px 5px', borderRadius: '4px',
+                background: '#e8f5e9', color: '#2e7d32', fontWeight: 500,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {(task.completion_behavior === 'auto_review' ? 'Auto Review' :
+                task.completion_behavior === 'sample_review' ? 'Sampling' :
+                task.completion_behavior === 'needs_review' ? 'Needs Review' :
+                task.completion_behavior)}
+            </span>
+          )}
           {/* Project dot */}
           {task.project_id && projectsMap?.[task.project_id] && (
             <span

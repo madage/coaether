@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useLang } from '../i18n/context';
-import { agentQueue as agentQueueApi } from '../api/client';
+import { agentQueue as agentQueueApi, tasks as tasksApi } from '../api/client';
 import { useResourceSync } from '../hooks/useResourceSync';
-import type { AgentQueueItem } from '../types';
+import { TaskDetail } from './TaskDetail';
+import type { AgentQueueItem, Task } from '../types';
 
 const statusColors: Record<string, string> = {
   queued: '#9e9e9e',
@@ -13,14 +14,28 @@ const statusColors: Record<string, string> = {
 };
 
 export function AgentQueuePanel() {
-  const { t } = useLang();
+  const { t, lang } = useLang();
   const [queue, setQueue] = useState<AgentQueueItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [taskTitles, setTaskTitles] = useState<Record<string, string>>({});
+  const [taskDetailTask, setTaskDetailTask] = useState<Task | null>(null);
 
   const fetchQueue = useCallback(async () => {
     try {
       const res = await agentQueueApi.list();
       setQueue(res.queue);
+      // Fetch task titles for unique task IDs
+      const taskIds = [...new Set(res.queue.map(q => q.task_id))];
+      const titles: Record<string, string> = {};
+      await Promise.all(taskIds.map(async (tid) => {
+        try {
+          const task = await tasksApi.get(tid);
+          titles[tid] = task.title;
+        } catch {
+          titles[tid] = tid.slice(0, 8);
+        }
+      }));
+      setTaskTitles(prev => ({ ...prev, ...titles }));
     } catch {
       // silently fail
     } finally {
@@ -103,11 +118,20 @@ export function AgentQueuePanel() {
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                 {items.map(item => (
-                  <div key={item.id} style={{
-                    display: 'flex', alignItems: 'center', gap: '12px',
-                    padding: '10px 14px', background: '#fafafa', borderRadius: '6px',
-                    border: '1px solid #eee',
-                  }}>
+                  <div key={item.id}
+                    onClick={() => {
+                      // Fetch full task and open detail
+                      tasksApi.get(item.task_id).then(t => setTaskDetailTask(t)).catch(() => {});
+                    }}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '12px',
+                      padding: '10px 14px', background: '#fafafa', borderRadius: '6px',
+                      border: '1px solid #eee', cursor: 'pointer',
+                      transition: 'background 0.15s',
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.background = '#f0f4ff'; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = '#fafafa'; }}
+                  >
                     <span style={{
                       width: '8px', height: '8px', borderRadius: '50%',
                       background: statusColors[item.status] || '#999',
@@ -115,7 +139,7 @@ export function AgentQueuePanel() {
                     }} />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: '0.88em', fontWeight: 500, color: '#333' }}>
-                        {item.task_id.slice(0, 8)}...
+                        {taskTitles[item.task_id] || item.task_id.slice(0, 8)}...
                       </div>
                       <div style={{ fontSize: '0.75em', color: '#999', marginTop: '2px' }}>
                         {item.agent_profile_id.slice(0, 8)}... | {new Date(item.created_at).toLocaleString()}
@@ -136,6 +160,15 @@ export function AgentQueuePanel() {
           );
         })}
       </div>
+
+      {taskDetailTask && (
+        <TaskDetail
+          task={taskDetailTask}
+          onClose={() => setTaskDetailTask(null)}
+          onDelete={() => { setTaskDetailTask(null); fetchQueue(); }}
+          onRefresh={() => { fetchQueue(); }}
+        />
+      )}
     </div>
   );
 }

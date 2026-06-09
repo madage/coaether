@@ -175,6 +175,8 @@ export const en = {
 
   taskStatusDone: 'Done',
 
+  taskStatusCompleted: 'Completed',
+  taskStatusStuck: 'Stuck',
   taskStatusReview: 'Review',
 
   taskTitle: 'Title',
@@ -241,6 +243,30 @@ export const en = {
   taskDetailConfirmDeleteMsg: 'Are you sure you want to delete this task? This action cannot be undone.',
   taskDetailDeleteCommentHint: 'Click again to confirm',
   taskDetailDeleteCommentTitle: 'Delete comment',
+
+  // Review
+  reviewApprove: 'Approve',
+  reviewReject: 'Reject',
+  reviewComment: 'Review Comment',
+  reviewCommentPlaceholder: 'Enter review feedback...',
+  reviewApproved: 'Approved',
+  reviewRejected: 'Rejected',
+  reviewApproveSuccess: 'Task approved',
+  reviewRejectSuccess: 'Task rejected',
+  reviewAgentLoopCount: 'Agent loops',
+  reviewMaxLoops: 'Max loops',
+  reviewMeltdown: 'Meltdown',
+
+  // Workflow
+  taskWorkflow: 'Workflow',
+  taskAgentLoops: 'Agent Loops',
+  taskAgentLoopCount: 'Current loop',
+  taskMaxAgentLoops: 'Max loops',
+  taskCompletionBehavior: 'Completion Behavior',
+  completionBehaviorAutoDone: 'Auto Done',
+  completionBehaviorAutoReview: 'Auto Review',
+  completionBehaviorSampleReview: 'Sample Review',
+  completionBehaviorNeedsReview: 'Needs Review',
 
   // Agents
 

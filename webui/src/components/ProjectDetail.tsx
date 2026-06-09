@@ -22,8 +22,10 @@ const statusKeys: Record<TaskStatus, string> = {
   todo: 'taskStatusTodo',
   in_progress: 'taskStatusInProgress',
   blocked: 'taskStatusBlocked',
+  completed: 'taskStatusCompleted',
   review: 'taskStatusReview',
   done: 'taskStatusDone',
+  stuck: 'taskStatusStuck',
 };
 
 export function ProjectDetail({ project, onClose, onDelete }: ProjectDetailProps) {

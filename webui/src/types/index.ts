@@ -145,9 +145,11 @@ export interface UpdateProjectReq {
 }
 
 // === Task Types ===
-export type TaskStatus = 'todo' | 'in_progress' | 'blocked' | 'done' | 'review';
+export type TaskStatus = 'todo' | 'in_progress' | 'blocked' | 'completed' | 'done' | 'review' | 'stuck';
 export type Priority = 'urgent' | 'high' | 'medium' | 'low';
 export type AssigneeType = 'user' | 'agent_profile';
+export type CompletionBehavior = 'auto_done' | 'auto_review' | 'sample_review' | 'needs_review';
+export type ReviewAction = 'approved' | 'rejected';
 
 export interface Task {
   id: string;
@@ -167,6 +169,13 @@ export interface Task {
   completed_at?: string;
   created_at: string;
   updated_at: string;
+  workflow_id?: string;
+  depth?: number;
+  max_depth?: number;
+  max_agent_loops?: number;
+  agent_loop_count?: number;
+  completion_behavior?: CompletionBehavior;
+  parallel_group?: string | null;
 }
 
 export interface CreateTaskReq {
@@ -204,6 +213,41 @@ export interface TaskAssignee {
 export interface AddAssigneeReq {
   assignee_id: string;
   assignee_type: AssigneeType;
+}
+
+export interface ReviewTaskReq {
+  action: ReviewAction;
+  comment?: string;
+  reviewer_agent_id?: string;
+}
+
+// === Workflow Types ===
+export type WorkflowStatus = 'active' | 'paused' | 'done' | 'stuck';
+
+export interface Workflow {
+  id: string;
+  title: string;
+  description: string;
+  status: WorkflowStatus;
+  token_budget: number;
+  tokens_used: number;
+  created_by: string;
+  workspace_id: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateWorkflowReq {
+  title: string;
+  description?: string;
+  token_budget?: number;
+}
+
+export interface AttachToWorkflowReq {
+  task_id: string;
+  workflow_id: string;
+  depends_on?: string[];
+  depth?: number;
 }
 
 // === Workspace Types ===

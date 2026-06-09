@@ -1,4 +1,4 @@
-import type { Node, Session, CreateSessionReq, Agent, AgentProfile, RuntimeEntity, Task, CreateTaskReq, UpdateTaskReq, TaskStatus, TaskAssignee, AddAssigneeReq, Priority, Project, CreateProjectReq, UpdateProjectReq, ProjectStatus, Workspace, CreateWorkspaceReq, UpdateWorkspaceReq, WorkspaceMember, AddMemberReq, UpdateMemberRoleReq, PendingInvitation, InviteMemberReq, UserSummary, Comment, CreateCommentReq, PluginInfo, AppNotification, TaskRule, TaskRuleLog, CreateRuleReq, UpdateRuleReq, Skill, CreateSkillReq, ExtractSkillReq, AgentQueueItem, AgentLoadInfo } from '../types';
+import type { Node, Session, CreateSessionReq, Agent, AgentProfile, RuntimeEntity, Task, CreateTaskReq, UpdateTaskReq, TaskStatus, TaskAssignee, AddAssigneeReq, Priority, Project, CreateProjectReq, UpdateProjectReq, ProjectStatus, Workspace, CreateWorkspaceReq, UpdateWorkspaceReq, WorkspaceMember, AddMemberReq, UpdateMemberRoleReq, PendingInvitation, InviteMemberReq, UserSummary, Comment, CreateCommentReq, PluginInfo, AppNotification, TaskRule, TaskRuleLog, CreateRuleReq, UpdateRuleReq, Skill, CreateSkillReq, ExtractSkillReq, AgentQueueItem, AgentLoadInfo, ReviewTaskReq, Workflow, CreateWorkflowReq, AttachToWorkflowReq } from '../types';
 
 
 
@@ -347,6 +347,9 @@ export const tasks = {
   listSubtasks: (id: string) =>
     request<{ tasks: Task[] }>(`/tasks/${id}/subtasks`),
 
+  // Review
+  review: (id: string, data: ReviewTaskReq) =>
+    request<{ status: string }>(`/tasks/${id}/review`, { method: 'POST', body: JSON.stringify(data) }),
 };
 
 
@@ -646,6 +649,23 @@ export const agentQueue = {
     request<{ status: string }>(`/agents/queue/${id}/status`, { method: 'PUT', body: JSON.stringify(data) }),
   listAgentsWithLoad: () =>
     request<{ agents: AgentLoadInfo[] }>('/agents/queue/agents'),
+};
+
+// Workflows
+export const workflows = {
+  list: (workspaceId?: string) => {
+    const qs = workspaceId ? `?workspace_id=${workspaceId}` : '';
+    return request<{ workflows: Workflow[] }>(`/workflows${qs}`);
+  },
+  get: (id: string) => request<{ workflow: Workflow; task_summary: { status: string; count: number }[] }>(`/workflows/${id}`),
+  create: (data: CreateWorkflowReq) =>
+    request<{ id: string; status: string }>('/workflows', { method: 'POST', body: JSON.stringify(data) }),
+  updateStatus: (id: string, status: string) =>
+    request<{ status: string }>(`/workflows/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+  listTasks: (id: string) =>
+    request<{ tasks: Task[] }>(`/workflows/${id}/tasks`),
+  attach: (data: AttachToWorkflowReq) =>
+    request<{ status: string; task_id: string; workflow_id: string }>('/workflows/attach', { method: 'POST', body: JSON.stringify(data) }),
 };
 
 // User Management

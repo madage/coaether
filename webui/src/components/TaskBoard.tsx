@@ -9,14 +9,16 @@ import { TaskDetail } from './TaskDetail';
 import { MathConfirmDialog } from './MathConfirmDialog';
 import type { Task, TaskStatus, Project, UpdateTaskReq, Priority, AssigneeType } from '../types';
 
-const columns: TaskStatus[] = ['todo', 'in_progress', 'blocked', 'review', 'done'];
+const columns: TaskStatus[] = ['todo', 'in_progress', 'blocked', 'completed', 'review', 'done'];
 
 const columnLabels: Record<TaskStatus, TranslationKey> = {
   todo: 'taskStatusTodo',
   in_progress: 'taskStatusInProgress',
   blocked: 'taskStatusBlocked',
+  completed: 'taskStatusCompleted',
   review: 'taskStatusReview',
   done: 'taskStatusDone',
+  stuck: 'taskStatusStuck',
 };
 
 const priorityKeys: Record<Priority, TranslationKey> = {
@@ -30,8 +32,10 @@ const columnColors: Record<TaskStatus, string> = {
   todo: '#e0e0e0',
   in_progress: '#bbdefb',
   blocked: '#d1c4e9',
+  completed: '#d4edda',
   review: '#ffe0b2',
   done: '#c8e6c9',
+  stuck: '#f8d7da',
 };
 
 export function TaskBoard({ initialTaskId, onTaskOpened }: { initialTaskId?: string | null; onTaskOpened?: () => void }) {
@@ -379,8 +383,10 @@ export function TaskBoard({ initialTaskId, onTaskOpened }: { initialTaskId?: str
                   todo: { bg: '#e0e0e0', color: '#616161' },
                   in_progress: { bg: '#bbdefb', color: '#1565c0' },
                   blocked: { bg: '#d1c4e9', color: '#4527a0' },
+                  completed: { bg: '#d4edda', color: '#155724' },
                   review: { bg: '#ffe0b2', color: '#e65100' },
                   done: { bg: '#c8e6c9', color: '#2e7d32' },
+                  stuck: { bg: '#f8d7da', color: '#721c24' },
                 }[task.status];
                 const isOverdue = task.due_at && new Date(task.due_at) < new Date() && task.status !== 'done';
                 return (

@@ -11,7 +11,7 @@ interface TaskDetailProps {
   onRefresh: () => void;
 }
 
-const statusOptions: TaskStatus[] = ['todo', 'in_progress', 'blocked', 'review', 'done'];
+const statusOptions: TaskStatus[] = ['todo', 'in_progress', 'blocked', 'completed', 'review', 'done'];
 const priorityOptions: Priority[] = ['urgent', 'high', 'medium', 'low'];
 
 function highlightMentions(html: string, agentNames: Set<string> = new Set()): string {
@@ -74,8 +74,10 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
   const [confirmDeleteComment, setConfirmDeleteComment] = useState<string | null>(null);
 
   const [isProcessing, setIsProcessing] = useState(false);
+  const [reviewComment, setReviewComment] = useState('');
+  const [reviewing, setReviewing] = useState(false);
 
-  const isOverdue = currentTask.due_at && new Date(currentTask.due_at) < new Date() && currentTask.status !== 'done';
+  const isOverdue = currentTask.due_at && new Date(currentTask.due_at) < new Date() && !['done', 'completed', 'stuck'].includes(currentTask.status);
 
   useEffect(() => {
     // Check if this task is currently being processed by an agent
@@ -195,6 +197,22 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
     const val = dueAt ? dueAt + 'T00:00:00Z' : null;
     setCurrentTask(prev => ({ ...prev, due_at: val ?? undefined }));
     saveField({ due_at: val });
+  };
+
+  const handleReview = async (action: 'approved' | 'rejected') => {
+    setReviewing(true);
+    try {
+      await tasksApi.review(currentTask.id, { action, comment: reviewComment || undefined });
+      const refreshed = await tasksApi.get(currentTask.id);
+      setCurrentTask(refreshed);
+      setReviewComment('');
+      onRefresh();
+    } catch (err) {
+      console.error('Failed to review task', err);
+      alert('Failed to review task');
+    } finally {
+      setReviewing(false);
+    }
   };
 
   const handleAddAssignee = async () => {
@@ -448,7 +466,7 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
     setMentionOpen(true);
   };
 
-  const insertMention = (item: { name: string }) => {
+  const insertMention = (item: { id: string; name: string; type: 'user' | 'agent' }) => {
     const ref = mentionEditor === 'main' ? commentEditorRef.current : replyEditorRef.current;
     if (!ref) return;
 
@@ -552,8 +570,10 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
       todo: { bg: '#e0e0e0', color: '#616161' },
       in_progress: { bg: '#bbdefb', color: '#1565c0' },
       blocked: { bg: '#d1c4e9', color: '#4527a0' },
+      completed: { bg: '#d4edda', color: '#155724' },
       review: { bg: '#ffe0b2', color: '#e65100' },
       done: { bg: '#c8e6c9', color: '#2e7d32' },
+      stuck: { bg: '#f8d7da', color: '#721c24' },
     };
     return map[currentTask.status] || map.todo;
   })();
@@ -572,16 +592,20 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
     todo: t('taskStatusTodo'),
     in_progress: t('taskStatusInProgress'),
     blocked: t('taskStatusBlocked'),
+    completed: t('taskStatusCompleted'),
     review: t('taskStatusReview'),
     done: t('taskStatusDone'),
+    stuck: t('taskStatusStuck'),
   };
 
   const statusColors: Record<TaskStatus, { bg: string; color: string }> = {
     todo: { bg: '#e0e0e0', color: '#616161' },
     in_progress: { bg: '#bbdefb', color: '#1565c0' },
     blocked: { bg: '#d1c4e9', color: '#4527a0' },
+    completed: { bg: '#d4edda', color: '#155724' },
     review: { bg: '#ffe0b2', color: '#e65100' },
     done: { bg: '#c8e6c9', color: '#2e7d32' },
+    stuck: { bg: '#f8d7da', color: '#721c24' },
   };
 
   const priorityColors: Record<Priority, { bg: string; color: string }> = {
@@ -935,6 +959,73 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
               </div>
             </div>
 
+            {/* Review actions — shown when status is review */}
+            {currentTask.status === 'review' && (
+              <div style={{
+                padding: '12px', borderRadius: '8px',
+                background: '#fff8e1', border: '1px solid #ffe0b2',
+              }}>
+                <div style={sidebarLabelStyle}>{t('reviewComment')}</div>
+                <textarea
+                  value={reviewComment}
+                  onChange={(e) => setReviewComment(e.target.value)}
+                  placeholder={t('reviewCommentPlaceholder')}
+                  style={{
+                    width: '100%', boxSizing: 'border-box', padding: '6px 8px',
+                    borderRadius: '6px', border: '1px solid #ddd',
+                    fontSize: '0.85em', fontFamily: 'inherit', minHeight: '60px',
+                    marginBottom: '8px', resize: 'vertical',
+                  }}
+                />
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  <button
+                    onClick={() => handleReview('approved')}
+                    disabled={reviewing}
+                    style={{
+                      flex: 1, padding: '6px 0', borderRadius: '6px', border: 'none',
+                      background: reviewing ? '#ccc' : '#2e7d32',
+                      color: '#fff', cursor: reviewing ? 'default' : 'pointer',
+                      fontSize: '0.85em', fontWeight: 600,
+                    }}
+                  >{t('reviewApprove')}</button>
+                  <button
+                    onClick={() => handleReview('rejected')}
+                    disabled={reviewing}
+                    style={{
+                      flex: 1, padding: '6px 0', borderRadius: '6px', border: 'none',
+                      background: reviewing ? '#ccc' : '#c62828',
+                      color: '#fff', cursor: reviewing ? 'default' : 'pointer',
+                      fontSize: '0.85em', fontWeight: 600,
+                    }}
+                  >{t('reviewReject')}</button>
+                </div>
+                {/* Agent loop info */}
+                {typeof currentTask.agent_loop_count === 'number' && (
+                  <div style={{
+                    marginTop: '8px', fontSize: '0.75em', color: '#e65100',
+                    textAlign: 'center',
+                  }}>
+                    {t('reviewAgentLoopCount')}: {currentTask.agent_loop_count}
+                    {typeof currentTask.max_agent_loops === 'number' && ` / ${currentTask.max_agent_loops}`}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Stuck info */}
+            {currentTask.status === 'stuck' && (
+              <div style={{
+                padding: '10px 12px', borderRadius: '8px',
+                background: '#f8d7da', border: '1px solid #f5c6cb',
+                fontSize: '0.85em', color: '#721c24',
+              }}>
+                {t('reviewMeltdown')}
+                {typeof currentTask.agent_loop_count === 'number' && (
+                  <span> — {t('reviewAgentLoopCount')}: {currentTask.agent_loop_count}</span>
+                )}
+              </div>
+            )}
+
             {/* Priority */}
             <div>
               <div style={sidebarLabelStyle}>{t('taskDetailPriority')}</div>
@@ -1148,6 +1239,55 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
                 ))}
               </select>
             </div>
+
+            {/* Workflow / Agent info */}
+            {(currentTask.workflow_id || typeof currentTask.agent_loop_count === 'number' || currentTask.completion_behavior) && (
+              <div style={{ borderTop: '1px solid #eee', paddingTop: '12px' }}>
+                {currentTask.workflow_id && (
+                  <div style={{ marginBottom: '8px' }}>
+                    <div style={sidebarLabelStyle}>{t('taskWorkflow')}</div>
+                    <div style={{
+                      fontSize: '0.8em', color: '#1565c0', background: '#e3f2fd',
+                      padding: '4px 8px', borderRadius: '4px', wordBreak: 'break-all',
+                    }}>
+                      {currentTask.workflow_id}
+                      {typeof currentTask.depth === 'number' && typeof currentTask.max_depth === 'number' && (
+                        <span style={{ marginLeft: '8px', color: '#666' }}>
+                          Lv.{currentTask.depth}/{currentTask.max_depth}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+                {typeof currentTask.agent_loop_count === 'number' && (
+                  <div style={{ marginBottom: '8px' }}>
+                    <div style={sidebarLabelStyle}>{t('taskAgentLoops')}</div>
+                    <div style={{ fontSize: '0.85em', color: '#666' }}>
+                      {t('taskAgentLoopCount')}: <strong>{currentTask.agent_loop_count}</strong>
+                      {typeof currentTask.max_agent_loops === 'number' && (
+                        <span> / {t('taskMaxAgentLoops')}: <strong>{currentTask.max_agent_loops}</strong></span>
+                      )}
+                    </div>
+                  </div>
+                )}
+                {currentTask.completion_behavior && (
+                  <div>
+                    <div style={sidebarLabelStyle}>{t('taskCompletionBehavior')}</div>
+                    <span style={{
+                      fontSize: '0.8em', padding: '2px 6px', borderRadius: '4px',
+                      background: '#e8f5e9', color: '#2e7d32',
+                    }}>
+                      {({
+                        auto_done: t('completionBehaviorAutoDone'),
+                        auto_review: t('completionBehaviorAutoReview'),
+                        sample_review: t('completionBehaviorSampleReview'),
+                        needs_review: t('completionBehaviorNeedsReview'),
+                      })[currentTask.completion_behavior] || currentTask.completion_behavior}
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Timestamps (read-only) */}
             <div style={{ borderTop: '1px solid #eee', paddingTop: '12px', marginTop: '4px' }}>

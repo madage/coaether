@@ -9,16 +9,20 @@ const statusKeys: Record<TaskStatus, string> = {
   todo: 'taskStatusTodo',
   in_progress: 'taskStatusInProgress',
   blocked: 'taskStatusBlocked',
+  completed: 'taskStatusCompleted',
   review: 'taskStatusReview',
   done: 'taskStatusDone',
+  stuck: 'taskStatusStuck',
 };
 
 const statusColors: Record<TaskStatus, { bg: string; color: string }> = {
   todo: { bg: '#e0e0e0', color: '#616161' },
   in_progress: { bg: '#bbdefb', color: '#1565c0' },
   blocked: { bg: '#d1c4e9', color: '#4527a0' },
+  completed: { bg: '#d4edda', color: '#155724' },
   review: { bg: '#ffe0b2', color: '#e65100' },
   done: { bg: '#c8e6c9', color: '#2e7d32' },
+  stuck: { bg: '#f8d7da', color: '#721c24' },
 };
 
 export function TrashView() {
