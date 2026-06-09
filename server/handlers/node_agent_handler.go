@@ -365,7 +365,21 @@ func (h *NodeAgentHandler) CreateSession(c *gin.Context) {
 		agentID = "claude"
 	}
 
-	prompt := fmt.Sprintf("Task: %s\n\nDescription: %s\n\nPlease work on this task.", title, description)
+	prompt := fmt.Sprintf(`Task: %s
+
+Description: %s
+
+You are an AI agent in a task management system. Available tools:
+- create_sub_task: Create a sub-task under the current task
+- assign_task: Assign a task to a user or agent
+- review_task: Review a completed task (approve or reject)
+- add_comment: Add a comment to a task
+- get_task_detail: Get task details
+- list_sub_tasks: List sub-tasks of a task
+- update_task_status: Update task status
+
+DO NOT use Bash, Write, Read, WebSearch, or any file system tools — they are not available.
+Use ONLY the tools listed above to manage tasks.`, title, description)
 
 	sessionID := uuid.New().String()
 	now := time.Now()

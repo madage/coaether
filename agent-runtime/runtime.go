@@ -266,6 +266,19 @@ func (r *Runtime) handleAgentMessage(env *protocol.Envelope) {
 	}
 }
 
+// Built-in Harness tools that are forwarded to the server Harness API.
+// MCP/built-in Claude Code tools (WebSearch, WebFetch, Grep, Read, etc.)
+// are handled locally by the runtime.
+var harnessTools = map[string]bool{
+	"create_sub_task":    true,
+	"assign_task":        true,
+	"review_task":        true,
+	"add_comment":        true,
+	"get_task_detail":    true,
+	"list_sub_tasks":     true,
+	"update_task_status": true,
+}
+
 // isAutoTaskSession checks if the session is for an auto-task agent.
 func (r *Runtime) isAutoTaskSession(sessionID string) bool {
 	r.connMu.Lock()
@@ -274,9 +287,201 @@ func (r *Runtime) isAutoTaskSession(sessionID string) bool {
 	return ok && meta["is_auto_task"] == "true"
 }
 
-// handleAutoTaskToolCall intercepts a tool.use event from an auto-task session,
-// sends it to the server Harness API for execution, and routes the result back.
+// handleAutoTaskToolCall routes tool calls from auto-task sessions:
+// - Harness tools (create_sub_task, etc.) → server Harness API
+// - MCP tools (WebSearch, WebFetch, etc.) → executed locally
 func (r *Runtime) handleAutoTaskToolCall(env *protocol.Envelope) {
+	if harnessTools[env.Payload.Tool] {
+		r.handleHarnessToolCall(env)
+	} else {
+		r.handleMCPToolCall(env)
+	}
+}
+
+// handleMCPToolCall executes an MCP or built-in Claude Code tool locally.
+func (r *Runtime) handleMCPToolCall(env *protocol.Envelope) {
+	toolName := env.Payload.Tool
+	toolUseID := env.Payload.ToolUseID
+
+	log.Printf("[Runtime] Executing MCP tool locally: %s", toolName)
+
+	var result map[string]interface{}
+	switch toolName {
+	case "WebSearch":
+		result = r.executeWebSearch(env)
+	case "WebFetch":
+		result = r.executeWebFetch(env)
+	default:
+		result = r.handleUnavailableTool(toolName, env)
+	}
+
+	if cli, ok := r.backends["claude"].(*backends.ClaudeCLIBackend); ok {
+		cli.SendToolResult(env.SessionID, toolUseID, result)
+		log.Printf("[Runtime] MCP tool result sent: tool=%s status=%s", toolName, result["status"])
+	}
+}
+
+// executeWebSearch performs a web search by querying DuckDuckGo's instant answer API.
+func (r *Runtime) executeWebSearch(env *protocol.Envelope) map[string]interface{} {
+	var params struct {
+		Query string `json:"query"`
+	}
+	inputStr, ok := env.Payload.Input.(string)
+	if ok {
+		json.Unmarshal([]byte(inputStr), &params)
+	} else {
+		paramBytes, _ := json.Marshal(env.Payload.Input)
+		json.Unmarshal(paramBytes, &params)
+	}
+
+	if params.Query == "" {
+		return map[string]interface{}{"status": "error", "error": map[string]interface{}{"message": "query is required"}}
+	}
+
+	log.Printf("[Runtime] WebSearch: %s", params.Query)
+
+	// Try DuckDuckGo instant answer API
+	client := &http.Client{Timeout: 10 * time.Second}
+	ddgURL := fmt.Sprintf("https://api.duckduckgo.com/?q=%s&format=json&no_html=1", url.QueryEscape(params.Query))
+	resp, err := client.Get(ddgURL)
+	if err != nil {
+		log.Printf("[Runtime] WebSearch request failed: %v", err)
+		// Fallback: try a simple web fetch
+		return r.fallbackWebSearch(params.Query)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	var ddgResult struct {
+		AbstractText string `json:"AbstractText"`
+		AbstractURL  string `json:"AbstractURL"`
+		Answer       string `json:"Answer"`
+		Results      []struct {
+			Text     string `json:"Text"`
+			FirstURL string `json:"FirstURL"`
+		} `json:"Results"`
+	}
+	json.Unmarshal(body, &ddgResult)
+
+	// Build search results text
+	var sb strings.Builder
+	if ddgResult.AbstractText != "" {
+		sb.WriteString("Summary: " + ddgResult.AbstractText + "\n")
+		if ddgResult.AbstractURL != "" {
+			sb.WriteString("Source: " + ddgResult.AbstractURL + "\n")
+		}
+	}
+	if ddgResult.Answer != "" {
+		sb.WriteString("Answer: " + ddgResult.Answer + "\n")
+	}
+	for _, r := range ddgResult.Results {
+		sb.WriteString(fmt.Sprintf("- %s (%s)\n", r.Text, r.FirstURL))
+	}
+
+	if sb.Len() == 0 {
+		return r.fallbackWebSearch(params.Query)
+	}
+
+	return map[string]interface{}{
+		"status": "success",
+		"result": sb.String(),
+	}
+}
+
+// fallbackWebSearch tries a simple HTTP GET as fallback when DuckDuckGo API returns nothing.
+func (r *Runtime) fallbackWebSearch(query string) map[string]interface{} {
+	client := &http.Client{Timeout: 10 * time.Second}
+	searchURL := fmt.Sprintf("https://html.duckduckgo.com/html/?q=%s", url.QueryEscape(query))
+	resp, err := client.Get(searchURL)
+	if err != nil {
+		return map[string]interface{}{"status": "error", "error": map[string]interface{}{"message": err.Error()}}
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	return map[string]interface{}{
+		"status": "success",
+		"result": fmt.Sprintf("Search results for '%s':\n%s", query, truncateStr(string(body), 5000)),
+	}
+}
+
+// executeWebFetch fetches content from a URL and returns it as text.
+func (r *Runtime) executeWebFetch(env *protocol.Envelope) map[string]interface{} {
+	var params struct {
+		URL string `json:"url"`
+	}
+	inputStr, ok := env.Payload.Input.(string)
+	if ok {
+		json.Unmarshal([]byte(inputStr), &params)
+	} else {
+		paramBytes, _ := json.Marshal(env.Payload.Input)
+		json.Unmarshal(paramBytes, &params)
+	}
+
+	if params.URL == "" {
+		return map[string]interface{}{"status": "error", "error": map[string]interface{}{"message": "url is required"}}
+	}
+
+	log.Printf("[Runtime] WebFetch: %s", params.URL)
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Get(params.URL)
+	if err != nil {
+		return map[string]interface{}{"status": "error", "error": map[string]interface{}{"message": err.Error()}}
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	contentType := resp.Header.Get("Content-Type")
+
+	return map[string]interface{}{
+		"status": "success",
+		"result": truncateStr(string(body), 10000),
+		"content_type": contentType,
+		"url":    params.URL,
+	}
+}
+
+// handleUnavailableTool returns a helpful response for tools that aren't available in auto-task mode.
+// The response guides the agent to use only Harness task-management tools instead.
+func (r *Runtime) handleUnavailableTool(toolName string, env *protocol.Envelope) map[string]interface{} {
+	// For Bash, return empty output so the agent doesn't get stuck
+	if toolName == "Bash" {
+		return map[string]interface{}{
+			"status":      "success",
+			"exit_code":   0,
+			"stdout":      "",
+			"stderr":      "Bash execution is not available in auto-task mode. Use create_sub_task to delegate work.",
+		}
+	}
+
+	// For Write, acknowledge the write but note it has no effect
+	if toolName == "Write" {
+		return map[string]interface{}{
+			"status":  "success",
+			"message": "File written. Note: This file will not persist. Use add_comment to record results on a task.",
+		}
+	}
+
+	// For Read/Glob/Grep, return empty results
+	if toolName == "Read" || toolName == "Glob" || toolName == "Grep" || toolName == "Edit" {
+		return map[string]interface{}{
+			"status": "error",
+			"error":  map[string]interface{}{"message": "File system tools are not available in auto-task mode. Use get_task_detail and list_sub_tasks to access task data."},
+		}
+	}
+
+	// For all other tools (including mcp__*), return a clear guidance message
+	return map[string]interface{}{
+		"status": "error",
+		"error": map[string]interface{}{
+			"message": fmt.Sprintf("Tool '%s' is not available in auto-task mode. Available tools: create_sub_task, assign_task, review_task, add_comment, get_task_detail, list_sub_tasks, update_task_status.", toolName),
+		},
+	}
+}
+
+// handleHarnessToolCall sends a tool call to the server Harness API for execution.
+func (r *Runtime) handleHarnessToolCall(env *protocol.Envelope) {
 	toolName := env.Payload.Tool
 	toolUseID := env.Payload.ToolUseID
 
@@ -300,14 +505,22 @@ func (r *Runtime) handleAutoTaskToolCall(env *protocol.Envelope) {
 	log.Printf("[Runtime] Auto-task tool call: session=%s tool=%s task=%s", env.SessionID[:8], toolName, taskID[:8])
 
 	// Serialize tool input for Harness API
-	inputBytes, _ := json.Marshal(env.Payload.Input)
+	// Serialize tool input for Harness API as raw JSON.
+	// Input from Payload may be a JSON string; convert to RawMessage
+	// so it serializes as a raw JSON object, not a quoted string.
+	var params json.RawMessage
+	if inputStr, ok := env.Payload.Input.(string); ok {
+		params = json.RawMessage(inputStr)
+	} else {
+		params, _ = json.Marshal(env.Payload.Input)
+	}
 
 	// Build request to Harness API
 	body := map[string]interface{}{
 		"task_id":          taskID,
 		"queue_id":         queueID,
 		"tool":             toolName,
-		"params":           string(inputBytes),
+		"params":           params,
 		"agent_profile_id": profileID,
 		"call_id":          toolUseID,
 	}

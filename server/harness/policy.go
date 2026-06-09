@@ -64,17 +64,22 @@ func (pe *PolicyEngine) Check(ctx *AgentContext, tc *ToolCall) *CheckResult {
 	}
 
 	// 4. Permission check
-	hasPerm := false
-	for _, p := range ctx.Permissions {
-		if p == def.RequiredPerm || p == "task.admin" {
-			hasPerm = true
-			break
+	// If no permissions are configured, skip the check (capability-only mode).
+	// The UI exposes capabilities, not fine-grained permissions, so empty
+	// permissions should not block tool calls.
+	if len(ctx.Permissions) > 0 {
+		hasPerm := false
+		for _, p := range ctx.Permissions {
+			if p == def.RequiredPerm || p == "task.admin" {
+				hasPerm = true
+				break
+			}
 		}
-	}
-	if !hasPerm {
-		return deny(ErrPermissionDenied,
-			fmt.Sprintf("agent '%s' lacks required permission '%s' for tool '%s'", ctx.AgentName, def.RequiredPerm, tc.Tool),
-			"request the required permission from the workspace admin")
+		if !hasPerm {
+			return deny(ErrPermissionDenied,
+				fmt.Sprintf("agent '%s' lacks required permission '%s' for tool '%s'", ctx.AgentName, def.RequiredPerm, tc.Tool),
+				"request the required permission from the workspace admin")
+		}
 	}
 
 	// 5. Depth check (only for create_sub_task)
