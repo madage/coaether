@@ -459,3 +459,56 @@ func (h *NodeAgentHandler) CreateAgentComment(c *gin.Context) {
 	log.Printf("[NodeAgent] Agent %s commented on task %s", req.AgentProfileID[:8], taskID[:8])
 	c.JSON(http.StatusCreated, comment)
 }
+
+
+// ReportTokenUsage records token consumption from the runtime.
+func (h *NodeAgentHandler) ReportTokenUsage(c *gin.Context) {
+	auth, ok := h.authenticate(c)
+	if !ok {
+		return
+	}
+
+	var req struct {
+		TaskID           string `json:"task_id" binding:"required"`
+		AgentProfileID   string `json:"agent_profile_id" binding:"required"`
+		SessionID        string `json:"session_id"`
+		PromptTokens     int    `json:"prompt_tokens"`
+		CompletionTokens int    `json:"completion_tokens"`
+		TotalTokens      int    `json:"total_tokens"`
+		Stage            string `json:"stage"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	id := uuid.New().String()
+	now := time.Now()
+	stage := req.Stage
+	if stage == "" {
+		stage = "work"
+	}
+
+	_, err := h.DB.Exec(
+		`INSERT INTO token_usage (id, task_id, agent_profile_id, session_id, prompt_tokens, completion_tokens, total_tokens, stage, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		id, req.TaskID, req.AgentProfileID, req.SessionID,
+		req.PromptTokens, req.CompletionTokens, req.TotalTokens, stage, now,
+	)
+	if err != nil {
+		log.Printf("[NodeAgent] Failed to record token usage: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to record token usage"})
+		return
+	}
+
+	// Update workflow tokens if applicable
+	var workflowID string
+	h.DB.QueryRow(`SELECT workflow_id FROM tasks WHERE id = $1 AND deleted_at IS NULL`, req.TaskID).Scan(&workflowID)
+	if workflowID != "" {
+		h.DB.Exec(`UPDATE workflows SET tokens_used = tokens_used + $1 WHERE id = $2`, req.TotalTokens, workflowID)
+	}
+
+	log.Printf("[NodeAgent] Token usage recorded: agent=%s task=%s tokens=%d", req.AgentProfileID[:8], req.TaskID[:8], req.TotalTokens)
+	_ = auth
+	c.JSON(http.StatusOK, gin.H{"status": "recorded"})
+}

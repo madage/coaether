@@ -557,6 +557,113 @@ func Migrate() error {
 			"ALTER TABLE task_agent_queue ADD COLUMN IF NOT EXISTS trigger_type VARCHAR(32) DEFAULT ''",
 			"ALTER TABLE task_agent_queue ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'",
 
+			// Harness: Workflow support
+			"ALTER TABLE tasks ADD COLUMN IF NOT EXISTS workflow_id VARCHAR(36) REFERENCES workflows(id)",
+			"ALTER TABLE tasks ADD COLUMN IF NOT EXISTS depth INT NOT NULL DEFAULT 0",
+			"ALTER TABLE tasks ADD COLUMN IF NOT EXISTS max_depth INT NOT NULL DEFAULT 5",
+			"ALTER TABLE tasks ADD COLUMN IF NOT EXISTS max_agent_loops INT NOT NULL DEFAULT 3",
+			"ALTER TABLE tasks ADD COLUMN IF NOT EXISTS agent_loop_count INT NOT NULL DEFAULT 0",
+			"ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completion_behavior VARCHAR(16) NOT NULL DEFAULT 'auto_done'",
+			"ALTER TABLE tasks ADD COLUMN IF NOT EXISTS parallel_group VARCHAR(64)",
+			"CREATE INDEX IF NOT EXISTS idx_tasks_workflow_id ON tasks(workflow_id)",
+
+			// Harness: Agent profile protocol fields
+			"ALTER TABLE agent_profiles ADD COLUMN IF NOT EXISTS protocol_version VARCHAR(8) NOT NULL DEFAULT 'legacy'",
+			"ALTER TABLE agent_profiles ADD COLUMN IF NOT EXISTS capabilities JSONB DEFAULT '{}'",
+			"ALTER TABLE agent_profiles ADD COLUMN IF NOT EXISTS permissions JSONB DEFAULT '[]'",
+			"ALTER TABLE agent_profiles ADD COLUMN IF NOT EXISTS max_depth INT NOT NULL DEFAULT 5",
+			"ALTER TABLE agent_profiles ADD COLUMN IF NOT EXISTS max_review_loops INT NOT NULL DEFAULT 3",
+			"ALTER TABLE agent_profiles ADD COLUMN IF NOT EXISTS completion_behavior VARCHAR(16) NOT NULL DEFAULT 'auto_done'",
+			"ALTER TABLE agent_profiles ADD COLUMN IF NOT EXISTS review_sample_rate REAL NOT NULL DEFAULT 0.0",
+			"ALTER TABLE agent_profiles ADD COLUMN IF NOT EXISTS review_timeout INT NOT NULL DEFAULT 240",
+
+			// Harness: Queue TTL and retry for offline degradation
+			"ALTER TABLE task_agent_queue ADD COLUMN IF NOT EXISTS ttl TIMESTAMP",
+			"ALTER TABLE task_agent_queue ADD COLUMN IF NOT EXISTS retry_count INT NOT NULL DEFAULT 0",
+			"ALTER TABLE task_agent_queue ADD COLUMN IF NOT EXISTS fallback_agent_id VARCHAR(36) REFERENCES agent_profiles(id)",
+
+			// Harness: Node heartbeat for offline detection
+			"ALTER TABLE nodes ADD COLUMN IF NOT EXISTS last_heartbeat_at TIMESTAMP",
+
+	}
+
+	// Create Harness-related tables that may not exist yet
+	harnessTables := []string{
+		`CREATE TABLE IF NOT EXISTS workflows (
+			id              VARCHAR(36) PRIMARY KEY,
+			title           TEXT NOT NULL,
+			description     TEXT,
+			status          VARCHAR(16) NOT NULL DEFAULT 'active',
+			token_budget    BIGINT NOT NULL DEFAULT 100000,
+			tokens_used     BIGINT NOT NULL DEFAULT 0,
+			created_by      VARCHAR(36) NOT NULL REFERENCES users(id),
+			workspace_id    VARCHAR(36) NOT NULL REFERENCES workspaces(id),
+			created_at      TIMESTAMP NOT NULL DEFAULT NOW(),
+			updated_at      TIMESTAMP NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE TABLE IF NOT EXISTS task_dependencies (
+			id              VARCHAR(36) PRIMARY KEY,
+			task_id         VARCHAR(36) NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+			depends_on_id   VARCHAR(36) NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+			created_at      TIMESTAMP NOT NULL DEFAULT NOW(),
+			UNIQUE(task_id, depends_on_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_task_depends_task ON task_dependencies(task_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_task_depends_dep ON task_dependencies(depends_on_id)`,
+		`CREATE TABLE IF NOT EXISTS task_reviews (
+			id              VARCHAR(36) PRIMARY KEY,
+			task_id         VARCHAR(36) NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+			reviewer_id     VARCHAR(36) REFERENCES users(id),
+			reviewer_agent_id VARCHAR(36) REFERENCES agent_profiles(id),
+			action          VARCHAR(16) NOT NULL,
+			comment         TEXT,
+			loop_count      INT NOT NULL DEFAULT 1,
+			created_at      TIMESTAMP NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_task_reviews_task ON task_reviews(task_id)`,
+		`CREATE TABLE IF NOT EXISTS agent_tool_logs (
+			id              VARCHAR(36) PRIMARY KEY,
+			agent_id        VARCHAR(36) NOT NULL REFERENCES agent_profiles(id),
+			workflow_id     VARCHAR(36) REFERENCES workflows(id),
+			task_id         VARCHAR(36) REFERENCES tasks(id),
+			tool_name       VARCHAR(64) NOT NULL,
+			parameters      JSONB NOT NULL,
+			status          VARCHAR(16) NOT NULL,
+			deny_reason     VARCHAR(256),
+			created_at      TIMESTAMP NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_tool_logs_agent ON agent_tool_logs(agent_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_tool_logs_workflow ON agent_tool_logs(workflow_id)`,
+		`CREATE TABLE IF NOT EXISTS token_usage (
+			id               VARCHAR(36) PRIMARY KEY,
+			workflow_id      VARCHAR(36) REFERENCES workflows(id),
+			task_id          VARCHAR(36) REFERENCES tasks(id),
+			agent_profile_id VARCHAR(36) REFERENCES agent_profiles(id),
+			session_id       VARCHAR(36) REFERENCES sessions(id),
+			prompt_tokens    INT NOT NULL DEFAULT 0,
+			completion_tokens INT NOT NULL DEFAULT 0,
+			total_tokens     INT NOT NULL DEFAULT 0,
+			stage            VARCHAR(16) NOT NULL DEFAULT 'work',
+			created_at       TIMESTAMP NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_token_usage_wf ON token_usage(workflow_id)`,
+		`CREATE TABLE IF NOT EXISTS workflow_escalations (
+			id              VARCHAR(36) PRIMARY KEY,
+			workflow_id     VARCHAR(36) NOT NULL REFERENCES workflows(id),
+			task_id         VARCHAR(36) REFERENCES tasks(id),
+			level           INT NOT NULL,
+			trigger_reason  VARCHAR(64) NOT NULL,
+			action_taken    VARCHAR(128) NOT NULL,
+			notified_users  TEXT[],
+			resolved_at     TIMESTAMP,
+			created_at      TIMESTAMP NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_esc_wf ON workflow_escalations(workflow_id)`,
+	}
+	for _, t := range harnessTables {
+		if _, err := DB.Exec(t); err != nil {
+			log.Printf("[DB] Harness table warning: %v", err)
+		}
 	}
 
 	for _, a := range alterations {

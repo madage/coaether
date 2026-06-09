@@ -8,8 +8,17 @@ const (
 	TaskTodo       TaskStatus = "todo"
 	TaskInProgress TaskStatus = "in_progress"
 	TaskBlocked    TaskStatus = "blocked"
+	TaskCompleted  TaskStatus = "completed"
 	TaskDone       TaskStatus = "done"
 	TaskReview     TaskStatus = "review"
+	TaskStuck      TaskStatus = "stuck"
+)
+
+const (
+	CompletionAutoDone    = "auto_done"
+	CompletionAutoReview  = "auto_review"
+	CompletionSampleReview = "sample_review"
+	CompletionNeedsReview = "needs_review"
 )
 
 type Priority string
@@ -39,6 +48,15 @@ type Task struct {
 	CompletedAt  *time.Time `json:"completed_at"`
 	CreatedAt    time.Time  `json:"created_at"`
 	UpdatedAt    time.Time  `json:"updated_at"`
+
+	// Workflow fields
+	WorkflowID        *string `json:"workflow_id,omitempty"`
+	Depth             int     `json:"depth"`
+	MaxDepth          int     `json:"max_depth"`
+	MaxAgentLoops     int     `json:"max_agent_loops"`
+	AgentLoopCount    int     `json:"agent_loop_count"`
+	CompletionBehavior string `json:"completion_behavior,omitempty"`
+	ParallelGroup     *string `json:"parallel_group,omitempty"`
 }
 
 type CreateTaskReq struct {

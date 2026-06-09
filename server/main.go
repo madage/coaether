@@ -137,6 +137,12 @@ func main() {
 	nodeAgentH := handlers.NewNodeAgentHandler(database.DB, messageBus)
 	nodeAgentH.Hub = dashHub
 
+	// Workflow handler with Harness
+	workflowH := handlers.NewWorkflowHandler(database.DB)
+	workflowH.Hub = dashHub
+	workflowH.Notifier = notifH
+	workflowH.RegisterToolExecutors()
+
 	// Router
 
 	r := gin.Default()
@@ -205,6 +211,7 @@ func main() {
 	r.GET("/api/node/tasks/:id", nodeAgentH.GetTask)
 	r.POST("/api/node/sessions", nodeAgentH.CreateSession)
 	r.POST("/api/node/tasks/:id/comments", nodeAgentH.CreateAgentComment)
+	r.POST("/api/node/token-usage", nodeAgentH.ReportTokenUsage)
 
 	// Auth required
 
@@ -399,6 +406,14 @@ func main() {
 
 		})
 		plugin.RegisterPluginRoutes(api, pluginMgr, hostSvc, pluginH)
+
+		// Workflows
+		api.GET("/workflows", workflowH.ListWorkflows)
+		api.POST("/workflows", workflowH.CreateWorkflow)
+		api.GET("/workflows/:id", workflowH.GetWorkflow)
+		api.PATCH("/workflows/:id/status", workflowH.UpdateWorkflowStatus)
+		api.GET("/workflows/:id/tasks", workflowH.ListWorkflowTasks)
+		api.POST("/workflows/attach", workflowH.AttachToWorkflow)
 
 	}
 

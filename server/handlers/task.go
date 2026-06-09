@@ -1039,6 +1039,12 @@ func (h *TaskHandler) SetStatus(c *gin.Context) {
 		}
 	}
 
+	// DAGEngine: when task goes to done, advance blocked children
+	if req.Status == string(models.TaskDone) && t.WorkflowID != nil {
+		dag := NewDAGEngine(h.DB)
+		dag.OnTaskCompleted(taskID)
+	}
+
 	// Notify assignees about status change
 	if h.Notifier != nil {
 		actorID, _ := c.Get("user_id")
