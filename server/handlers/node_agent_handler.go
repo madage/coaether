@@ -76,7 +76,7 @@ func (h *NodeAgentHandler) ListQueue(c *gin.Context) {
 		SELECT q.id, q.task_id, q.agent_profile_id, q.status, q.trigger_type, q.assigned_at, q.claimed_at, q.completed_at, q.result_summary, q.snapshot, q.created_at,
 			ap.name AS agent_name
 		FROM task_agent_queue q
-		JOIN agent_profiles ap ON ap.id = q.agent_profile_id
+		JOIN agent_profiles ap ON ap.id = q.agent_profile_id AND ap.enabled = true
 		JOIN workspace_members wm ON wm.workspace_id = ap.workspace_id
 		WHERE wm.user_id = $1 AND q.status = 'queued'
 		ORDER BY q.created_at ASC

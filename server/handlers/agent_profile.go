@@ -172,18 +172,6 @@ func (h *AgentProfileHandler) Update(c *gin.Context) {
 	workspaceID := c.Query("workspace_id")
 	profileID := c.Param("id")
 
-	// Check permission
-	var creatorID string
-	err := h.DB.QueryRow(`SELECT user_id FROM agent_profiles WHERE id = $1`, profileID).Scan(&creatorID)
-	if err == sql.ErrNoRows {
-		c.JSON(http.StatusNotFound, gin.H{"error": "profile not found"})
-		return
-	}
-	if !h.canModifyProfile(c, creatorID) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions"})
-		return
-	}
-
 	var req struct {
 		Name        *string `json:"name,omitempty"`
 		SystemPrompt *string          `json:"system_prompt,omitempty"`
@@ -206,6 +194,27 @@ func (h *AgentProfileHandler) Update(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+
+	// Check permission: enabled toggle is allowed for all workspace members;
+	// other field changes require admin/owner or self-ownership.
+	enabledOnly := req.Enabled != nil && req.Name == nil && req.Description == nil && req.Avatar == nil &&
+		req.AgentID == nil && req.SystemPrompt == nil && req.Instructions == nil && req.NodeID == nil &&
+		req.MaxConcurrency == nil && req.Capabilities == nil && req.Tags == nil && req.Skills == nil &&
+		req.ReviewSampleRate == nil && req.ReviewTimeout == nil && req.MaxReviewLoops == nil &&
+		req.MaxDepth == nil && req.CompletionBehavior == nil
+
+	if !enabledOnly {
+		var creatorID string
+		err := h.DB.QueryRow(`SELECT user_id FROM agent_profiles WHERE id = $1`, profileID).Scan(&creatorID)
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{"error": "profile not found"})
+			return
+		}
+		if !h.canModifyProfile(c, creatorID) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions"})
+			return
+		}
 	}
 
 	setClauses := []string{}
@@ -303,9 +312,24 @@ func (h *AgentProfileHandler) Update(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "profile not found"})
 		return
 	}
+
+	// When disabling an agent, invalidate all active queue items
+	if req.Enabled != nil && !*req.Enabled {
+		h.DB.Exec(
+			`UPDATE task_agent_queue SET status = 'failed', result_summary = '智能体已被禁用', completed_at = NOW()
+			 WHERE agent_profile_id = $1 AND status IN ('queued', 'claimed', 'processing')`,
+			profileID,
+		)
+		h.DB.Exec(`UPDATE agent_profiles SET current_load = 0 WHERE id = $1`, profileID)
+		log.Printf("[Profile] Agent %s disabled — invalidated active queue items", profileID[:8])
+	}
+
 	c.JSON(http.StatusOK, gin.H{"status": "updated"})
 	if h.Hub != nil {
 		h.Hub.SignalChange("agent_profiles")
+		if req.Enabled != nil && !*req.Enabled {
+			h.Hub.SignalChange("task_agent_queue")
+		}
 	}
 }
 

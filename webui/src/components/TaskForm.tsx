@@ -247,7 +247,7 @@ export function TaskForm({ task, onClose, onSave }: TaskFormProps) {
                 ))}
               </optgroup>
               <optgroup label="智能体">
-                {agentProfiles.map((a) => (
+                {agentProfiles.filter(a => a.enabled).map((a) => (
                   <option key={`agent_profile:${a.id}`} value={`agent_profile:${a.id}`}>
                     {a.avatar || '🤖'} {a.name}
                   </option>

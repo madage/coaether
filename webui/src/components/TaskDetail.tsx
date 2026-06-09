@@ -126,11 +126,11 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
   const mentionCandidates = useRef<{ id: string; name: string; type: 'user' | 'agent' }[]>([]);
   mentionCandidates.current = [
     ...members.map(m => ({ id: m.user_id, name: m.username, type: 'user' as const })),
-    ...agentProfiles.map(a => ({ id: a.id, name: a.name, type: 'agent' as const })),
+    ...agentProfiles.filter(a => a.enabled).map(a => ({ id: a.id, name: a.name, type: 'agent' as const })),
   ];
 
   // Agent name set for mention highlighting
-  const agentNames = useMemo(() => new Set(agentProfiles.map(a => a.name)), [agentProfiles]);
+  const agentNames = useMemo(() => new Set(agentProfiles.filter(a => a.enabled).map(a => a.name)), [agentProfiles]);
 
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
@@ -1114,7 +1114,7 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
                   ))}
                 </optgroup>
                 <optgroup label={t('agents')}>
-                  {agentProfiles.map(a => (
+                  {agentProfiles.filter(a => a.enabled).map(a => (
                     <option key={`agent_profile:${a.id}`} value={`agent_profile:${a.id}`}>
                       {a.avatar || '🤖'} {a.name} ({a.current_load}/{a.max_concurrency})
                     </option>
@@ -1229,7 +1229,7 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
                       style={editableSelectStyle}
                     >
                       <option value="">{t('taskDetailSelect')}</option>
-                      {(newAssigneeType === 'user' ? members : agentProfiles).map((item: WorkspaceMember | AgentProfile) => {
+                      {(newAssigneeType === 'user' ? members : agentProfiles.filter(a => a.enabled)).map((item: WorkspaceMember | AgentProfile) => {
                         const id = 'user_id' in item ? (item as WorkspaceMember).user_id : (item as AgentProfile).id;
                         const name = 'username' in item ? (item as WorkspaceMember).username : (item as AgentProfile).name;
                         const icon = 'username' in item ? '👤' : ((item as AgentProfile).avatar || '🤖');

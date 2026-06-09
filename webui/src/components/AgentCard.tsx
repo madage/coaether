@@ -5,23 +5,31 @@ interface AgentCardProps {
   runtimeName?: string;
   nodeName?: string;
   onClick: () => void;
+  onToggle?: (id: string, enabled: boolean) => void;
 }
 
 const cardStyle: React.CSSProperties = {
   background: '#fff',
   borderRadius: '12px',
   boxShadow: '0 4px 6px rgba(0,0,0,0.1), 0 10px 20px rgba(0,0,0,0.06), 0 2px 4px rgba(0,0,0,0.08)',
-  transition: 'transform 0.2s, boxShadow 0.2s',
+  transition: 'transform 0.2s, boxShadow 0.2s, opacity 0.2s',
   cursor: 'pointer',
   overflow: 'hidden',
 };
 
-export function AgentCard({ profile, runtimeName, nodeName, onClick }: AgentCardProps) {
+export function AgentCard({ profile, runtimeName, nodeName, onClick, onToggle }: AgentCardProps) {
+  const disabled = !profile.enabled;
+
   return (
     <div
-      style={cardStyle}
+      style={{
+        ...cardStyle,
+        opacity: disabled ? 0.55 : 1,
+        position: 'relative',
+      }}
       onClick={onClick}
       onMouseEnter={(e) => {
+        if (disabled) return;
         e.currentTarget.style.transform = 'translateY(-4px)';
         e.currentTarget.style.boxShadow = '0 12px 24px rgba(0,0,0,0.15), 0 4px 8px rgba(0,0,0,0.1)';
       }}
@@ -30,11 +38,47 @@ export function AgentCard({ profile, runtimeName, nodeName, onClick }: AgentCard
         e.currentTarget.style.boxShadow = '';
       }}
     >
-      <div style={{ padding: '24px', textAlign: 'center' }}>
-        <div style={{ fontSize: '3em', marginBottom: '12px' }}>{profile.avatar}</div>
-        <h3 style={{ margin: '0 0 4px', fontSize: '1.1em', color: '#1a1a2e' }}>{profile.name}</h3>
+      {/* Top-right toggle */}
+      <div
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggle?.(profile.id, !profile.enabled);
+        }}
+        style={{
+          position: 'absolute',
+          top: '10px',
+          right: '10px',
+          width: '36px',
+          height: '20px',
+          borderRadius: '10px',
+          background: disabled ? '#ccc' : '#4caf50',
+          cursor: 'pointer',
+          transition: 'background 0.2s',
+          zIndex: 1,
+        }}
+        title={disabled ? '点击启用' : '点击禁用'}
+      >
+        <div style={{
+          width: '16px',
+          height: '16px',
+          borderRadius: '50%',
+          background: '#fff',
+          position: 'absolute',
+          top: '2px',
+          left: disabled ? '2px' : '18px',
+          transition: 'left 0.2s',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+        }} />
+      </div>
+
+      <div style={{ padding: '20px 24px', textAlign: 'center' }}>
+        <div style={{ fontSize: '3em', marginBottom: '8px' }}>{profile.avatar}</div>
+        <h3 style={{
+          margin: '0 0 4px', fontSize: '1.1em',
+          color: disabled ? '#999' : '#1a1a2e',
+        }}>{profile.name}</h3>
         <p style={{
-          margin: '0 0 8px', color: '#888', fontSize: '0.8em',
+          margin: '0 0 8px', color: disabled ? '#bbb' : '#888', fontSize: '0.8em',
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
         }}>{profile.description}</p>
         <div style={{ fontSize: '0.75em', color: '#aaa' }}>

@@ -72,6 +72,17 @@ export function AgentList() {
     }
   }, []);
 
+  const handleToggle = useCallback(async (id: string, enabled: boolean) => {
+    // Optimistic update
+    setProfiles((prev) => prev.map((p) => p.id === id ? { ...p, enabled } : p));
+    try {
+      await agentProfiles.update(id, { enabled });
+    } catch {
+      // Revert on failure
+      setProfiles((prev) => prev.map((p) => p.id === id ? { ...p, enabled: !enabled } : p));
+    }
+  }, []);
+
   const handleDelete = useCallback((id: string) => {
     setDeleteProfileId(id);
   }, []);
@@ -246,6 +257,7 @@ Review Sample Rate: 1.0`}
             runtimeName={agentsMap[profile.agent_id] || profile.agent_id}
             nodeName={(profile.node_id && nodesMap[profile.node_id]) || ''}
             onClick={() => setSelectedProfile(profile)}
+            onToggle={handleToggle}
           />
         ))}
         {!isObserver && <AgentCreateCard onClick={() => setShowCreate(true)} />}

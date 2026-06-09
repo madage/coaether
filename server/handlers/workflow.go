@@ -379,16 +379,22 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 		// Auto-start: if assigned to an agent and not blocked by dependencies,
 		// create a queue entry so the runtime picks it up.
 		if p.AssigneeType == "agent_profile" && p.AssigneeID != "" && len(p.DependsOn) == 0 {
-			queueID := uuid.New().String()
-			h.DB.Exec(
-				"INSERT INTO task_agent_queue (id, task_id, agent_profile_id, status, trigger_type, assigned_at, created_at) VALUES ($1, $2, $3, 'queued', 'sub_task', $4, $4)",
-				queueID, taskID, p.AssigneeID, now,
-			)
-			h.DB.Exec("UPDATE agent_profiles SET current_load = current_load + 1 WHERE id = $1", p.AssigneeID)
-			if h.Hub != nil {
-				h.Hub.SignalChange("task_agent_queue")
+			var enabled bool
+			h.DB.QueryRow(`SELECT enabled FROM agent_profiles WHERE id = $1`, p.AssigneeID).Scan(&enabled)
+			if !enabled {
+				log.Printf("[Harness] Skipping auto-queue for disabled agent %s", p.AssigneeID[:8])
+			} else {
+				queueID := uuid.New().String()
+				h.DB.Exec(
+					"INSERT INTO task_agent_queue (id, task_id, agent_profile_id, status, trigger_type, assigned_at, created_at) VALUES ($1, $2, $3, 'queued', 'sub_task', $4, $4)",
+					queueID, taskID, p.AssigneeID, now,
+				)
+				h.DB.Exec("UPDATE agent_profiles SET current_load = current_load + 1 WHERE id = $1", p.AssigneeID)
+				if h.Hub != nil {
+					h.Hub.SignalChange("task_agent_queue")
+				}
+				log.Printf("[Harness] Auto-queued subtask %s for agent %s", taskID[:8], p.AssigneeID[:8])
 			}
-			log.Printf("[Harness] Auto-queued subtask %s for agent %s", taskID[:8], p.AssigneeID[:8])
 		}
 
 		if h.Hub != nil {

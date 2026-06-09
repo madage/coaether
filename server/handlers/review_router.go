@@ -247,6 +247,13 @@ func (r *ReviewRouter) HandleReviewHTTP(c *gin.Context) {
 
 // createReviewQueue creates a queue entry for an agent to review a task.
 func (r *ReviewRouter) createReviewQueue(taskID, agentProfileID, workflowID string) {
+	// Skip if agent is disabled
+	var enabled bool
+	r.DB.QueryRow(`SELECT enabled FROM agent_profiles WHERE id = $1`, agentProfileID).Scan(&enabled)
+	if !enabled {
+		return
+	}
+
 	existingStatus := ""
 	r.DB.QueryRow(
 		`SELECT status FROM task_agent_queue
