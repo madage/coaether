@@ -24,6 +24,7 @@ type TaskHandler struct {
 	RuleEngine     *RuleEngine
 	AgentScheduler *AgentScheduler
 	MessageBus     *protocol.MessageBus
+	ReviewRouter   *ReviewRouter
 }
 
 func NewTaskHandler(db *sql.DB) *TaskHandler {
@@ -774,6 +775,17 @@ func (h *TaskHandler) Update(c *gin.Context) {
 		h.RuleEngine.Evaluate("on_status_change", taskID, ExtractStatusContext(taskID, string(t.Status)))
 	}
 
+	// RouteTask: if status changed to completed, route based on completion_behavior
+	if req.Status != nil && *req.Status == "completed" && h.ReviewRouter != nil {
+		h.ReviewRouter.RouteTask(taskID)
+	}
+
+	// DAGEngine: if status changed to done, advance blocked children
+	if req.Status != nil && *req.Status == string(models.TaskDone) {
+		dag := NewDAGEngine(h.DB)
+		dag.OnTaskCompleted(taskID)
+	}
+
 	c.JSON(http.StatusOK, t)
 }
 
@@ -1043,6 +1055,11 @@ func (h *TaskHandler) SetStatus(c *gin.Context) {
 	if req.Status == string(models.TaskDone) && t.WorkflowID != nil {
 		dag := NewDAGEngine(h.DB)
 		dag.OnTaskCompleted(taskID)
+	}
+
+	// RouteTask: when completed, route based on completion_behavior
+	if req.Status == "completed" && h.ReviewRouter != nil {
+		h.ReviewRouter.RouteTask(taskID)
 	}
 
 	// Notify assignees about status change

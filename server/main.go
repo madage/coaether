@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/coaether/server/database"
 
 	"github.com/coaether/server/handlers"
+	"github.com/coaether/server/harness"
 
 	"github.com/coaether/server/mailer"
 
@@ -142,6 +144,16 @@ func main() {
 	workflowH.Hub = dashHub
 	workflowH.Notifier = notifH
 	workflowH.RegisterToolExecutors()
+
+	// Review Router
+	reviewRouter := handlers.NewReviewRouter(database.DB)
+	reviewRouter.Hub = dashHub
+	reviewRouter.Notifier = notifH
+	taskH.ReviewRouter = reviewRouter
+
+	// Safety Guard (anti-runaway monitor)
+	safetyGuard := harness.NewSafetyGuard(database.DB)
+	safetyGuard.StartPeriodicCheck(5 * time.Minute)
 
 	// Router
 
@@ -285,6 +297,7 @@ func main() {
 			api.GET("/tasks/:id/comments", taskH.ListComments)
 			api.POST("/tasks/:id/comments", taskH.CreateComment)
 			api.DELETE("/tasks/:id/comments/:commentId", taskH.DeleteComment)
+			api.POST("/tasks/:id/review", reviewRouter.HandleReviewHTTP)
 
 		// Task rules
 		api.GET("/rules", ruleH.List)
