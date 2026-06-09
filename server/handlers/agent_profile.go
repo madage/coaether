@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -138,12 +139,19 @@ func (h *AgentProfileHandler) Create(c *gin.Context) {
 
 	id := uuid.New().String()
 	now := time.Now()
+
+	tags := req.Tags
+	if len(tags) == 0 {
+		tags = json.RawMessage("[]")
+	}
+
 	_, err := h.DB.Exec(
 		`INSERT INTO agent_profiles (id, user_id, workspace_id, name, avatar, description, system_prompt, instructions, agent_id, node_id, tags, version, model, backend, enabled, created_at, updated_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, '', '', 'cli', true, $12, $12)`,
-		id, userID, workspaceID, req.Name, avatar, req.Description, req.SystemPrompt, req.Instructions, req.AgentID, req.NodeID, req.Tags, now,
+		id, userID, workspaceID, req.Name, avatar, req.Description, req.SystemPrompt, req.Instructions, req.AgentID, req.NodeID, tags, now,
 	)
 	if err != nil {
+		log.Printf("[Profile] Create error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create profile"})
 		return
 	}

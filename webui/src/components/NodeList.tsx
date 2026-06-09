@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useLang } from '../i18n/context';
 import { agents as agentsApi, nodes as nodesApi, agentQueue as agentQueueApi, agentProfiles as agentProfilesApi } from '../api/client';
 import { useResourceSync } from '../hooks/useResourceSync';
-import type { Node, Agent } from '../types';
+import type { Node, Agent, AgentProfile } from '../types';
 import { MathConfirmDialog } from './MathConfirmDialog';
 
 interface NodeListProps {
@@ -14,6 +14,7 @@ export function NodeList({ nodes, onSelect }: NodeListProps) {
   const { t } = useLang();
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [agentMap, setAgentMap] = useState<Record<string, Agent[]>>({});
+  const [profileMap, setProfileMap] = useState<Record<string, AgentProfile[]>>({});
   const [scanning, setScanning] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   const [managing, setManaging] = useState<string | null>(null);
@@ -69,14 +70,22 @@ export function NodeList({ nodes, onSelect }: NodeListProps) {
     busy: '#ff9800',
   };
 
-  // Fetch agents when a node is expanded
+  // Fetch agents and profiles when a node is expanded
   useEffect(() => {
-    if (expandedId && !agentMap[expandedId]) {
-      agentsApi.list(expandedId).then((data) => {
-        setAgentMap((prev) => ({ ...prev, [expandedId]: data.agents }));
-      }).catch(() => {});
+    if (expandedId) {
+      if (!agentMap[expandedId]) {
+        agentsApi.list(expandedId).then((data) => {
+          setAgentMap((prev) => ({ ...prev, [expandedId]: data.agents }));
+        }).catch(() => {});
+      }
+      if (!profileMap[expandedId]) {
+        agentProfilesApi.list().then((data) => {
+          const nodeProfiles = data.profiles.filter(p => p.node_id === expandedId);
+          setProfileMap((prev) => ({ ...prev, [expandedId]: nodeProfiles }));
+        }).catch(() => {});
+      }
     }
-  }, [expandedId, agentMap]);
+  }, [expandedId, agentMap, profileMap]);
 
   const handleScan = useCallback(async (nodeID: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -538,6 +547,43 @@ export function NodeList({ nodes, onSelect }: NodeListProps) {
                   <div style={{ fontSize: '0.75em', color: '#bbb', marginTop: '4px' }}>
                     {t('agentHint')}
                   </div>
+                )}
+                {/* Assigned agent profiles */}
+                <div style={{ fontSize: '0.9em', fontWeight: 500, marginBottom: '6px', marginTop: '12px' }}>
+                  {t('assignedAgents')}:
+                </div>
+                {!profileMap[node.id] ? (
+                  <div style={{ fontSize: '0.85em', color: '#999' }}>{t('loading')}...</div>
+                ) : profileMap[node.id].length === 0 ? (
+                  <div style={{ fontSize: '0.85em', color: '#999' }}>{t('noAssignedAgents')}</div>
+                ) : (
+                  profileMap[node.id].map((profile) => (
+                    <div
+                      key={profile.id}
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        padding: '4px 8px',
+                        margin: '2px 0',
+                        background: '#fff',
+                        borderRadius: '4px',
+                        border: '1px solid #eee',
+                      }}
+                    >
+                      <div>
+                        <span style={{ fontWeight: 500 }}>
+                          {profile.avatar} {profile.name}
+                        </span>
+                        <span style={{ fontSize: '0.8em', color: '#999', marginLeft: '8px' }}>
+                          {profile.agent_id}
+                        </span>
+                      </div>
+                      <span style={{ fontSize: '0.75em', padding: '2px 6px', borderRadius: '4px', background: profile.enabled ? '#e8f5e9' : '#f5f5f5', color: profile.enabled ? '#2e7d32' : '#999' }}>
+                        {profile.enabled ? t('enabled') : t('disabled')}
+                      </span>
+                    </div>
+                  ))
                 )}
               </div>
             )}

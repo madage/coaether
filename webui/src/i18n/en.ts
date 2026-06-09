@@ -259,6 +259,8 @@ export const en = {
   selectAgent: 'Select an agent...',
 
   noAgentsOnNode: 'This node has no available agents. Click "Scan" to detect installed agents.',
+  assignedAgents: 'Assigned Agents',
+  noAssignedAgents: 'No assigned agents',
 
   enabled: 'Enabled',
 

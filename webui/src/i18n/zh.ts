@@ -259,6 +259,8 @@ export const zh = {
   selectAgent: '选择一个 Agent...',
 
   noAgentsOnNode: '该节点没有可用 Agent。点击"扫描"检测已安装的 AI 工具。',
+  assignedAgents: '已分配的智能体',
+  noAssignedAgents: '没有已分配的智能体',
 
   enabled: '已启用',
 
