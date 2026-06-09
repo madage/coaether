@@ -245,7 +245,9 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
 
   const handlePostComment = async (parentId?: string) => {
     const ref = parentId ? replyEditorRef.current : commentEditorRef.current;
-    const text = (ref?.innerHTML || '').trim();
+    let text = (ref?.innerHTML || '').trim();
+    // Strip mention color spans to plain @text before saving
+    text = text.replace(/<span[^>]*>(@[\w一-鿿]+)<\/span>/g, '$1');
     const plain = text.replace(/<[^>]*>/g, '').trim();
     if (!plain || plain === '<br>' || posting) return;
     setPosting(true);
@@ -466,9 +468,17 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
     }
     range.deleteContents();
 
-    // Insert @mention as plain text — blue highlighting is handled by highlightMentions() on display
-    range.insertNode(document.createTextNode(`@${item.name} `));
-    range.collapse(false);
+    // Insert @mention as colored span in the editor
+    const span = document.createElement('span');
+    span.style.color = item.type === 'agent' ? '#2e7d32' : '#1976d2';
+    span.style.fontWeight = '500';
+    span.textContent = `@${item.name}`;
+    range.insertNode(span);
+    // Add a trailing space after the colored mention
+    const space = document.createTextNode(' ');
+    span.parentNode?.insertBefore(space, span.nextSibling);
+    range.setStartAfter(space);
+    range.collapse(true);
     sel.removeAllRanges();
     sel.addRange(range);
 
