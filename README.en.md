@@ -102,6 +102,9 @@ The system uses a **dual WebSocket channel** architecture:
 - Kanban board view, status flow: `todo` → `in_progress` → `blocked` → `review` → `done`
 - Link to projects, organize tasks by project
 - **Agent Auto-Processing** — When a task's assignee is an agent profile and status changes to `in_progress`, the agent automatically starts working; when a non-assignee agent completes a task, the assignee agent auto-reviews the result
+- **DAG Auto-Progress** — Workflow tasks advance automatically: completed tasks unblock dependents → agent tasks auto-dispatch to queue → parent auto-closes when all siblings done, recursively propagating through the DAG
+- **Completion Behavior** — Tasks support `completion_behavior` (`auto_done`/`auto_review`/`sample_review`/`needs_review`) controlling whether agent completion moves the task to `done` (triggering DAG) or `review`
+- **Agent Queue Status** — Task Detail sidebar shows real-time agent processing status with color-coded indicators and result summaries
 - Trash mechanism: soft delete + restore + permanent delete
 - Workspace isolation
 

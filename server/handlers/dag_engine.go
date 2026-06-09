@@ -101,11 +101,19 @@ func (e *DAGEngine) WouldCreateCycle(workflowID, taskID, dependsOnID string) (bo
 }
 
 // OnTaskCompleted is called when a task transitions to "done".
-// It checks all tasks that depend on the completed task and
-// transitions them from "blocked" to "todo" if all dependencies are met.
+// It checks all tasks that depend on the completed task,
+// transitions them from "blocked" to "todo" if all dependencies are met,
+// auto-dispatches unblocked agent tasks to the queue,
+// and auto-closes the parent task when all sub-tasks are done.
 func (e *DAGEngine) OnTaskCompleted(taskID string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.onTaskCompletedLocked(taskID)
+}
+
+// onTaskCompletedLocked is the internal implementation (caller must hold mu.Lock).
+func (e *DAGEngine) onTaskCompletedLocked(taskID string) {
+	now := time.Now()
 
 	// Find all tasks that depend on this task
 	rows, err := e.DB.Query(
@@ -123,7 +131,6 @@ func (e *DAGEngine) OnTaskCompleted(taskID string) {
 	}
 	defer rows.Close()
 
-	now := time.Now()
 	for rows.Next() {
 		var dependentID, wfID string
 		if err := rows.Scan(&dependentID, &wfID); err != nil {
@@ -131,7 +138,7 @@ func (e *DAGEngine) OnTaskCompleted(taskID string) {
 		}
 
 		// Check if ALL dependencies of this task are done
-		allDone := false
+		var allDone bool
 		e.DB.QueryRow(
 			`SELECT COUNT(*) = 0 FROM task_dependencies td
 			 JOIN tasks t ON t.id = td.depends_on_id
@@ -149,8 +156,78 @@ func (e *DAGEngine) OnTaskCompleted(taskID string) {
 				log.Printf("[DAGEngine] Failed to unblock task %s: %v", dependentID, err)
 			} else {
 				log.Printf("[DAGEngine] Task %s unblocked (all dependencies met in workflow %s)", dependentID[:8], wfID[:8])
+				// Auto-dispatch: if unblocked task has agent_profile assignee, create queue entry
+				e.tryAutoDispatchLocked(dependentID, now)
 			}
 		}
+	}
+
+	// Auto-close parent if all siblings are done
+	e.tryAutoCloseParentLocked(taskID, now)
+}
+
+// tryAutoDispatchLocked creates a queue entry for an unblocked task with an agent_profile assignee.
+func (e *DAGEngine) tryAutoDispatchLocked(taskID string, now time.Time) {
+	var assigneeType, assigneeID string
+	err := e.DB.QueryRow(
+		`SELECT COALESCE(assignee_type,''), COALESCE(assignee_id,'') FROM tasks WHERE id = $1 AND deleted_at IS NULL`,
+		taskID,
+	).Scan(&assigneeType, &assigneeID)
+	if err != nil || assigneeType != "agent_profile" || assigneeID == "" {
+		return
+	}
+
+	// Check agent capacity
+	var canProcess bool
+	e.DB.QueryRow(
+		`SELECT COALESCE(current_load, 0) < COALESCE(max_concurrency, 1) FROM agent_profiles WHERE id = $1 AND enabled = true`,
+		assigneeID,
+	).Scan(&canProcess)
+	if !canProcess {
+		return
+	}
+
+	queueID := uuid.New().String()
+	e.DB.Exec(
+		`INSERT INTO task_agent_queue (id, task_id, agent_profile_id, status, trigger_type, assigned_at, created_at)
+		 VALUES ($1, $2, $3, 'queued', 'status_change', $4, $4)`,
+		queueID, taskID, assigneeID, now,
+	)
+	e.DB.Exec(`UPDATE agent_profiles SET current_load = current_load + 1, last_active_at = $1 WHERE id = $2`,
+		now, assigneeID)
+	log.Printf("[DAGEngine] Auto-dispatched task %s to agent %s (queue=%s)", taskID[:8], assigneeID[:8], queueID[:8])
+}
+
+// tryAutoCloseParentLocked checks if the parent task can be auto-closed (all sub-tasks done).
+// If so, it sets the parent to done and recursively advances the DAG.
+func (e *DAGEngine) tryAutoCloseParentLocked(taskID string, now time.Time) {
+	var parentID string
+	err := e.DB.QueryRow(`SELECT COALESCE(parent_id,'') FROM tasks WHERE id = $1 AND deleted_at IS NULL`, taskID).Scan(&parentID)
+	if err != nil || parentID == "" {
+		return
+	}
+
+	// Check if all siblings are done
+	var allDone bool
+	e.DB.QueryRow(
+		`SELECT COUNT(*) = 0 FROM tasks WHERE parent_id = $1 AND deleted_at IS NULL AND status != 'done'`,
+		parentID,
+	).Scan(&allDone)
+
+	if allDone {
+		// Only close if parent is not already done
+		var parentStatus string
+		e.DB.QueryRow(`SELECT status FROM tasks WHERE id = $1 AND deleted_at IS NULL`, parentID).Scan(&parentStatus)
+		if parentStatus == "done" {
+			return
+		}
+
+		e.DB.Exec(`UPDATE tasks SET status = 'done', completed_at = $1, updated_at = $1 WHERE id = $2 AND deleted_at IS NULL`,
+			now, parentID)
+		log.Printf("[DAGEngine] Parent task %s auto-closed (all sub-tasks done)", parentID[:8])
+
+		// Recursively advance the DAG for the parent
+		e.onTaskCompletedLocked(parentID)
 	}
 }
 

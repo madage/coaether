@@ -211,8 +211,15 @@ func (r *Runtime) handleMessage(env *protocol.Envelope) {
 		log.Printf("[Runtime] Message received for session %s from %s", env.SessionID, env.From)
 		r.handleAgentMessage(env)
 
-	case protocol.MsgEvent, protocol.MsgToolUse, protocol.MsgToolResult:
+	case protocol.MsgEvent, protocol.MsgToolResult:
 		// Session-scoped events consumed by UI clients
+
+	case protocol.MsgToolUse:
+		// Intercept tool calls from auto-task sessions for Harness execution
+		if r.isAutoTaskSession(env.SessionID) && env.Payload != nil && env.Payload.Tool != "" {
+			r.handleAutoTaskToolCall(env)
+		}
+		// Non-auto-task sessions: tool_use is forwarded to UI by backend
 
 	case protocol.MsgPermissionResponse:
 		log.Printf("[Runtime] Permission response for session %s", env.SessionID)
@@ -257,6 +264,88 @@ func (r *Runtime) handleAgentMessage(env *protocol.Envelope) {
 		}
 		break
 	}
+}
+
+// isAutoTaskSession checks if the session is for an auto-task agent.
+func (r *Runtime) isAutoTaskSession(sessionID string) bool {
+	r.connMu.Lock()
+	defer r.connMu.Unlock()
+	meta, ok := r.sessionMeta[sessionID]
+	return ok && meta["is_auto_task"] == "true"
+}
+
+// handleAutoTaskToolCall intercepts a tool.use event from an auto-task session,
+// sends it to the server Harness API for execution, and routes the result back.
+func (r *Runtime) handleAutoTaskToolCall(env *protocol.Envelope) {
+	toolName := env.Payload.Tool
+	toolUseID := env.Payload.ToolUseID
+
+	r.connMu.Lock()
+	meta, ok := r.sessionMeta[env.SessionID]
+	r.connMu.Unlock()
+	if !ok {
+		log.Printf("[Runtime] No session meta for %s, cannot handle tool call", env.SessionID[:8])
+		return
+	}
+
+	taskID := meta["task_id"]
+	queueID := meta["queue_id"]
+	profileID := meta["agent_profile_id"]
+
+	if taskID == "" {
+		log.Printf("[Runtime] No task_id in session meta, skipping tool call")
+		return
+	}
+
+	log.Printf("[Runtime] Auto-task tool call: session=%s tool=%s task=%s", env.SessionID[:8], toolName, taskID[:8])
+
+	// Serialize tool input for Harness API
+	inputBytes, _ := json.Marshal(env.Payload.Input)
+
+	// Build request to Harness API
+	body := map[string]interface{}{
+		"task_id":          taskID,
+		"queue_id":         queueID,
+		"tool":             toolName,
+		"params":           string(inputBytes),
+		"agent_profile_id": profileID,
+		"call_id":          toolUseID,
+	}
+
+	// Call server Harness API
+	result := r.callHarnessAPI(body)
+
+	// Send tool result back to claude
+	if cli, ok := r.backends["claude"].(*backends.ClaudeCLIBackend); ok {
+		cli.SendToolResult(env.SessionID, toolUseID, result)
+		log.Printf("[Runtime] Tool result sent back to claude: tool=%s status=%s", toolName, result["status"])
+	} else {
+		log.Printf("[Runtime] No claude backend available for tool result")
+	}
+}
+
+// callHarnessAPI sends a tool call request to the server's Harness HTTP API.
+func (r *Runtime) callHarnessAPI(body map[string]interface{}) map[string]interface{} {
+	baseURL := "http://" + r.ServerURL
+	auth := fmt.Sprintf("node_id=%s&node_secret=%s", r.NodeID, r.Secret)
+
+	bodyBytes, _ := json.Marshal(body)
+	u := fmt.Sprintf("%s/api/node/tool-call?%s", baseURL, auth)
+
+	resp, err := http.Post(u, "application/json", bytes.NewBuffer(bodyBytes))
+	if err != nil {
+		log.Printf("[Runtime] Harness API call failed: %v", err)
+		return map[string]interface{}{"status": "error", "error": map[string]interface{}{"message": err.Error()}}
+	}
+	defer resp.Body.Close()
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		log.Printf("[Runtime] Failed to decode Harness response: %v", err)
+		return map[string]interface{}{"status": "error", "error": map[string]interface{}{"message": err.Error()}}
+	}
+
+	return result
 }
 
 func (r *Runtime) send(env *protocol.Envelope) {

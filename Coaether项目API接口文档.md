@@ -1545,8 +1545,10 @@ PUT /api/node/queue/:id/status?node_id=<node_id>&node_secret=<secret>
 
 **说明：** 状态设为 `completed` 时，服务端会自动：
 - 在任务下发布 Agent 评论（附 `result_summary`）
-- 将任务状态设为 `done` 或 `review`（取决于触发类型）
-- 如果负责人是其他智能体，自动创建 review 队列条目
+- 根据任务的 `completion_behavior` 决定目标状态：
+  - `auto_done` → 设为 `done`，并触发 DAGEngine 推进依赖任务
+  - 其他值（含 `auto_review`/`sample_review`/`needs_review`）→ 设为 `review`
+- 如果目标状态为 `review` 且负责人是其他智能体，自动创建 review 队列条目
 
 ---
 
@@ -1616,6 +1618,85 @@ POST /api/node/tasks/:id/comments?node_id=<node_id>&node_secret=<secret>
 ```
 
 **响应（201）：** 创建的评论对象
+
+---
+
+### 8.7 上报 Token 用量
+
+```
+POST /api/node/token-usage?node_id=<node_id>&node_secret=<secret>
+```
+
+**请求体：**
+
+```json
+{
+  "task_id": "task-uuid（必填）",
+  "agent_profile_id": "profile-uuid（必填）",
+  "session_id": "session-uuid（可选）",
+  "prompt_tokens": 1000,
+  "completion_tokens": 500,
+  "total_tokens": 1500,
+  "stage": "work"
+}
+```
+
+**说明：** 智能体在处理任务期间上报 Token 消耗。`stage` 可选值：`work`、`review`、`evaluate`，默认为 `work`。上报后自动累加到关联工作流的 `tokens_used` 计数。
+
+**响应：**
+
+```json
+{ "status": "recorded" }
+```
+
+---
+
+### 8.8 工具调用（节点侧）
+
+```
+POST /api/node/tool-call?node_id=<node_id>&node_secret=<secret>
+```
+
+**请求体：**
+
+```json
+{
+  "task_id": "task-uuid（必填）",
+  "queue_id": "queue-uuid（可选）",
+  "tool": "create_sub_task（必填）",
+  "params": { "title": "子任务标题", "depends_on": ["前置任务ID"] },
+  "call_id": "optional-call-id",
+  "agent_profile_id": "profile-uuid"
+}
+```
+
+**说明：** 运行时调用此接口执行工具。服务端通过 Harness Policy Engine 进行权限检查、执行注册的 Executor，并记录审计日志。支持的工具有：`create_sub_task`、`assign_task`、`review_task`、`add_comment`、`get_task_detail`、`list_sub_tasks`、`update_task_status`。
+
+**响应：**
+
+```json
+{
+  "type": "tool_result",
+  "tool": "create_sub_task",
+  "status": "success",
+  "result": { "task_id": "created-task-uuid" }
+}
+```
+
+**错误响应：**
+
+```json
+{
+  "type": "tool_result",
+  "tool": "create_sub_task",
+  "status": "denied",
+  "error": {
+    "code": "permission_denied",
+    "message": "Agent lacks permission: task.write",
+    "suggestion": "请更新智能体的 permissions 配置"
+  }
+}
+```
 
 ---
 
@@ -2448,6 +2529,22 @@ POST /api/workflows/attach
 
 ---
 
+### 14.8 DAG 自动推进
+
+DAGEngine 在工作流执行过程中自动管理任务依赖：
+
+**自动解阻塞：** 当某个任务完成时，DAGEngine 查找所有依赖该任务的任务（`status=blocked`），逐一检查其所有前置依赖是否已完成。若全部完成，自动将状态更新为 `todo`。
+
+**自动派发：** 解阻塞时，如果任务的 `assignee_type=agent_profile` 且智能体有空闲容量，自动创建 `task_agent_queue` 条目（`trigger_type=status_change`）并递增负载计数。
+
+**自动关闭父任务：** 解阻塞后检查当前任务的父任务的所有子任务是否均已 `done`。若是，自动将父任务设为 `done`，并递归调用 DAGEngine 继续推进父任务的依赖链。
+
+**入口：** DAGEngine.OnTaskCompleted(taskID) 在以下场景被调用：
+- 节点侧队列项完成且 `completion_behavior=auto_done`（见 8.3）
+- 审核通过（见 2.18）
+
+---
+
 ## 15. Harness 智能体工具调用
 
 > Harness 是智能体在工作流中调用系统功能的权限安全层。智能体通过在回复中嵌入 JSON 格式的 `tool_call` 来调用以下工具。
@@ -2726,6 +2823,7 @@ GET /api/nodes/bin/:os/:arch
 | 8.5 | 创建会话（节点） | `POST` | `/api/node/sessions` | node_secret |
 | 8.6 | 发布评论（节点） | `POST` | `/api/node/tasks/:id/comments` | node_secret |
 | 8.7 | 上报 Token 用量 | `POST` | `/api/node/token-usage` | node_secret |
+| 8.8 | 工具调用 | `POST` | `/api/node/tool-call` | node_secret |
 | 9.2 | 列出技能 | `GET` | `/api/skills` | JWT |
 | 9.3 | 获取技能 | `GET` | `/api/skills/:id` | JWT |
 | 9.4 | 创建技能 | `POST` | `/api/skills` | JWT |

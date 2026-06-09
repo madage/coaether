@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useLang } from '../i18n/context';
 import { tasks as tasksApi, projects as projectsApi, workspaceMembers as workspaceMembersApi, agentProfiles as agentProfilesApi, comments as commentsApi, agentQueue as agentQueueApi, workflows as workflowsApi } from '../api/client';
 import { useWorkspace } from '../hooks/WorkspaceContext';
-import type { Task, TaskStatus, Project, Priority, AssigneeType, WorkspaceMember, AgentProfile, Comment, Workflow } from '../types';
+import type { Task, TaskStatus, Project, Priority, AssigneeType, WorkspaceMember, AgentProfile, Comment, Workflow, AgentQueueItem } from '../types';
 
 interface TaskDetailProps {
   task: Task;
@@ -75,16 +75,23 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
   const [confirmDeleteComment, setConfirmDeleteComment] = useState<string | null>(null);
 
   const [isProcessing, setIsProcessing] = useState(false);
+  const [taskQueueItems, setTaskQueueItems] = useState<AgentQueueItem[]>([]);
   const [reviewComment, setReviewComment] = useState('');
   const [reviewing, setReviewing] = useState(false);
 
   const isOverdue = currentTask.due_at && new Date(currentTask.due_at) < new Date() && !['done', 'completed', 'stuck'].includes(currentTask.status);
 
   useEffect(() => {
-    // Check if this task is currently being processed by an agent
-    agentQueueApi.list().then(res => {
-      setIsProcessing(res.queue.some(q => q.status === 'processing' && q.task_id === currentTask.id));
-    }).catch(() => {});
+    const fetchQueue = () => {
+      agentQueueApi.list().then(res => {
+        const items = res.queue.filter((q: AgentQueueItem) => q.task_id === currentTask.id);
+        setTaskQueueItems(items);
+        setIsProcessing(items.some(q => q.status === 'processing'));
+      }).catch(() => {});
+    };
+    fetchQueue();
+    const interval = setInterval(fetchQueue, 10000);
+    return () => clearInterval(interval);
   }, [currentTask.id]);
 
   useEffect(() => {
@@ -1132,6 +1139,56 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
                 </button>
               )}
             </div>
+
+            {/* Agent queue status */}
+            {taskQueueItems.length > 0 && (
+              <div>
+                <div style={sidebarLabelStyle}>{t('agents')}</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                  {taskQueueItems.map(item => {
+                    const statusColorMap: Record<string, string> = {
+                      queued: '#9e9e9e',
+                      claimed: '#1976d2',
+                      processing: '#f9a825',
+                      completed: '#388e3c',
+                      failed: '#d32f2f',
+                    };
+                    const statusKeyMap: Record<string, string> = {
+                      queued: t('agentQueueQueued'),
+                      claimed: t('agentQueueClaimed'),
+                      processing: t('agentQueueProcessing'),
+                      completed: t('agentQueueCompleted'),
+                      failed: t('agentQueueFailed'),
+                    };
+                    return (
+                      <div key={item.id} style={{
+                        display: 'flex', alignItems: 'center', gap: '6px',
+                        padding: '4px 8px', borderRadius: '6px', background: '#f5f5f5',
+                        fontSize: '0.8em',
+                      }}>
+                        <span style={{
+                          width: '8px', height: '8px', borderRadius: '50%',
+                          background: statusColorMap[item.status] || '#999',
+                          flexShrink: 0,
+                        }} />
+                        <span style={{ fontWeight: 500, color: '#555' }}>
+                          {statusKeyMap[item.status] || item.status}
+                        </span>
+                        {item.status === 'completed' && item.result_summary && (
+                          <span style={{
+                            color: '#888', flex: 1, overflow: 'hidden',
+                            textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                            fontSize: '0.9em',
+                          }} title={item.result_summary}>
+                            {item.result_summary.slice(0, 120)}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             {/* Delegated Assignees */}
             <div>

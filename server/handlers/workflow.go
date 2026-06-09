@@ -482,4 +482,123 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 			"count":    len(subtasks),
 		}, nil
 	})
+
+	harness.RegisterExecutor(harness.ToolAssignTask, func(ctx *harness.AgentContext, params json.RawMessage) (interface{}, error) {
+		var p struct {
+			TaskID       string `json:"task_id"`
+			AssigneeID   string `json:"assignee_id"`
+			AssigneeType string `json:"assignee_type"`
+		}
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, fmt.Errorf("invalid params: %w", err)
+		}
+		if p.TaskID == "" || p.AssigneeID == "" || p.AssigneeType == "" {
+			return nil, fmt.Errorf("task_id, assignee_id, assignee_type are required")
+		}
+
+		_, err := h.DB.Exec(
+			`UPDATE tasks SET assignee_id = $1, assignee_type = $2, updated_at = $3 WHERE id = $4 AND deleted_at IS NULL`,
+			p.AssigneeID, p.AssigneeType, time.Now(), p.TaskID,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to assign task: %w", err)
+		}
+
+		if h.Hub != nil {
+			h.Hub.SignalChange("tasks")
+		}
+
+		log.Printf("[Harness] Agent %s assigned task %s to %s (%s)", ctx.AgentName[:8], p.TaskID[:8], p.AssigneeID[:8], p.AssigneeType)
+		return map[string]interface{}{
+			"status":  "assigned",
+			"task_id": p.TaskID,
+		}, nil
+	})
+
+	harness.RegisterExecutor(harness.ToolReviewTask, func(ctx *harness.AgentContext, params json.RawMessage) (interface{}, error) {
+		var p struct {
+			TaskID  string `json:"task_id"`
+			Action  string `json:"action"`
+			Comment string `json:"comment,omitempty"`
+		}
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, fmt.Errorf("invalid params: %w", err)
+		}
+		if p.TaskID == "" || p.Action == "" {
+			return nil, fmt.Errorf("task_id and action are required")
+		}
+
+		var newStatus string
+		switch p.Action {
+		case "approved":
+			newStatus = "done"
+		case "rejected":
+			newStatus = "in_progress"
+		default:
+			return nil, fmt.Errorf("invalid action: %s (must be approved or rejected)", p.Action)
+		}
+
+		_, err := h.DB.Exec(
+			`UPDATE tasks SET status = $1, updated_at = $2 WHERE id = $3 AND deleted_at IS NULL`,
+			newStatus, time.Now(), p.TaskID,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to review task: %w", err)
+		}
+
+		if p.Comment != "" {
+			commentID := uuid.New().String()
+			h.DB.Exec(
+				`INSERT INTO task_comments (id, task_id, user_id, agent_profile_id, content, is_agent_comment, created_at, updated_at)
+				 VALUES ($1, $2, $3, $4, $5, true, $6, $6)`,
+				commentID, p.TaskID, ctx.AgentProfileID, ctx.AgentProfileID, p.Comment, time.Now(),
+			)
+		}
+
+		if h.Hub != nil {
+			h.Hub.SignalChange("tasks")
+		}
+
+		log.Printf("[Harness] Agent %s reviewed task %s: %s", ctx.AgentName[:8], p.TaskID[:8], p.Action)
+		return map[string]interface{}{
+			"status":  newStatus,
+			"task_id": p.TaskID,
+		}, nil
+	})
+
+	harness.RegisterExecutor(harness.ToolUpdateStatus, func(ctx *harness.AgentContext, params json.RawMessage) (interface{}, error) {
+		var p struct {
+			TaskID string `json:"task_id"`
+			Status string `json:"status"`
+		}
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, fmt.Errorf("invalid params: %w", err)
+		}
+		if p.TaskID == "" || p.Status == "" {
+			return nil, fmt.Errorf("task_id and status are required")
+		}
+
+		validStatuses := map[string]bool{"todo": true, "in_progress": true, "completed": true, "blocked": true}
+		if !validStatuses[p.Status] {
+			return nil, fmt.Errorf("invalid status: %s (must be todo, in_progress, completed, or blocked)", p.Status)
+		}
+
+		_, err := h.DB.Exec(
+			`UPDATE tasks SET status = $1, updated_at = $2 WHERE id = $3 AND deleted_at IS NULL`,
+			p.Status, time.Now(), p.TaskID,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to update status: %w", err)
+		}
+
+		if h.Hub != nil {
+			h.Hub.SignalChange("tasks")
+		}
+
+		log.Printf("[Harness] Agent %s updated task %s status → %s", ctx.AgentName[:8], p.TaskID[:8], p.Status)
+		return map[string]interface{}{
+			"status":  p.Status,
+			"task_id": p.TaskID,
+		}, nil
+	})
 }

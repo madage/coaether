@@ -631,6 +631,30 @@ func jsonEscape(s string) string {
 	return buf.String()
 }
 
+// SendToolResult sends a tool result back to the claude process for the given session.
+func (b *ClaudeCLIBackend) SendToolResult(sessionID, toolUseID string, result interface{}) {
+	b.mu.Lock()
+	sess, exists := b.sessions[sessionID]
+	b.mu.Unlock()
+	if !exists || sess.isCompleted() {
+		return
+	}
+
+	resultJSON, _ := json.Marshal(result)
+	msg := fmt.Sprintf(`{"type":"tool_result","tool_use_id":"%s","content":%s}`, toolUseID, string(resultJSON))
+
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	if sess.stdin != nil {
+		_, err := io.WriteString(sess.stdin, msg+"\n")
+		if err != nil {
+			log.Printf("[ClaudeCLI] Failed to send tool result to session %s: %v", sessionID[:8], err)
+		} else {
+			log.Printf("[ClaudeCLI] Tool result sent to session %s (tool_use_id=%s)", sessionID[:8], toolUseID)
+		}
+	}
+}
+
 // Evaluate starts a transient claude subprocess, sends a prompt, and returns the response.
 // Used by the runtime to evaluate whether an @mention requires work or just a reply.
 func (b *ClaudeCLIBackend) Evaluate(prompt string) (string, error) {

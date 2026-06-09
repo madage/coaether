@@ -145,6 +145,9 @@ func main() {
 	workflowH.Notifier = notifH
 	workflowH.RegisterToolExecutors()
 
+	// Share Harness instance with node agent handler
+	nodeAgentH.Harness = workflowH.Harness
+
 	// Review Router
 	reviewRouter := handlers.NewReviewRouter(database.DB)
 	reviewRouter.Hub = dashHub
@@ -224,6 +227,7 @@ func main() {
 	r.POST("/api/node/sessions", nodeAgentH.CreateSession)
 	r.POST("/api/node/tasks/:id/comments", nodeAgentH.CreateAgentComment)
 	r.POST("/api/node/token-usage", nodeAgentH.ReportTokenUsage)
+	r.POST("/api/node/tool-call", nodeAgentH.HandleToolCall)
 
 	// Auth required
 

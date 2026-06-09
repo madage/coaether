@@ -12,14 +12,16 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/coaether/server/harness"
 	"github.com/coaether/server/models"
 	"github.com/coaether/server/protocol"
 )
 
 type NodeAgentHandler struct {
-	DB  *sql.DB
-	Hub *DashboardHub
-	Bus *protocol.MessageBus
+	DB      *sql.DB
+	Hub     *DashboardHub
+	Bus     *protocol.MessageBus
+	Harness *harness.Harness
 }
 
 func NewNodeAgentHandler(db *sql.DB, bus *protocol.MessageBus) *NodeAgentHandler {
@@ -204,59 +206,82 @@ func (h *NodeAgentHandler) UpdateQueueStatus(c *gin.Context) {
 			WHERE id = (SELECT agent_profile_id FROM task_agent_queue WHERE id = $1)`, queueID)
 		// Update task status when agent completes successfully
 		if req.Status == "completed" {
+			// Read completion_behavior from the task
+			var completionBehavior string
+			h.DB.QueryRow(
+				`SELECT COALESCE(completion_behavior, 'auto_done') FROM tasks WHERE id = (SELECT task_id FROM task_agent_queue WHERE id = $1) AND deleted_at IS NULL`,
+				queueID,
+			).Scan(&completionBehavior)
+
 			targetStatus := "review"
+			switch completionBehavior {
+			case "auto_done":
+				targetStatus = "done"
+			default:
+				targetStatus = "review"
+			}
 			h.DB.Exec(`UPDATE tasks SET status = $1, updated_at = $2
 				WHERE id = (SELECT task_id FROM task_agent_queue WHERE id = $3)
 				AND deleted_at IS NULL`, targetStatus, now, queueID)
 
-				// Post agent comment with result summary when completed
-				if req.ResultSummary != "" {
-					var taskID, agentProfileID string
-					h.DB.QueryRow(`SELECT task_id, agent_profile_id FROM task_agent_queue WHERE id = $1`,
-						queueID).Scan(&taskID, &agentProfileID)
-					if taskID != "" && agentProfileID != "" {
-						commentID := uuid.New().String()
-						summary := req.ResultSummary
-						if len([]rune(summary)) > 5000 {
-							summary = string([]rune(summary)[:5000]) + "\n\n...\uff08\u7ed3\u679c\u8fc7\u957f\u5df2\u622a\u65ad\uff09"
-						}
-						h.DB.Exec(
-							`INSERT INTO task_comments (id, task_id, user_id, agent_profile_id, content, is_agent_comment, created_at, updated_at)
-							 VALUES ($1, $2, $3, $4, $5, true, $6, $6)`,
-							commentID, taskID, auth.UserID, agentProfileID, summary, now)
+			// Post agent comment with result summary when completed
+			if req.ResultSummary != "" {
+				var taskID, agentProfileID string
+				h.DB.QueryRow(`SELECT task_id, agent_profile_id FROM task_agent_queue WHERE id = $1`,
+					queueID).Scan(&taskID, &agentProfileID)
+				if taskID != "" && agentProfileID != "" {
+					commentID := uuid.New().String()
+					summary := req.ResultSummary
+					if len([]rune(summary)) > 5000 {
+						summary = string([]rune(summary)[:5000]) + "\n\n...\uff08\u7ed3\u679c\u8fc7\u957f\u5df2\u622a\u65ad\uff09"
 					}
+					h.DB.Exec(
+						`INSERT INTO task_comments (id, task_id, user_id, agent_profile_id, content, is_agent_comment, created_at, updated_at)
+						 VALUES ($1, $2, $3, $4, $5, true, $6, $6)`,
+						commentID, taskID, auth.UserID, agentProfileID, summary, now)
 				}
+			}
 
-				// If went to review and assignee is a different agent_profile, trigger them to review
-				if targetStatus == "review" {
-					var taskID string
-					h.DB.QueryRow(`SELECT task_id FROM task_agent_queue WHERE id = $1`, queueID).Scan(&taskID)
-					if taskID != "" {
-						var assigneeType, assigneeID string
-						h.DB.QueryRow(`SELECT COALESCE(assignee_type,''), COALESCE(assignee_id,'') FROM tasks WHERE id = $1 AND deleted_at IS NULL`,
-							taskID).Scan(&assigneeType, &assigneeID)
-						if assigneeType == "agent_profile" && assigneeID != "" {
-							var completingAgentID string
-							h.DB.QueryRow(`SELECT agent_profile_id FROM task_agent_queue WHERE id = $1`, queueID).Scan(&completingAgentID)
+			// If went to review and assignee is a different agent_profile, trigger them to review
+			if targetStatus == "review" {
+				var taskID string
+				h.DB.QueryRow(`SELECT task_id FROM task_agent_queue WHERE id = $1`, queueID).Scan(&taskID)
+				if taskID != "" {
+					var assigneeType, assigneeID string
+					h.DB.QueryRow(`SELECT COALESCE(assignee_type,''), COALESCE(assignee_id,'') FROM tasks WHERE id = $1 AND deleted_at IS NULL`,
+						taskID).Scan(&assigneeType, &assigneeID)
+					if assigneeType == "agent_profile" && assigneeID != "" {
+						var completingAgentID string
+						h.DB.QueryRow(`SELECT agent_profile_id FROM task_agent_queue WHERE id = $1`, queueID).Scan(&completingAgentID)
 
-							if completingAgentID != assigneeID {
-								reviewQueueID := uuid.New().String()
-								reviewNow := time.Now()
-								h.DB.Exec(
-									`INSERT INTO task_agent_queue (id, task_id, agent_profile_id, status, trigger_type, assigned_at, created_at)
-										 VALUES ($1, $2, $3, 'queued', 'review', $4, $4)`,
-									reviewQueueID, taskID, assigneeID, reviewNow,
-								)
-								h.DB.Exec(`UPDATE agent_profiles SET current_load = current_load + 1 WHERE id = $1`,
-									assigneeID)
+						if completingAgentID != assigneeID {
+							reviewQueueID := uuid.New().String()
+							reviewNow := time.Now()
+							h.DB.Exec(
+								`INSERT INTO task_agent_queue (id, task_id, agent_profile_id, status, trigger_type, assigned_at, created_at)
+									 VALUES ($1, $2, $3, 'queued', 'review', $4, $4)`,
+								reviewQueueID, taskID, assigneeID, reviewNow,
+							)
+							h.DB.Exec(`UPDATE agent_profiles SET current_load = current_load + 1 WHERE id = $1`,
+								assigneeID)
 
-								if h.Bus != nil {
-									autoProcessReview(h.DB, h.Bus, taskID, assigneeID, reviewQueueID, req.ResultSummary)
-								}
+							if h.Bus != nil {
+								autoProcessReview(h.DB, h.Bus, taskID, assigneeID, reviewQueueID, req.ResultSummary)
 							}
 						}
 					}
 				}
+			}
+
+			// If went to done, trigger DAG advancement
+			if targetStatus == "done" {
+				var taskID string
+				h.DB.QueryRow(`SELECT task_id FROM task_agent_queue WHERE id = $1`, queueID).Scan(&taskID)
+				if taskID != "" {
+					dag := NewDAGEngine(h.DB)
+					dag.OnTaskCompleted(taskID)
+				}
+			}
 		}
 	} else {
 		h.DB.Exec(`UPDATE task_agent_queue SET status = $1 WHERE id = $2`, req.Status, queueID)
@@ -369,7 +394,8 @@ func (h *NodeAgentHandler) CreateSession(c *gin.Context) {
 				"task_id":      req.TaskID,
 				"task_title":   title,
 				"is_auto_task": true,
-				"queue_id":     req.QueueID,
+				"queue_id":          req.QueueID,
+				"agent_profile_id":  req.AgentID,
 			},
 		},
 	)
@@ -460,6 +486,90 @@ func (h *NodeAgentHandler) CreateAgentComment(c *gin.Context) {
 	c.JSON(http.StatusCreated, comment)
 }
 
+
+// HandleToolCall accepts a tool call from the runtime, executes it via Harness, and returns the result.
+func (h *NodeAgentHandler) HandleToolCall(c *gin.Context) {
+	auth, ok := h.authenticate(c)
+	if !ok {
+		return
+	}
+
+	var req struct {
+		TaskID    string          `json:"task_id"`
+		QueueID   string          `json:"queue_id"`
+		Tool      string          `json:"tool"`
+		Params    json.RawMessage `json:"params"`
+		CallID    string          `json:"call_id,omitempty"`
+		ProfileID string          `json:"agent_profile_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.Tool == "" || req.TaskID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "tool and task_id are required"})
+		return
+	}
+
+	// Build agent context from the profile
+	ctx := h.resolveAgentContext(auth, req.ProfileID, req.TaskID)
+
+	tc := &harness.ToolCall{
+		Type:   "tool_call",
+		Tool:   req.Tool,
+		Params: req.Params,
+		ID:     req.CallID,
+	}
+
+	result := h.Harness.HandleToolCall(ctx, tc)
+	c.JSON(http.StatusOK, result)
+}
+
+// resolveAgentContext builds a harness.AgentContext from the agent profile and task info.
+func (h *NodeAgentHandler) resolveAgentContext(auth *nodeAuthInfo, profileID, taskID string) *harness.AgentContext {
+	ctx := &harness.AgentContext{
+		TaskID: &taskID,
+	}
+
+	if profileID != "" {
+		ctx.AgentProfileID = profileID
+
+		var name, capsJSON, permsJSON string
+		var maxDepth int
+		err := h.DB.QueryRow(
+			`SELECT name, COALESCE(capabilities,'[]'), COALESCE(permissions,'[]'), COALESCE(max_depth,5)
+			 FROM agent_profiles WHERE id = $1`, profileID,
+		).Scan(&name, &capsJSON, &permsJSON, &maxDepth)
+		if err == nil {
+			ctx.AgentName = name
+			ctx.MaxDepth = maxDepth
+			var capsList []string
+			json.Unmarshal([]byte(capsJSON), &capsList)
+			ctx.Capabilities = make(map[string]bool)
+			for _, c := range capsList {
+				ctx.Capabilities[c] = true
+			}
+			json.Unmarshal([]byte(permsJSON), &ctx.Permissions)
+		}
+	}
+
+	// Get workflow info from task
+	var workflowID *string
+	var depth int
+	maxDepth := ctx.MaxDepth
+	h.DB.QueryRow(
+		`SELECT workflow_id, depth, COALESCE(max_depth, $1) FROM tasks WHERE id = $2 AND deleted_at IS NULL`,
+		maxDepth, taskID,
+	).Scan(&workflowID, &depth, &maxDepth)
+	if workflowID != nil && *workflowID != "" {
+		ctx.WorkflowID = workflowID
+	}
+	ctx.Depth = depth
+	ctx.MaxDepth = maxDepth
+
+	return ctx
+}
 
 // ReportTokenUsage records token consumption from the runtime.
 func (h *NodeAgentHandler) ReportTokenUsage(c *gin.Context) {
