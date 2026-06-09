@@ -206,6 +206,18 @@ func (h *NodeAgentHandler) UpdateQueueStatus(c *gin.Context) {
 			WHERE id = (SELECT agent_profile_id FROM task_agent_queue WHERE id = $1)`, queueID)
 		// Update task status when agent completes successfully
 		if req.Status == "completed" {
+			// If task has pending_review_actions, don't change status — waiting for human approval
+			var taskID string
+			h.DB.QueryRow(`SELECT task_id FROM task_agent_queue WHERE id = $1`, queueID).Scan(&taskID)
+			if taskID != "" {
+				var pendingActions []byte
+				h.DB.QueryRow(`SELECT pending_review_actions FROM tasks WHERE id = $1 AND deleted_at IS NULL`, taskID).Scan(&pendingActions)
+				if len(pendingActions) > 5 {
+					log.Printf("[NodeAgent] Task %s has pending_review_actions, skipping status update", taskID[:8])
+					goto afterStatusUpdate
+				}
+			}
+
 			// Read completion_behavior from the task
 			var completionBehavior string
 			h.DB.QueryRow(
@@ -283,6 +295,7 @@ func (h *NodeAgentHandler) UpdateQueueStatus(c *gin.Context) {
 				}
 			}
 		}
+	afterStatusUpdate:
 	} else {
 		h.DB.Exec(`UPDATE task_agent_queue SET status = $1 WHERE id = $2`, req.Status, queueID)
 	}

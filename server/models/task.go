@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type TaskStatus string
 
@@ -50,13 +53,16 @@ type Task struct {
 	UpdatedAt    time.Time  `json:"updated_at"`
 
 	// Workflow fields
-	WorkflowID        *string `json:"workflow_id,omitempty"`
-	Depth             int     `json:"depth"`
-	MaxDepth          int     `json:"max_depth"`
-	MaxAgentLoops     int     `json:"max_agent_loops"`
-	AgentLoopCount    int     `json:"agent_loop_count"`
-	CompletionBehavior string `json:"completion_behavior,omitempty"`
-	ParallelGroup     *string `json:"parallel_group,omitempty"`
+	WorkflowID        *string          `json:"workflow_id,omitempty"`
+	Depth             int              `json:"depth"`
+	MaxDepth          int              `json:"max_depth"`
+	MaxAgentLoops     int              `json:"max_agent_loops"`
+	AgentLoopCount    int              `json:"agent_loop_count"`
+	CompletionBehavior string           `json:"completion_behavior,omitempty"`
+	ParallelGroup     *string          `json:"parallel_group,omitempty"`
+
+	// Review gate: actions awaiting human approval before dispatch
+	PendingReviewActions json.RawMessage `json:"pending_review_actions,omitempty"`
 }
 
 type CreateTaskReq struct {

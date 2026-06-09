@@ -589,6 +589,9 @@ func Migrate() error {
 	"ALTER TABLE agent_profiles ALTER COLUMN capabilities SET DEFAULT '[]'",
 	"UPDATE agent_profiles SET capabilities = '[]' WHERE capabilities = '{}'::jsonb OR capabilities IS NULL",
 
+	// Agent Dispatch Review Gate: pending_review_actions stores actions awaiting human approval
+	"ALTER TABLE tasks ADD COLUMN IF NOT EXISTS pending_review_actions JSONB DEFAULT '[]'",
+
 	}
 
 	// Create Harness-related tables that may not exist yet

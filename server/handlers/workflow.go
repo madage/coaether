@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -376,6 +377,96 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 			h.DAGEngine.SetTaskBlocked(taskID)
 		}
 
+		// Review gate: if assigning to another agent, require human approval first
+		if p.AssigneeType == "agent_profile" && p.AssigneeID != "" && ctx.TaskID != nil {
+			var enabled bool
+			h.DB.QueryRow(`SELECT enabled FROM agent_profiles WHERE id = $1`, p.AssigneeID).Scan(&enabled)
+
+			// Store pending action in parent task
+			action := map[string]interface{}{
+				"type":              "create_sub_task",
+				"sub_task_id":       taskID,
+				"target_agent_id":   p.AssigneeID,
+				"title":             p.Title,
+				"target_agent_name": "",
+			}
+			var targetAgentName string
+			h.DB.QueryRow(`SELECT COALESCE(name,'') FROM agent_profiles WHERE id = $1`, p.AssigneeID).Scan(&targetAgentName)
+			action["target_agent_name"] = targetAgentName
+			actionJSON, _ := json.Marshal([]interface{}{action})
+
+			h.DB.Exec(
+				`UPDATE tasks SET status = 'review', pending_review_actions = $1, updated_at = $2 WHERE id = $3 AND deleted_at IS NULL`,
+				actionJSON, now, *ctx.TaskID,
+			)
+
+			// Build @mention comment for human users
+			var creatorName string
+			h.DB.QueryRow(`SELECT COALESCE(username,'') FROM users WHERE id = $1`, ctx.UserID).Scan(&creatorName)
+
+			assigneeRows, _ := h.DB.Query(
+				`SELECT assignee_id FROM task_assignees WHERE task_id = $1 AND assignee_type = 'user'`,
+				*ctx.TaskID,
+			)
+			humanMentions := []string{}
+			if creatorName != "" {
+				humanMentions = append(humanMentions, "@"+creatorName)
+			}
+			if assigneeRows != nil {
+				for assigneeRows.Next() {
+					var uid string
+					assigneeRows.Scan(&uid)
+					var uname string
+					h.DB.QueryRow(`SELECT username FROM users WHERE id = $1`, uid).Scan(&uname)
+					if uname != "" && uname != creatorName {
+						humanMentions = append(humanMentions, "@"+uname)
+					}
+				}
+				assigneeRows.Close()
+			}
+			// Also check parent task's assignee
+			var pAssigneeID, pAssigneeType string
+			h.DB.QueryRow(`SELECT COALESCE(assignee_id,''), COALESCE(assignee_type,'') FROM tasks WHERE id = $1`, *ctx.TaskID).Scan(&pAssigneeID, &pAssigneeType)
+			if pAssigneeType == "user" && pAssigneeID != "" {
+				var uname string
+				h.DB.QueryRow(`SELECT username FROM users WHERE id = $1`, pAssigneeID).Scan(&uname)
+				mentioned := false
+				for _, m := range humanMentions {
+					if m == "@"+uname {
+						mentioned = true
+						break
+					}
+				}
+				if uname != "" && !mentioned {
+					humanMentions = append(humanMentions, "@"+uname)
+				}
+			}
+
+			mentionStr := strings.Join(humanMentions, " ")
+			targetName, _ := action["target_agent_name"].(string)
+			commentContent := fmt.Sprintf("%s\n\n智能体「%s」请求将子任务「%s」派发给智能体「%s」，请审核。",
+				mentionStr, ctx.AgentName, p.Title, targetName)
+
+			commentID := uuid.New().String()
+			h.DB.Exec(
+				`INSERT INTO task_comments (id, task_id, user_id, agent_profile_id, content, is_agent_comment, created_at, updated_at)
+				 VALUES ($1, $2, $3, $4, $5, true, $6, $6)`,
+				commentID, *ctx.TaskID, ctx.UserID, ctx.AgentProfileID, commentContent, now,
+			)
+
+			if h.Hub != nil {
+				h.Hub.SignalChange("tasks")
+			}
+
+			log.Printf("[Harness] Agent %s created subtask %s → parent %s set to review (pending human approval)", ctx.AgentName[:8], taskID[:8], (*ctx.TaskID)[:8])
+			return map[string]interface{}{
+				"task_id": taskID,
+				"title":   p.Title,
+				"status":  "pending_review",
+				"message": "等待人工审核通过后派发",
+			}, nil
+		}
+
 		// Auto-start: if assigned to an agent and not blocked by dependencies,
 		// create a queue entry so the runtime picks it up.
 		if p.AssigneeType == "agent_profile" && p.AssigneeID != "" && len(p.DependsOn) == 0 {
@@ -523,9 +614,81 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 			return nil, fmt.Errorf("task_id, assignee_id, assignee_type are required")
 		}
 
+		now := time.Now()
+
+		// Review gate: assigning to agent requires human approval
+		if p.AssigneeType == "agent_profile" {
+			// Update assignee but don't dispatch
+			_, err := h.DB.Exec(
+				`UPDATE tasks SET assignee_id = $1, assignee_type = $2, status = 'review', updated_at = $3 WHERE id = $4 AND deleted_at IS NULL`,
+				p.AssigneeID, p.AssigneeType, now, p.TaskID,
+			)
+			if err != nil {
+				return nil, fmt.Errorf("failed to assign task: %w", err)
+			}
+
+			// Store pending action
+			var targetName string
+			h.DB.QueryRow(`SELECT COALESCE(name,'') FROM agent_profiles WHERE id = $1`, p.AssigneeID).Scan(&targetName)
+			action := map[string]interface{}{
+				"type":              "assign_task",
+				"target_agent_id":   p.AssigneeID,
+				"target_agent_name": targetName,
+			}
+			actionJSON, _ := json.Marshal([]interface{}{action})
+			h.DB.Exec(`UPDATE tasks SET pending_review_actions = $1 WHERE id = $2`, actionJSON, p.TaskID)
+
+			// Build @mention comment
+			var creatorName string
+			h.DB.QueryRow(`SELECT t.user_id, COALESCE(u.username,'') FROM tasks t LEFT JOIN users u ON u.id = t.user_id WHERE t.id = $1`, p.TaskID).Scan(&creatorName)
+			humanMentions := []string{}
+			if creatorName != "" {
+				humanMentions = append(humanMentions, "@"+creatorName)
+			}
+			assigneeRows, _ := h.DB.Query(
+				`SELECT assignee_id FROM task_assignees WHERE task_id = $1 AND assignee_type = 'user'`,
+				p.TaskID,
+			)
+			if assigneeRows != nil {
+				for assigneeRows.Next() {
+					var uid string
+					assigneeRows.Scan(&uid)
+					var uname string
+					h.DB.QueryRow(`SELECT username FROM users WHERE id = $1`, uid).Scan(&uname)
+					if uname != "" && uname != creatorName {
+						humanMentions = append(humanMentions, "@"+uname)
+					}
+				}
+				assigneeRows.Close()
+			}
+
+			mentionStr := strings.Join(humanMentions, " ")
+			commentContent := fmt.Sprintf("%s\n\n智能体「%s」请求将任务指派给智能体「%s」，请审核。",
+				mentionStr, ctx.AgentName, targetName)
+			commentID := uuid.New().String()
+			h.DB.Exec(
+				`INSERT INTO task_comments (id, task_id, user_id, agent_profile_id, content, is_agent_comment, created_at, updated_at)
+				 VALUES ($1, $2, $3, $4, $5, true, $6, $6)`,
+				commentID, p.TaskID, ctx.UserID, ctx.AgentProfileID, commentContent, now,
+			)
+
+			if h.Hub != nil {
+				h.Hub.SignalChange("tasks")
+			}
+
+			log.Printf("[Harness] Agent %s assigned task %s to agent %s → review (pending human approval)", ctx.AgentName[:8], p.TaskID[:8], p.AssigneeID[:8])
+			return map[string]interface{}{
+				"status":   "pending_review",
+				"task_id":  p.TaskID,
+				"assignee_id": p.AssigneeID,
+				"message":  "等待人工审核通过后生效",
+			}, nil
+		}
+
+		// Direct assignment to user
 		_, err := h.DB.Exec(
 			`UPDATE tasks SET assignee_id = $1, assignee_type = $2, updated_at = $3 WHERE id = $4 AND deleted_at IS NULL`,
-			p.AssigneeID, p.AssigneeType, time.Now(), p.TaskID,
+			p.AssigneeID, p.AssigneeType, now, p.TaskID,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to assign task: %w", err)
@@ -553,6 +716,13 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 		}
 		if p.TaskID == "" || p.Action == "" {
 			return nil, fmt.Errorf("task_id and action are required")
+		}
+
+		// Agents cannot review tasks with pending dispatch actions — requires human approval
+		var pendingActions []byte
+		h.DB.QueryRow(`SELECT pending_review_actions FROM tasks WHERE id = $1 AND deleted_at IS NULL`, p.TaskID).Scan(&pendingActions)
+		if len(pendingActions) > 5 { // more than "[]" (2 bytes) means there are pending actions
+			return nil, fmt.Errorf("该任务有待人工审核的操作，智能体不能审核，请联系管理员")
 		}
 
 		var newStatus string

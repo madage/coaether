@@ -1068,6 +1068,11 @@ func (h *TaskHandler) SetStatus(c *gin.Context) {
 		dag.OnTaskCompleted(taskID)
 	}
 
+	// Process pending review actions when approved (status changes to done from review)
+	if req.Status == string(models.TaskDone) && h.ReviewRouter != nil {
+		h.ReviewRouter.processPendingActions(taskID)
+	}
+
 	// RouteTask: when completed, route based on completion_behavior
 	if req.Status == "completed" && h.ReviewRouter != nil {
 		h.ReviewRouter.RouteTask(taskID)

@@ -112,6 +112,7 @@ The system uses a **dual WebSocket channel** architecture:
 - **DAG Auto-Progress** — Workflow tasks advance automatically: when a task completes, blocked tasks with all dependencies met are unblocked → agent tasks are auto-dispatched to queue → when all siblings are done, the parent task auto-closes and recursively advances the DAG
 - **Completion Behavior** — Each task supports `completion_behavior` field (`auto_done`/`auto_review`/`sample_review`/`needs_review`). When set to `auto_done`, agent completion automatically moves the task to `done` and triggers DAG propagation; otherwise moves to `review` for human/agent review
 - **Agent Queue Status** — Task Detail sidebar shows real-time agent queue status: queued/processing/completed/failed with color-coded indicators and result summary on hover
+- **Review Gate for Agent Dispatch** — When an agent calls `create_sub_task` or `assign_task` targeting another agent, the parent task is set to `review` status with an @mention comment to human users (creator + assignees). The dispatch only happens after a human approves the review. Agents cannot approve tasks with pending dispatch actions.
 - Linked to projects, organize tasks by project
 - Trash mechanism: soft delete + restore + permanent delete
 - Isolated by workspace
@@ -265,7 +266,7 @@ All communication is based on JSON `Envelope` format:
 | `nodes` | Runtime nodes | id, name, status, ip, max_sessions |
 | `agents` | Agent instances | node_id, name, command, enabled |
 | `agent_profiles` | User Agent profiles | user_id, name, avatar, model, backend, system_prompt, instructions, capabilities, skills, review_sample_rate, max_concurrency, max_depth, max_review_loops, completion_behavior |
-| `tasks` | Tasks | title, status, priority, project_id, parent_id, assignee_id, assignee_type, due_at, workspace_id, tags, completion_behavior |
+| `tasks` | Tasks | title, status, priority, project_id, parent_id, assignee_id, assignee_type, due_at, workspace_id, tags, completion_behavior, pending_review_actions (JSONB) |
 | `task_assignees` | Delegated assignees | task_id, assignee_id, assignee_type |
 | `task_tags` | Task tags | task_id, tag |
 | `task_comments` | Task comments | task_id, user_id, agent_profile_id, content, parent_id |

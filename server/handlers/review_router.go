@@ -162,6 +162,9 @@ func (r *ReviewRouter) HandleReview(taskID string, reviewerID *string, reviewerA
 			now, taskID)
 		log.Printf("[ReviewRouter] Task %s approved", taskID[:8])
 
+		// Process any pending dispatch actions (create_sub_task, assign_task)
+		r.processPendingActions(taskID)
+
 		// Record in audit log
 		r.auditReview(taskID, reviewerAgentID, "approved", comment)
 
@@ -211,6 +214,69 @@ func (r *ReviewRouter) HandleReview(taskID string, reviewerID *string, reviewerA
 	}
 
 	return nil
+}
+
+// processPendingActions processes pending_review_actions when a task is approved.
+// It creates queue entries for sub-tasks or task assignments that were gated
+// behind human review when an agent tried to dispatch to another agent.
+func (r *ReviewRouter) processPendingActions(taskID string) {
+	var rawActions []byte
+	err := r.DB.QueryRow(
+		`SELECT pending_review_actions FROM tasks WHERE id = $1 AND deleted_at IS NULL`,
+		taskID,
+	).Scan(&rawActions)
+	if err != nil {
+		return
+	}
+
+	var actions []struct {
+		Type            string `json:"type"`
+		SubTaskID       string `json:"sub_task_id"`
+		TargetAgentID   string `json:"target_agent_id"`
+		Title           string `json:"title"`
+		TargetAgentName string `json:"target_agent_name"`
+	}
+	if err := json.Unmarshal(rawActions, &actions); err != nil || len(actions) == 0 {
+		return
+	}
+
+	now := time.Now()
+	for _, a := range actions {
+		switch a.Type {
+		case "create_sub_task":
+			if a.SubTaskID == "" || a.TargetAgentID == "" {
+				continue
+			}
+			queueID := uuid.New().String()
+			r.DB.Exec(
+				`INSERT INTO task_agent_queue (id, task_id, agent_profile_id, status, trigger_type, assigned_at, created_at)
+				 VALUES ($1, $2, $3, 'queued', 'sub_task', $4, $4)`,
+				queueID, a.SubTaskID, a.TargetAgentID, now,
+			)
+			r.DB.Exec(`UPDATE agent_profiles SET current_load = current_load + 1 WHERE id = $1`, a.TargetAgentID)
+			log.Printf("[ReviewRouter] Approved: queued subtask %s for agent %s", a.SubTaskID[:8], a.TargetAgentID[:8])
+
+		case "assign_task":
+			if a.TargetAgentID == "" {
+				continue
+			}
+			queueID := uuid.New().String()
+			r.DB.Exec(
+				`INSERT INTO task_agent_queue (id, task_id, agent_profile_id, status, trigger_type, assigned_at, created_at)
+				 VALUES ($1, $2, $3, 'queued', 'assigned', $4, $4)`,
+				queueID, taskID, a.TargetAgentID, now,
+			)
+			r.DB.Exec(`UPDATE agent_profiles SET current_load = current_load + 1 WHERE id = $1`, a.TargetAgentID)
+			log.Printf("[ReviewRouter] Approved: queued task %s for assigned agent %s", taskID[:8], a.TargetAgentID[:8])
+		}
+	}
+
+	// Clear pending actions
+	r.DB.Exec(`UPDATE tasks SET pending_review_actions = '[]'::jsonb WHERE id = $1`, taskID)
+
+	if r.Hub != nil {
+		r.Hub.SignalChange("task_agent_queue")
+	}
 }
 
 // HandleReviewHTTP handles review submissions via HTTP API.

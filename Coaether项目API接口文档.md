@@ -218,9 +218,12 @@ DELETE /api/users/:id
   "max_agent_loops": 3,
   "agent_loop_count": 0,
   "completion_behavior": "auto_done | auto_review | sample_review | needs_review",
-  "parallel_group": "group_name | null"
+  "parallel_group": "group_name | null",
+  "pending_review_actions": "[{...}] | []"
 }
 ```
+
+**说明：** `pending_review_actions` 为智能体调用 `create_sub_task` 或 `assign_task` 派发给其他智能体时产生的待审核操作列表（JSON 数组）。任务处于 `review` 状态等待人工审核，审核通过后自动执行派发。空数组 `[]` 表示没有待审核操作。
 
 ### 2.2 列出任务
 
@@ -397,6 +400,7 @@ PATCH /api/tasks/:id/status?workspace_id=<workspace_id>
 **说明：**
 - 如果新状态为 `in_progress` 且负责人是智能体（`assignee_type=agent_profile`），系统自动创建队列条目并通知运行时处理。
 - 如果新状态为 `completed`，系统根据任务的 `completion_behavior` 自动路由：`auto_done`→直接完成、`auto_review`→交给智能体审核、`sample_review`→抽检、`needs_review`→人工审核。
+- 如果新状态为 `done`，系统自动检查并执行 `pending_review_actions`（待审核的派发操作），创建对应的智能体队列条目。
 
 **响应：**
 
@@ -568,9 +572,13 @@ POST /api/tasks/:id/review
 ```
 
 **说明：**
-- `approved` → 任务状态改为 `done`，触发 DAG 推进
+- `approved` → 任务状态改为 `done`。如果任务有 `pending_review_actions`（待审核的智能体派发操作），系统自动执行：
+  - `create_sub_task`：为子任务创建智能体队列条目，智能体开始处理
+  - `assign_task`：为任务创建智能体队列条目，智能体开始处理
+- 审核通过后清除 `pending_review_actions`
 - `rejected` → 任务回到 `in_progress`，`agent_loop_count` +1
 - 当驳回次数达到 `max_agent_loops` 时触发熔断（`stuck`），通知工作区管理员
+- **智能体不能审核包含待派发操作的任务** — 如有智能体调用 `review_task` 且任务存在 `pending_review_actions`，接口返回错误："该任务有待人工审核的操作，智能体不能审核，请联系管理员"
 
 ---
 
@@ -1547,7 +1555,8 @@ PUT /api/node/queue/:id/status?node_id=<node_id>&node_secret=<secret>
 
 **说明：** 状态设为 `completed` 时，服务端会自动：
 - 在任务下发布 Agent 评论（附 `result_summary`）
-- 根据任务的 `completion_behavior` 决定目标状态：
+- 如果任务存在 `pending_review_actions`（有待人工审核的智能体派发操作），**跳过状态更新**，保留 `review` 状态，不覆盖审核门禁
+- 否则根据任务的 `completion_behavior` 决定目标状态：
   - `auto_done` → 设为 `done`，并触发 DAGEngine 推进依赖任务
   - 其他值（含 `auto_review`/`sample_review`/`needs_review`）→ 设为 `review`
 - 如果目标状态为 `review` 且负责人是其他智能体，自动创建 review 队列条目
@@ -2557,8 +2566,8 @@ DAGEngine 在工作流执行过程中自动管理任务依赖：
 
 | 工具 | 描述 | 所需权限 | 所需能力 |
 |------|------|---------|---------|
-| `create_sub_task` | 在当前工作流下创建子任务，支持设置依赖关系和并行分组 | `task.write` | `create_sub_task` |
-| `assign_task` | 分配任务给用户或智能体 | `task.assign` | `assign_task` |
+| `create_sub_task` | 在当前工作流下创建子任务，支持设置依赖关系和并行分组；若负责人为智能体，需人工审核后才派发 | `task.write` | `create_sub_task` |
+| `assign_task` | 分配任务给用户或智能体；若负责人为智能体，需人工审核后才生效 | `task.assign` | `assign_task` |
 | `review_task` | 审核已完成的任务，批准或打回 | `task.review` | `review_task` |
 | `add_comment` | 在任务下添加评论 | `comment.write` | `add_comment` |
 | `get_task_detail` | 查看任务详情（含依赖关系） | `task.read` | `get_task_detail` |
@@ -2603,7 +2612,11 @@ DAGEngine 在工作流执行过程中自动管理任务依赖：
 }
 ```
 
-**说明：** 创建的子任务自动继承父任务的 `workspace_id`。如果 `assignee_type=agent_profile` 且未指定 `depends_on`，系统自动将子任务加入智能体队列（`trigger_type=sub_task`），智能体将立即开始处理。
+**说明：** 创建的子任务自动继承父任务的 `workspace_id`。
+
+**审核门禁：** 如果 `assignee_type=agent_profile`（派发给智能体），子任务会被创建但**不会立即派发**。父任务将切换到 `review` 状态，在评论中 @ 创建者和负责人，等待人工审核。审核通过后子任务自动加入智能体队列开始处理。如果 `assignee_type=user` 或未指定，按原有逻辑处理。
+
+**注意：** `depends_on` 在审核门禁场景下仍会被记录，审核通过后 DAG 依赖关系生效。
 
 **assign_task:**
 
@@ -2615,6 +2628,8 @@ DAGEngine 在工作流执行过程中自动管理任务依赖：
 }
 ```
 
+**说明：** 如果 `assignee_type=agent_profile`（派发给智能体），任务负责人会更新，但任务将切换到 `review` 状态并 @ 创建者和负责人，等待人工审核。审核通过后智能体开始处理。如果 `assignee_type=user`，直接分配给用户，不触发审核门禁。
+
 **review_task:**
 
 ```json
@@ -2624,6 +2639,8 @@ DAGEngine 在工作流执行过程中自动管理任务依赖：
   "comment": "审核意见"
 }
 ```
+
+**说明：** 如果任务存在 `pending_review_actions`（有待人工审核的智能体派发操作），智能体调用此工具将被拒绝，返回错误："该任务有待人工审核的操作，智能体不能审核，请联系管理员"。此类任务必须由人工审核。
 
 ** add_comment:**
 
