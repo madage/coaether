@@ -669,6 +669,8 @@ func (r *Runtime) handleAgentMention(env *protocol.Envelope) {
 	commentContent, _ := meta["comment_content"].(string)
 	taskTitle, _ := meta["task_title"].(string)
 	agentProfileID, _ := meta["agent_profile_id"].(string)
+	systemPrompt, _ := meta["system_prompt"].(string)
+	instructions, _ := meta["instructions"].(string)
 
 	if taskID == "" || queueID == "" {
 		log.Printf("[Runtime] Incomplete mention event: missing task_id or queue_id")
@@ -696,8 +698,14 @@ func (r *Runtime) handleAgentMention(env *protocol.Envelope) {
 		taskDesc = taskResp.Task.Description
 	}
 
-	// Build evaluation prompt
+	// Build evaluation prompt with agent personality
 	evalPrompt := fmt.Sprintf(`You have been @mentioned in a comment on the task "%s".
+
+System Prompt (your role):
+%s
+
+Behavior Instructions (your communication style):
+%s
 
 Task Description: %s
 
@@ -705,7 +713,8 @@ Comment: %s
 
 Respond with exactly one of these two formats:
 - WORK: <brief reason> — if this task needs your work
-- REPLY: <your response> — if a simple reply is sufficient`, taskTitle, taskDesc, commentContent)
+- REPLY: <your response> — if a simple reply is sufficient
+  (IMPORTANT: When REPLY, follow the System Prompt and Behavior Instructions above.)`, taskTitle, systemPrompt, instructions, taskDesc, commentContent)
 
 	// Use the first available backend to evaluate
 	var evalResult string

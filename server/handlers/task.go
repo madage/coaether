@@ -1364,13 +1364,15 @@ func (h *TaskHandler) CreateComment(c *gin.Context) {
 			h.DB.QueryRow(`SELECT workspace_id FROM tasks WHERE id = $1`, taskID).Scan(&wsID)
 			for _, name := range mentioned {
 				var ap struct {
-					ID     string
-					NodeID string
+					ID            string
+					NodeID        string
+					SystemPrompt  string
+					Instructions  string
 				}
 				err := h.DB.QueryRow(
-					`SELECT id, node_id FROM agent_profiles WHERE workspace_id = $1 AND name = $2 AND enabled = true`,
+					`SELECT id, node_id, COALESCE(system_prompt,''), COALESCE(instructions,'') FROM agent_profiles WHERE workspace_id = $1 AND name = $2 AND enabled = true`,
 					wsID, name,
-				).Scan(&ap.ID, &ap.NodeID)
+				).Scan(&ap.ID, &ap.NodeID, &ap.SystemPrompt, &ap.Instructions)
 				if err != nil || ap.NodeID == "" {
 					continue
 				}
@@ -1407,6 +1409,8 @@ func (h *TaskHandler) CreateComment(c *gin.Context) {
 								"comment_id":        comment.ID,
 								"comment_content":   req.Content,
 								"agent_profile_id":  ap.ID,
+								"system_prompt":     ap.SystemPrompt,
+								"instructions":      ap.Instructions,
 							},
 						},
 					)

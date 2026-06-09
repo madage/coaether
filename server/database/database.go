@@ -448,7 +448,23 @@ func Migrate() error {
 			CREATE INDEX IF NOT EXISTS idx_skills_workspace_id ON skills(workspace_id);
 			CREATE INDEX IF NOT EXISTS idx_skills_tags ON skills USING GIN(tags);
 
-
+	CREATE TABLE IF NOT EXISTS task_agent_queue (
+		id              VARCHAR(36) PRIMARY KEY,
+		task_id         VARCHAR(36) NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+		agent_profile_id VARCHAR(36) NOT NULL REFERENCES agent_profiles(id),
+		status          VARCHAR(16) NOT NULL DEFAULT 'queued',
+		trigger_type    VARCHAR(32) NOT NULL DEFAULT '',
+		metadata        JSONB DEFAULT '{}',
+		snapshot        JSONB,
+		result_summary  TEXT NOT NULL DEFAULT '',
+		assigned_at     TIMESTAMP,
+		claimed_at      TIMESTAMP,
+		completed_at    TIMESTAMP,
+		created_at      TIMESTAMP NOT NULL DEFAULT NOW()
+	);
+	CREATE INDEX IF NOT EXISTS idx_task_agent_queue_status ON task_agent_queue(status);
+	CREATE INDEX IF NOT EXISTS idx_task_agent_queue_agent ON task_agent_queue(agent_profile_id);
+	CREATE INDEX IF NOT EXISTS idx_task_agent_queue_task ON task_agent_queue(task_id);
 
 	`
 

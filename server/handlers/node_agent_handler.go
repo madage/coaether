@@ -218,6 +218,24 @@ func (h *NodeAgentHandler) UpdateQueueStatus(c *gin.Context) {
 				WHERE id = (SELECT task_id FROM task_agent_queue WHERE id = $3)
 				AND deleted_at IS NULL`, targetStatus, now, queueID)
 
+				// Post agent comment with result summary when completed
+				if req.ResultSummary != "" {
+					var taskID, agentProfileID string
+					h.DB.QueryRow(`SELECT task_id, agent_profile_id FROM task_agent_queue WHERE id = $1`,
+						queueID).Scan(&taskID, &agentProfileID)
+					if taskID != "" && agentProfileID != "" {
+						commentID := uuid.New().String()
+						summary := req.ResultSummary
+						if len([]rune(summary)) > 5000 {
+							summary = string([]rune(summary)[:5000]) + "\n\n...\uff08\u7ed3\u679c\u8fc7\u957f\u5df2\u622a\u65ad\uff09"
+						}
+						h.DB.Exec(
+							`INSERT INTO task_comments (id, task_id, agent_profile_id, content, is_agent_comment, created_at, updated_at)
+							 VALUES ($1, $2, $3, $4, true, $5, $5)`,
+							commentID, taskID, agentProfileID, summary, now)
+					}
+				}
+
 				// If went to review and assignee is a different agent_profile, trigger them to review
 				if targetStatus == "review" {
 					var taskID string
