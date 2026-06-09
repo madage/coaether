@@ -50,6 +50,7 @@ export function AgentForm({ onClose, onCreated }: AgentFormProps) {
   const [agentList, setAgentList] = useState<Agent[]>([]);
   const [selectedAgent, setSelectedAgent] = useState('');
   const [loadingAgents, setLoadingAgents] = useState(false);
+  const [maxConcurrency, setMaxConcurrency] = useState(1);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -91,6 +92,7 @@ export function AgentForm({ onClose, onCreated }: AgentFormProps) {
         agent_id: selectedAgent,
         node_id: selectedNode,
         tags: tags.split(',').map(t => t.trim()).filter(Boolean),
+        max_concurrency: maxConcurrency,
       });
       onCreated();
       onClose();
@@ -181,8 +183,19 @@ export function AgentForm({ onClose, onCreated }: AgentFormProps) {
 
           <div style={{ marginBottom: '16px' }}>
             <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
-              {t('systemPrompt')}
+              {t('maxConcurrency')}
             </label>
+            <input
+              type="number"
+              value={maxConcurrency}
+              onChange={(e) => setMaxConcurrency(Math.max(1, parseInt(e.target.value) || 1))}
+              min={1}
+              max={20}
+              style={inputStyle}
+            />
+          </div>
+
+          <div style={{ marginBottom: '16px' }}>
             <textarea
               value={systemPrompt}
               onChange={(e) => setSystemPrompt(e.target.value)}

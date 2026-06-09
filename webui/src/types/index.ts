@@ -50,6 +50,15 @@ export interface AgentProfile {
   last_active_at?: string;
   created_at: string;
   updated_at: string;
+  // Harness fields
+  protocol_version?: string;
+  capabilities?: Record<string, unknown>;
+  permissions?: Record<string, unknown>;
+  max_depth: number;
+  max_review_loops: number;
+  completion_behavior?: string;
+  review_sample_rate: number;
+  review_timeout: number;
 }
 
 export interface RuntimeEntity {

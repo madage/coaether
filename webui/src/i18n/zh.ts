@@ -674,6 +674,17 @@ export const zh = {
 
   agentLoadInfo: '{current}/{max} 个任务运行中',
 
+  // Agent Harness fields
+  reviewSampleRate: '审核采样率',
+  reviewSampleRateHint: '0.0 = 从不审核, 1.0 = 始终审核',
+  reviewTimeout: '审核超时（分钟）',
+  maxReviewLoops: '最大审核轮次',
+  agentMaxDepth: '最大深度',
+  agentSkills: '技能',
+  agentProtocolVersion: '协议版本',
+  agentCapabilities: '能力集',
+  agentPermissions: '权限',
+
   // Agent Queue
   agentQueue: 'Agent 队列',
   agentQueueEmpty: '暂无排队任务。',

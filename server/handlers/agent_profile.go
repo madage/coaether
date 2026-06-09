@@ -27,7 +27,7 @@ func (h *AgentProfileHandler) List(c *gin.Context) {
 	workspaceID := c.Query("workspace_id")
 	isMember, _ := c.Get("is_workspace_member")
 
-	query := `SELECT id, user_id, name, avatar, description, COALESCE(system_prompt,''), COALESCE(instructions,''), agent_id, node_id, version, model, backend, enabled, COALESCE(max_concurrency,1), COALESCE(current_load,0), COALESCE(tags,'[]'::jsonb), COALESCE(skills,'[]'::jsonb), last_active_at, created_at, updated_at
+	query := `SELECT id, user_id, name, avatar, description, COALESCE(system_prompt,''), COALESCE(instructions,''), agent_id, node_id, version, model, backend, enabled, COALESCE(max_concurrency,1), COALESCE(current_load,0), COALESCE(tags,'[]'::jsonb), COALESCE(skills,'[]'::jsonb), COALESCE(review_sample_rate,0.0), COALESCE(review_timeout,240), COALESCE(max_review_loops,3), COALESCE(max_depth,5), COALESCE(completion_behavior,''), last_active_at, created_at, updated_at
 		 FROM agent_profiles`
 	args := []any{}
 	argIdx := 1
@@ -56,7 +56,7 @@ func (h *AgentProfileHandler) List(c *gin.Context) {
 		var p models.AgentProfile
 		if err := rows.Scan(&p.ID, &p.UserID, &p.Name, &p.Avatar, &p.Description,
 			&p.SystemPrompt, &p.Instructions, &p.AgentID, &p.NodeID, &p.Version, &p.Model, &p.Backend, &p.Enabled,
-				&p.MaxConcurrency, &p.CurrentLoad, &p.Tags, &p.Skills, &p.LastActiveAt, &p.CreatedAt, &p.UpdatedAt); err != nil {
+				&p.MaxConcurrency, &p.CurrentLoad, &p.Tags, &p.Skills, &p.ReviewSampleRate, &p.ReviewTimeout, &p.MaxReviewLoops, &p.MaxDepth, &p.CompletionBehavior, &p.LastActiveAt, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to scan profile"})
 			return
 		}
@@ -70,7 +70,7 @@ func (h *AgentProfileHandler) Get(c *gin.Context) {
 	isMember, _ := c.Get("is_workspace_member")
 	profileID := c.Param("id")
 
-	query := `SELECT id, user_id, name, avatar, description, COALESCE(system_prompt,''), COALESCE(instructions,''), agent_id, node_id, version, model, backend, enabled, COALESCE(max_concurrency,1), COALESCE(current_load,0), COALESCE(tags,'[]'::jsonb), COALESCE(skills,'[]'::jsonb), last_active_at, created_at, updated_at
+	query := `SELECT id, user_id, name, avatar, description, COALESCE(system_prompt,''), COALESCE(instructions,''), agent_id, node_id, version, model, backend, enabled, COALESCE(max_concurrency,1), COALESCE(current_load,0), COALESCE(tags,'[]'::jsonb), COALESCE(skills,'[]'::jsonb), COALESCE(review_sample_rate,0.0), COALESCE(review_timeout,240), COALESCE(max_review_loops,3), COALESCE(max_depth,5), COALESCE(completion_behavior,''), last_active_at, created_at, updated_at
 		 FROM agent_profiles WHERE id = $1`
 	args := []any{profileID}
 	argIdx := 2
@@ -87,7 +87,7 @@ func (h *AgentProfileHandler) Get(c *gin.Context) {
 	var p models.AgentProfile
 	err := h.DB.QueryRow(query, args...).Scan(&p.ID, &p.UserID, &p.Name, &p.Avatar, &p.Description,
 		&p.SystemPrompt, &p.Instructions, &p.AgentID, &p.NodeID, &p.Version, &p.Model, &p.Backend, &p.Enabled,
-		&p.MaxConcurrency, &p.CurrentLoad, &p.Tags, &p.Skills, &p.LastActiveAt, &p.CreatedAt, &p.UpdatedAt)
+		&p.MaxConcurrency, &p.CurrentLoad, &p.Tags, &p.Skills, &p.ReviewSampleRate, &p.ReviewTimeout, &p.MaxReviewLoops, &p.MaxDepth, &p.CompletionBehavior, &p.LastActiveAt, &p.CreatedAt, &p.UpdatedAt)
 	if err == sql.ErrNoRows {
 		c.JSON(http.StatusNotFound, gin.H{"error": "profile not found"})
 		return
@@ -122,6 +122,7 @@ func (h *AgentProfileHandler) Create(c *gin.Context) {
 		NodeID       string          `json:"node_id"`
 		Avatar       string          `json:"avatar,omitempty"`
 		Tags         json.RawMessage `json:"tags,omitempty"`
+		MaxConcurrency int             `json:"max_concurrency,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -146,9 +147,9 @@ func (h *AgentProfileHandler) Create(c *gin.Context) {
 	}
 
 	_, err := h.DB.Exec(
-		`INSERT INTO agent_profiles (id, user_id, workspace_id, name, avatar, description, system_prompt, instructions, agent_id, node_id, tags, version, model, backend, enabled, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, '', '', 'cli', true, $12, $12)`,
-		id, userID, workspaceID, req.Name, avatar, req.Description, req.SystemPrompt, req.Instructions, req.AgentID, req.NodeID, tags, now,
+		`INSERT INTO agent_profiles (id, user_id, workspace_id, name, avatar, description, system_prompt, instructions, agent_id, node_id, tags, max_concurrency, version, model, backend, enabled, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, '', '', 'cli', true, $13, $13)`,
+		id, userID, workspaceID, req.Name, avatar, req.Description, req.SystemPrompt, req.Instructions, req.AgentID, req.NodeID, tags, req.MaxConcurrency, now,
 	)
 	if err != nil {
 		log.Printf("[Profile] Create error: %v", err)
@@ -189,6 +190,12 @@ func (h *AgentProfileHandler) Update(c *gin.Context) {
 		Enabled     *bool   `json:"enabled,omitempty"`
 		MaxConcurrency *int             `json:"max_concurrency,omitempty"`
 		Tags         *json.RawMessage `json:"tags,omitempty"`
+		Skills              *json.RawMessage `json:"skills,omitempty"`
+		ReviewSampleRate    *float64            `json:"review_sample_rate,omitempty"`
+		ReviewTimeout       *int                `json:"review_timeout,omitempty"`
+		MaxReviewLoops      *int                `json:"max_review_loops,omitempty"`
+		MaxDepth            *int                `json:"max_depth,omitempty"`
+		CompletionBehavior  *string             `json:"completion_behavior,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -231,6 +238,24 @@ func (h *AgentProfileHandler) Update(c *gin.Context) {
 		}
 		if req.Tags != nil {
 			addField("tags", *req.Tags)
+		}
+		if req.Skills != nil {
+			addField("skills", *req.Skills)
+		}
+		if req.ReviewSampleRate != nil {
+			addField("review_sample_rate", *req.ReviewSampleRate)
+		}
+		if req.ReviewTimeout != nil {
+			addField("review_timeout", *req.ReviewTimeout)
+		}
+		if req.MaxReviewLoops != nil {
+			addField("max_review_loops", *req.MaxReviewLoops)
+		}
+		if req.MaxDepth != nil {
+			addField("max_depth", *req.MaxDepth)
+		}
+		if req.CompletionBehavior != nil {
+			addField("completion_behavior", *req.CompletionBehavior)
 		}
 	if req.Enabled != nil {
 		addField("enabled", *req.Enabled)

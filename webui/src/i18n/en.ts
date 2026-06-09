@@ -674,6 +674,17 @@ export const en = {
 
   agentLoadInfo: '{current}/{max} tasks running',
 
+  // Agent Harness fields
+  reviewSampleRate: 'Review Sample Rate',
+  reviewSampleRateHint: '0.0 = never review, 1.0 = always review',
+  reviewTimeout: 'Review Timeout (min)',
+  maxReviewLoops: 'Max Review Loops',
+  agentMaxDepth: 'Max Depth',
+  agentSkills: 'Skills',
+  agentProtocolVersion: 'Protocol',
+  agentCapabilities: 'Capabilities',
+  agentPermissions: 'Permissions',
+
   // Agent Queue
   agentQueue: 'Agent Queue',
   agentQueueEmpty: 'No queued tasks.',

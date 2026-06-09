@@ -259,7 +259,7 @@ All communication is based on JSON `Envelope` format:
 | `messages` | Message history | session_id, envelope (JSONB) |
 | `nodes` | Runtime nodes | id, name, status, ip, max_sessions |
 | `agents` | Agent instances | node_id, name, command, enabled |
-| `agent_profiles` | User Agent profiles | user_id, name, avatar, model, backend, system_prompt, instructions |
+| `agent_profiles` | User Agent profiles | user_id, name, avatar, model, backend, system_prompt, instructions, skills, review_sample_rate, max_concurrency, max_depth, max_review_loops, completion_behavior |
 | `tasks` | Tasks | title, status, priority, project_id, parent_id, assignee_id, assignee_type, due_at, workspace_id, tags |
 | `task_assignees` | Delegated assignees | task_id, assignee_id, assignee_type |
 | `task_tags` | Task tags | task_id, tag |
@@ -369,6 +369,8 @@ All communication is based on JSON `Envelope` format:
 ### User Management
 - `GET /api/users` — User list (admin/owner)
 - `DELETE /api/users/:id` — Delete user (admin/owner)
+
+> 完整的 API 接口文档请参阅 [Coaether项目API接口文档.md](Coaether项目API接口文档.md)
 
 ---
 
@@ -587,6 +589,7 @@ coaether/
 │           ├── darwin-amd64/agent-runtime
 │           └── windows-amd64/agent-runtime.exe
 │
+├── Coaether项目API接口文档.md
 └── README.md
 ```
 

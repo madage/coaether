@@ -51,7 +51,13 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
   const [editSystemPrompt, setEditSystemPrompt] = useState(profile.system_prompt || '');
   const [editInstructions, setEditInstructions] = useState(profile.instructions || '');
   const [editTags, setEditTags] = useState(profile.tags?.join(', ') || '');
+  const [editSkills, setEditSkills] = useState(profile.skills?.join(', ') || '');
   const [editMaxConcurrency, setEditMaxConcurrency] = useState(profile.max_concurrency || 1);
+  const [editReviewSampleRate, setEditReviewSampleRate] = useState(profile.review_sample_rate ?? 0);
+  const [editReviewTimeout, setEditReviewTimeout] = useState(profile.review_timeout ?? 240);
+  const [editMaxReviewLoops, setEditMaxReviewLoops] = useState(profile.max_review_loops ?? 3);
+  const [editMaxDepth, setEditMaxDepth] = useState(profile.max_depth ?? 5);
+  const [editCompletionBehavior, setEditCompletionBehavior] = useState(profile.completion_behavior || 'auto_done');
   const [editNodeId, setEditNodeId] = useState(profile.node_id || '');
   const [editAgentId, setEditAgentId] = useState(profile.agent_id);
   const [nodeList, setNodeList] = useState<Node[]>([]);
@@ -90,6 +96,12 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
       node_id: editNodeId || undefined,
       max_concurrency: editMaxConcurrency,
       tags: editTags.split(',').map(t => t.trim()).filter(Boolean),
+      skills: editSkills.split(',').map(t => t.trim()).filter(Boolean),
+      review_sample_rate: editReviewSampleRate,
+      review_timeout: editReviewTimeout,
+      max_review_loops: editMaxReviewLoops,
+      max_depth: editMaxDepth,
+      completion_behavior: editCompletionBehavior,
     });
     setEditing(false);
   };
@@ -101,6 +113,12 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
     setEditInstructions(profile.instructions || '');
     setEditTags(profile.tags?.join(', ') || '');
     setEditMaxConcurrency(profile.max_concurrency || 1);
+    setEditReviewSampleRate(profile.review_sample_rate ?? 0);
+    setEditReviewTimeout(profile.review_timeout ?? 240);
+    setEditMaxReviewLoops(profile.max_review_loops ?? 3);
+    setEditMaxDepth(profile.max_depth ?? 5);
+    setEditCompletionBehavior(profile.completion_behavior || 'auto_done');
+    setEditSkills(profile.skills?.join(', ') || '');
     setEditAgentId(profile.agent_id);
     setEditNodeId(profile.node_id || '');
     setEditing(false);
@@ -261,6 +279,85 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
                 style={inputStyle}
               />
             </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
+                {t('agentSkills')}
+              </label>
+              <input
+                value={editSkills}
+                onChange={(e) => setEditSkills(e.target.value)}
+                placeholder={t('abilityTagsPlaceholder')}
+                style={inputStyle}
+              />
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
+                {t('reviewSampleRate')}
+              </label>
+              <input
+                type="number"
+                value={editReviewSampleRate}
+                onChange={(e) => setEditReviewSampleRate(Math.max(0, Math.min(1, parseFloat(e.target.value) || 0)))}
+                min={0}
+                max={1}
+                step={0.05}
+                style={inputStyle}
+              />
+              <div style={{ fontSize: '0.75em', color: '#999', marginTop: '2px' }}>{t('reviewSampleRateHint')}</div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+              <div>
+                <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
+                  {t('maxReviewLoops')}
+                </label>
+                <input
+                  type="number"
+                  value={editMaxReviewLoops}
+                  onChange={(e) => setEditMaxReviewLoops(Math.max(0, parseInt(e.target.value) || 0))}
+                  min={0}
+                  style={inputStyle}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
+                  {t('reviewTimeout')}
+                </label>
+                <input
+                  type="number"
+                  value={editReviewTimeout}
+                  onChange={(e) => setEditReviewTimeout(Math.max(1, parseInt(e.target.value) || 1))}
+                  min={1}
+                  style={inputStyle}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
+                  {t('agentMaxDepth')}
+                </label>
+                <input
+                  type="number"
+                  value={editMaxDepth}
+                  onChange={(e) => setEditMaxDepth(Math.max(1, parseInt(e.target.value) || 1))}
+                  min={1}
+                  style={inputStyle}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
+                  {t('taskCompletionBehavior')}
+                </label>
+                <select
+                  value={editCompletionBehavior}
+                  onChange={(e) => setEditCompletionBehavior(e.target.value)}
+                  style={{ ...inputStyle, background: '#fff' }}
+                >
+                  <option value="auto_done">{t('completionBehaviorAutoDone')}</option>
+                  <option value="auto_review">{t('completionBehaviorAutoReview')}</option>
+                  <option value="sample_review">{t('completionBehaviorSampleReview')}</option>
+                  <option value="needs_review">{t('completionBehaviorNeedsReview')}</option>
+                </select>
+              </div>
+            </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', paddingTop: '8px' }}>
               <button onClick={handleCancel} style={{
                 padding: '10px 24px', background: '#f5f5f5', color: '#666',
@@ -321,6 +418,67 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
                 </div>
               </div>
             )}
+
+            {profile.skills && profile.skills.length > 0 && (
+              <div style={{ marginBottom: '16px' }}>
+                <div style={{ fontWeight: 600, color: '#333', fontSize: '0.9em', marginBottom: '8px' }}>
+                  {t('agentSkills')}
+                </div>
+                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                  {profile.skills.map((skill, i) => (
+                    <span key={i} style={{
+                      background: '#f3e5f5', color: '#6a1b9a', padding: '2px 10px',
+                      borderRadius: '10px', fontSize: '0.8em', fontWeight: 500,
+                    }}>{skill}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Harness fields */}
+            <div style={{
+              background: '#f9f9f9',
+              borderRadius: '8px',
+              padding: '16px',
+              marginBottom: '16px',
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr',
+              gap: '12px',
+              fontSize: '0.9em',
+            }}>
+              <div>
+                <div style={{ color: '#999', fontSize: '0.85em' }}>{t('reviewSampleRate')}</div>
+                <div style={{ color: '#333', fontWeight: 500 }}>{(profile.review_sample_rate ?? 0).toFixed(2)}</div>
+              </div>
+              <div>
+                <div style={{ color: '#999', fontSize: '0.85em' }}>{t('maxReviewLoops')}</div>
+                <div style={{ color: '#333', fontWeight: 500 }}>{profile.max_review_loops ?? 3}</div>
+              </div>
+              <div>
+                <div style={{ color: '#999', fontSize: '0.85em' }}>{t('reviewTimeout')}</div>
+                <div style={{ color: '#333', fontWeight: 500 }}>{profile.review_timeout ?? 240} min</div>
+              </div>
+              <div>
+                <div style={{ color: '#999', fontSize: '0.85em' }}>{t('agentMaxDepth')}</div>
+                <div style={{ color: '#333', fontWeight: 500 }}>{profile.max_depth ?? 5}</div>
+              </div>
+              <div>
+                <div style={{ color: '#999', fontSize: '0.85em' }}>{t('taskCompletionBehavior')}</div>
+                <div style={{ color: '#333', fontWeight: 500 }}>
+                  {profile.completion_behavior === 'auto_done' ? t('completionBehaviorAutoDone') :
+                   profile.completion_behavior === 'auto_review' ? t('completionBehaviorAutoReview') :
+                   profile.completion_behavior === 'sample_review' ? t('completionBehaviorSampleReview') :
+                   profile.completion_behavior === 'needs_review' ? t('completionBehaviorNeedsReview') :
+                   profile.completion_behavior || '-'}
+                </div>
+              </div>
+              {profile.protocol_version && (
+                <div>
+                  <div style={{ color: '#999', fontSize: '0.85em' }}>{t('agentProtocolVersion')}</div>
+                  <div style={{ color: '#333', fontWeight: 500 }}>{profile.protocol_version}</div>
+                </div>
+              )}
+            </div>
 
             <div style={{
               background: '#f9f9f9',
