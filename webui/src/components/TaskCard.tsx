@@ -91,6 +91,19 @@ export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap, 
       onDragStart={(e) => {
         e.dataTransfer.setData('text/plain', task.id);
         e.dataTransfer.effectAllowed = 'move';
+        // Clone the card as drag image so it follows the cursor clearly
+        const el = e.currentTarget as HTMLElement;
+        const clone = el.cloneNode(true) as HTMLElement;
+        clone.style.position = 'fixed';
+        clone.style.left = '-9999px';
+        clone.style.top = '0';
+        clone.style.width = el.offsetWidth + 'px';
+        clone.style.opacity = '1';
+        clone.style.transform = 'rotate(2deg)';
+        clone.style.pointerEvents = 'none';
+        document.body.appendChild(clone);
+        e.dataTransfer.setDragImage(clone, el.offsetWidth / 2, 20);
+        requestAnimationFrame(() => clone.remove());
         onDragStart?.(task.id, task.status);
       }}
       onDragEnd={() => onDragEnd?.()}
@@ -108,7 +121,7 @@ export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap, 
         cursor: 'grab',
         position: 'relative',
         zIndex: menuOpen ? 1 : undefined,
-        opacity: isDragging ? 0.4 : 1,
+        opacity: isDragging ? 0.6 : 1,
       }}
       onClick={() => onEdit(task)}
       onMouseEnter={(e) => {
