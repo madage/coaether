@@ -52,6 +52,9 @@ function App() {
   const [toast, setToast] = useState<{ title: string; message: string } | null>(null);
   const [showAddNode, setShowAddNode] = useState(false);
   const [targetTaskId, setTargetTaskId] = useState<string | null>(null);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
+    return localStorage.getItem('sidebarCollapsed') === 'true';
+  });
 
   useEffect(() => {
     localStorage.setItem('page', page);
@@ -495,20 +498,37 @@ function App() {
   return (
     <WorkspaceContext.Provider value={{ role: auth.workspace_role, workspaceId: auth.workspace_id }}>
     <div style={{ display: 'flex', height: '100vh', background: '#f5f5f5' }}>
-      {/* Sidebar */}
-      <div
-        style={{
-          width: '280px',
-          background: '#1a1a2e',
-          color: '#fff',
+      {/* Sidebar wrapper — positions the toggle on the boundary line */}
+      <div style={{ position: 'relative', flexShrink: 0, height: '100%' }}>
+        <div
+          style={{
+            width: sidebarCollapsed ? '52px' : '280px',
+            background: '#1a1a2e',
+            color: '#fff',
+            display: 'flex',
+            flexDirection: 'column',
+            transition: 'width 0.2s ease',
+            overflow: 'hidden',
+            height: '100%',
+          }}
+        >
+        {/* Header */}
+        <div style={{
+          padding: sidebarCollapsed ? '12px 8px' : '20px',
+          borderBottom: '1px solid #333',
           display: 'flex',
-          flexDirection: 'column',
-        }}
-      >
-        <div style={{ padding: '20px', borderBottom: '1px solid #333' }}>
-          <h2 style={{ margin: 0, fontSize: '1.3em' }}>{t('appTitle')}</h2>
-          {/* Workspace selector */}
-          {workspaces.length > 0 && (
+          alignItems: 'center',
+          justifyContent: sidebarCollapsed ? 'center' : 'space-between',
+        }}>
+          {sidebarCollapsed ? (
+            <span style={{ fontSize: '1.1em' }}>🤖</span>
+          ) : (
+            <h2 style={{ margin: 0, fontSize: '1.3em' }}>{t('appTitle')}</h2>
+          )}
+        </div>
+
+        {!sidebarCollapsed && workspaces.length > 0 && (
+          <div style={{ padding: '0 20px 12px', borderBottom: '1px solid #333' }}>
             <div style={{ marginTop: '10px', display: 'flex', gap: '4px', alignItems: 'center' }}>
               <select
                 value={localStorage.getItem('workspace_id') || ''}
@@ -533,91 +553,168 @@ function App() {
                 background: 'none', border: 'none', color: '#888', cursor: 'pointer', fontSize: '0.9em', padding: '4px',
               }} title={t('manageWorkspaces')}>⚙</button>
             </div>
-          )}
-          <div style={{ fontSize: '0.85em', color: '#999', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+          </div>
+        )}
+
+        {!sidebarCollapsed && (
+          <div style={{ fontSize: '0.85em', color: '#999', padding: '4px 20px 12px', borderBottom: '1px solid #333', display: 'flex', alignItems: 'center', gap: '6px' }}>
             <span>{auth.user?.username} ({auth.user?.email})</span>
             <NotificationBell onWorkspaceChange={handleWorkspaceChange} onOpenTask={handleOpenTask} />
           </div>
-        </div>
+        )}
 
-        <nav style={{ display: 'flex', flexDirection: 'column', padding: '8px' }}>
-          {(['nodes', 'tasks', 'rules', 'projects', 'agents', 'skills', 'agent-queue', 'workflows', ...(auth.workspace_role === 'owner' || auth.workspace_role === 'admin' ? ['plugins'] : []), 'trash'] as Page[]).map((p) => (
-            <button
-              key={p}
-              onClick={() => setPage(p)}
-              style={{
-                padding: '12px 16px',
-                textAlign: 'left',
-                background: page === p ? 'rgba(255,255,255,0.1)' : 'transparent',
-                color: '#fff',
-                border: 'none',
-                borderRadius: '6px',
-                cursor: 'pointer',
-                fontSize: '0.95em',
-                marginBottom: '2px',
-                ...(p === 'trash' ? { marginTop: 'auto', marginBottom: 0 } : {}),
-              }}
-            >
-              <span style={{ display: 'inline-block', width: '24px', textAlign: 'center', marginRight: '4px' }}>
-                {p === 'nodes' ? '📡' : p === 'tasks' ? '📋' : p === 'projects' ? '📁' : p === 'agents' ? '🤖' : p === 'rules' ? '⚡' : p === 'skills' ? '📚' : p === 'agent-queue' ? '⏳' : p === 'workflows' ? '🔗' : p === 'plugins' ? '🧩' : '🗑'}
-              </span>
-              {p === 'nodes' ? t('navNodes') : p === 'tasks' ? t('navTasks') : p === 'projects' ? t('navProjects') : p === 'agents' ? t('agents') : p === 'rules' ? t('navAutomation') : p === 'skills' ? t('navSkills') : p === 'agent-queue' ? t('navAgentQueue') || 'Queue' : p === 'workflows' ? (t('taskWorkflow') || 'Workflows') : p === 'plugins' ? t('navPlugins') : t('navTrash')}
-            </button>
-          ))}
+        {/* Navigation */}
+        <nav style={{ display: 'flex', flexDirection: 'column', padding: sidebarCollapsed ? '4px' : '8px', flex: 1 }}>
+          {(['nodes', 'tasks', 'rules', 'projects', 'agents', 'skills', 'agent-queue', 'workflows', ...(auth.workspace_role === 'owner' || auth.workspace_role === 'admin' ? ['plugins'] : []), 'trash'] as Page[]).map((p) => {
+            const icon = p === 'nodes' ? '📡' : p === 'tasks' ? '📋' : p === 'projects' ? '📁' : p === 'agents' ? '🤖' : p === 'rules' ? '⚡' : p === 'skills' ? '📚' : p === 'agent-queue' ? '⏳' : p === 'workflows' ? '🔗' : p === 'plugins' ? '🧩' : '🗑';
+            const label = p === 'nodes' ? t('navNodes') : p === 'tasks' ? t('navTasks') : p === 'projects' ? t('navProjects') : p === 'agents' ? t('agents') : p === 'rules' ? t('navAutomation') : p === 'skills' ? t('navSkills') : p === 'agent-queue' ? t('navAgentQueue') || 'Queue' : p === 'workflows' ? (t('taskWorkflow') || 'Workflows') : p === 'plugins' ? t('navPlugins') : t('navTrash');
+            return (
+              <button
+                key={p}
+                onClick={() => setPage(p)}
+                title={sidebarCollapsed ? label : undefined}
+                style={{
+                  padding: sidebarCollapsed ? '10px 0' : '12px 16px',
+                  textAlign: sidebarCollapsed ? 'center' : 'left',
+                  background: page === p ? 'rgba(255,255,255,0.1)' : 'transparent',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontSize: '0.95em',
+                  marginBottom: '2px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: sidebarCollapsed ? 'center' : 'flex-start',
+                  ...(p === 'trash' ? { marginTop: 'auto', marginBottom: 0 } : {}),
+                }}
+              >
+                <span style={{
+                  display: 'inline-block',
+                  width: sidebarCollapsed ? 'auto' : '24px',
+                  textAlign: 'center',
+                  marginRight: sidebarCollapsed ? 0 : '4px',
+                  fontSize: sidebarCollapsed ? '1.1em' : '1em',
+                }}>
+                  {icon}
+                </span>
+                {!sidebarCollapsed && label}
+              </button>
+            );
+          })}
         </nav>
 
         {/* Connection status */}
-        <div style={{ padding: '8px 16px', fontSize: '0.75em', color: '#666' }}>
+        <div style={{
+          padding: sidebarCollapsed ? '4px' : '8px 16px',
+          fontSize: '0.75em',
+          color: '#666',
+          textAlign: sidebarCollapsed ? 'center' : 'left',
+        }}>
           <span style={{
             display: 'inline-block',
-            width: '8px',
-            height: '8px',
+            width: sidebarCollapsed ? '6px' : '8px',
+            height: sidebarCollapsed ? '6px' : '8px',
             borderRadius: '50%',
             background: busConnected ? '#4caf50' : '#f44336',
-            marginRight: '4px',
+            marginRight: sidebarCollapsed ? 0 : '4px',
           }} />
-          Bus: {busConnected ? 'connected' : 'offline'}
-          {hasSession && (
+          {!sidebarCollapsed && <>Bus: {busConnected ? 'connected' : 'offline'}</>}
+          {!sidebarCollapsed && hasSession && (
             <span style={{ marginLeft: '8px', color: '#4caf50' }}>
               | Session: {bus.sessionID?.slice(0, 6)}...
             </span>
           )}
-          <span style={{ marginLeft: '8px' }}>
-            <span style={{
-              display: 'inline-block',
-              width: '6px',
-              height: '6px',
-              borderRadius: '50%',
-              background: dashboardConnected ? '#4caf50' : '#f44336',
-              marginRight: '2px',
-            }} />
-            Dash: {dashboardConnected ? 'on' : 'off'}
-          </span>
+          {!sidebarCollapsed && (
+            <span style={{ marginLeft: '8px' }}>
+              <span style={{
+                display: 'inline-block',
+                width: '6px',
+                height: '6px',
+                borderRadius: '50%',
+                background: dashboardConnected ? '#4caf50' : '#f44336',
+                marginRight: '2px',
+              }} />
+              Dash: {dashboardConnected ? 'on' : 'off'}
+            </span>
+          )}
         </div>
 
-        <div style={{ marginTop: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          <LangSwitcher />
-          <button
-            onClick={() => {
-              localStorage.removeItem('token');
-              localStorage.removeItem('user');
-              localStorage.removeItem('workspace_id');
-              localStorage.removeItem('activeSessionID');
-              setAuth({ token: null, user: null, workspace_id: null, workspace_role: null });
-            }}
-            style={{
-              width: '100%',
-              padding: '8px',
-              background: 'transparent',
-              color: '#999',
-              border: '1px solid #333',
-              borderRadius: '4px',
-              cursor: 'pointer',
-            }}
-          >
-            {t('logout')}
-          </button>
+        {/* Bottom */}
+        <div style={{ padding: sidebarCollapsed ? '8px 4px' : '16px', display: 'flex', flexDirection: 'column', gap: '8px', alignItems: sidebarCollapsed ? 'center' : 'stretch' }}>
+          {sidebarCollapsed ? (
+            <>
+              <NotificationBell onWorkspaceChange={handleWorkspaceChange} onOpenTask={handleOpenTask} />
+              <button
+                onClick={() => {
+                  localStorage.removeItem('token');
+                  localStorage.removeItem('user');
+                  localStorage.removeItem('workspace_id');
+                  localStorage.removeItem('activeSessionID');
+                  setAuth({ token: null, user: null, workspace_id: null, workspace_role: null });
+                }}
+                title={t('logout')}
+                style={{
+                  background: 'none', border: 'none', color: '#999', cursor: 'pointer',
+                  fontSize: '0.95em', padding: '4px',
+                }}
+              >🚪</button>
+            </>
+          ) : (
+            <>
+              <LangSwitcher />
+              <button
+                onClick={() => {
+                  localStorage.removeItem('token');
+                  localStorage.removeItem('user');
+                  localStorage.removeItem('workspace_id');
+                  localStorage.removeItem('activeSessionID');
+                  setAuth({ token: null, user: null, workspace_id: null, workspace_role: null });
+                }}
+                style={{
+                  width: '100%',
+                  padding: '8px',
+                  background: 'transparent',
+                  color: '#999',
+                  border: '1px solid #333',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                }}
+              >
+                {t('logout')}
+              </button>
+            </>
+          )}
         </div>
+        </div>
+        {/* Toggle button on the sidebar / content boundary */}
+        <button
+          onClick={() => {
+            const next = !sidebarCollapsed;
+            setSidebarCollapsed(next);
+            localStorage.setItem('sidebarCollapsed', String(next));
+          }}
+          title={sidebarCollapsed ? (lang === 'zh' ? '展开菜单' : 'Expand menu') : (lang === 'zh' ? '收起菜单' : 'Collapse menu')}
+          style={{
+            position: 'absolute',
+            right: '-14px',
+            top: '50%',
+            transform: 'translateY(-50%)',
+            width: '14px',
+            height: '48px',
+            border: 'none',
+            borderRadius: '0 8px 8px 0',
+            background: '#1a1a2e',
+            color: '#888',
+            cursor: 'pointer',
+            fontSize: '0.6em',
+            padding: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 10,
+          }}
+        >{sidebarCollapsed ? '▶' : '◀'}</button>
       </div>
 
       {/* Main content */}
