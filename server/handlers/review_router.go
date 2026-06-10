@@ -168,10 +168,8 @@ func (r *ReviewRouter) HandleReview(taskID string, reviewerID *string, reviewerA
 		// Record in audit log
 		r.auditReview(taskID, reviewerAgentID, "approved", comment)
 
-		// Trigger DAG advancement
-		if workflowID != "" {
+		// Trigger DAG advancement (always, even for sub-tasks without workflow_id)
 			r.DAGEngine.OnTaskCompleted(taskID)
-		}
 
 	case ReviewRejected:
 		newLoopCount := loopCount + 1

@@ -384,8 +384,8 @@ func (h *DecompositionHandler) ApprovePlan(c *gin.Context) {
 	// Mark plan as approved
 	h.DB.Exec(`UPDATE decomposition_plans SET status = 'approved', updated_at = $1 WHERE id = $2`, now, planID)
 
-	// Set parent task to "blocked" since it now has sub-tasks
-	h.DB.Exec(`UPDATE tasks SET status = 'blocked', updated_at = $1 WHERE id = $2 AND deleted_at IS NULL`, now, taskID)
+	// Set parent task to "in_progress" since it now has sub-tasks being worked on
+	h.DB.Exec(`UPDATE tasks SET status = 'in_progress', updated_at = $1 WHERE id = $2 AND deleted_at IS NULL`, now, taskID)
 
 	// Post approval comment
 	commentContent := fmt.Sprintf("分解计划已审核通过，共创建 %d 个子任务。", len(createdTasks))

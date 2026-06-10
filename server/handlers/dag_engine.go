@@ -101,7 +101,8 @@ func (e *DAGEngine) WouldCreateCycle(workflowID, taskID, dependsOnID string) (bo
 	return dfs(dependsOnID), nil
 }
 
-// OnTaskCompleted is called when a task transitions to "done".
+// OnTaskCompleted is called when a task transitions to "done" or "review"
+// (both indicate the work is complete and downstream tasks can proceed).
 // It checks all tasks that depend on the completed task,
 // transitions them from "blocked" to "todo" if all dependencies are met,
 // auto-dispatches unblocked agent tasks to the queue,
@@ -138,13 +139,13 @@ func (e *DAGEngine) onTaskCompletedLocked(taskID string) {
 			continue
 		}
 
-		// Check if ALL dependencies of this task are done
+		// Check if ALL dependencies are done or in review (work product is ready)
 		var allDone bool
 		e.DB.QueryRow(
 			`SELECT COUNT(*) = 0 FROM task_dependencies td
 			 JOIN tasks t ON t.id = td.depends_on_id
 			 WHERE td.task_id = $1
-			   AND (t.status != 'done' OR t.deleted_at IS NOT NULL)`,
+			   AND (t.deleted_at IS NULL AND t.status NOT IN ('done', 'review'))`,
 			dependentID,
 		).Scan(&allDone)
 
@@ -169,12 +170,29 @@ func (e *DAGEngine) onTaskCompletedLocked(taskID string) {
 
 // tryAutoDispatchLocked creates a queue entry for an unblocked task with an agent_profile assignee.
 func (e *DAGEngine) tryAutoDispatchLocked(taskID string, now time.Time) {
-	var assigneeType, assigneeID string
+	var assigneeType, assigneeID, taskStatus string
 	err := e.DB.QueryRow(
-		`SELECT COALESCE(assignee_type,''), COALESCE(assignee_id,'') FROM tasks WHERE id = $1 AND deleted_at IS NULL`,
+		`SELECT COALESCE(assignee_type,''), COALESCE(assignee_id,''), status FROM tasks WHERE id = $1 AND deleted_at IS NULL`,
 		taskID,
-	).Scan(&assigneeType, &assigneeID)
+	).Scan(&assigneeType, &assigneeID, &taskStatus)
 	if err != nil || assigneeType != "agent_profile" || assigneeID == "" {
+		return
+	}
+
+	// Never dispatch blocked tasks — they have unmet dependencies
+	if taskStatus == "blocked" {
+		log.Printf("[DAGEngine] Skipping dispatch of blocked task %s", taskID[:8])
+		return
+	}
+
+	// Check if already queued for this task+agent (deduplication)
+	var existingID string
+	err = e.DB.QueryRow(
+		`SELECT id FROM task_agent_queue WHERE task_id = $1 AND agent_profile_id = $2 AND status IN ('queued', 'claimed', 'processing') LIMIT 1`,
+		taskID, assigneeID,
+	).Scan(&existingID)
+	if err == nil {
+		log.Printf("[DAGEngine] Task %s already queued for agent %s (queue=%s), skipping", taskID[:8], assigneeID[:8], existingID[:8])
 		return
 	}
 
@@ -208,10 +226,10 @@ func (e *DAGEngine) tryAutoCloseParentLocked(taskID string, now time.Time) {
 		return
 	}
 
-	// Check if all siblings are done
+	// Check if all siblings are done (or in review, meaning work is complete awaiting sign-off)
 	var allDone bool
 	e.DB.QueryRow(
-		`SELECT COUNT(*) = 0 FROM tasks WHERE parent_id = $1 AND deleted_at IS NULL AND status != 'done'`,
+		`SELECT COUNT(*) = 0 FROM tasks WHERE parent_id = $1 AND deleted_at IS NULL AND status NOT IN ('done', 'review')`,
 		parentID,
 	).Scan(&allDone)
 

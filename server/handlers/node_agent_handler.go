@@ -299,26 +299,38 @@ func (h *NodeAgentHandler) UpdateQueueStatus(c *gin.Context) {
 						h.DB.QueryRow(`SELECT agent_profile_id FROM task_agent_queue WHERE id = $1`, queueID).Scan(&completingAgentID)
 
 						if completingAgentID != assigneeID {
-							reviewQueueID := uuid.New().String()
-							reviewNow := time.Now()
-							h.DB.Exec(
-								`INSERT INTO task_agent_queue (id, task_id, agent_profile_id, status, trigger_type, assigned_at, created_at)
-									 VALUES ($1, $2, $3, 'queued', 'review', $4, $4)`,
-								reviewQueueID, taskID, assigneeID, reviewNow,
-							)
-							h.DB.Exec(`UPDATE agent_profiles SET current_load = current_load + 1 WHERE id = $1`,
-								assigneeID)
+							// Dedup: skip if already queued for this task+agent
+							var existingID string
+							err := h.DB.QueryRow(
+								`SELECT id FROM task_agent_queue WHERE task_id = $1 AND agent_profile_id = $2 AND status IN ('queued', 'claimed', 'processing') LIMIT 1`,
+								taskID, assigneeID,
+							).Scan(&existingID)
+							if err == nil {
+								log.Printf("[NodeAgent] Review queue for task %s agent %s already exists (queue=%s), skipping", taskID[:8], assigneeID[:8], existingID[:8])
+							} else {
+								reviewQueueID := uuid.New().String()
+								reviewNow := time.Now()
+								h.DB.Exec(
+									`INSERT INTO task_agent_queue (id, task_id, agent_profile_id, status, trigger_type, assigned_at, created_at)
+										 VALUES ($1, $2, $3, 'queued', 'review', $4, $4)`,
+									reviewQueueID, taskID, assigneeID, reviewNow,
+								)
+								h.DB.Exec(`UPDATE agent_profiles SET current_load = current_load + 1 WHERE id = $1`,
+									assigneeID)
 
-							if h.Bus != nil {
-								autoProcessReview(h.DB, h.Bus, taskID, assigneeID, reviewQueueID, req.ResultSummary)
+								if h.Bus != nil {
+									autoProcessReview(h.DB, h.Bus, taskID, assigneeID, reviewQueueID, req.ResultSummary)
+								}
 							}
 						}
 					}
 				}
 			}
 
-			// If went to done, trigger DAG advancement
-			if targetStatus == "done" {
+			// Trigger DAG advancement when task goes to review or done.
+			// Review status means the task's work product is ready, so downstream
+			// tasks that depend on it should be unblocked even if human sign-off is pending.
+			if targetStatus == "done" || targetStatus == "review" {
 				var taskID string
 				h.DB.QueryRow(`SELECT task_id FROM task_agent_queue WHERE id = $1`, queueID).Scan(&taskID)
 				if taskID != "" {
