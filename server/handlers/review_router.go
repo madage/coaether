@@ -274,6 +274,21 @@ func (r *ReviewRouter) processPendingActions(taskID string) {
 	// Clear pending actions
 	r.DB.Exec(`UPDATE tasks SET pending_review_actions = '[]'::jsonb WHERE id = $1`, taskID)
 
+	// Clear source agent's assignee on this task — review approved,
+	// the originating agent is no longer responsible.
+	var curAssigneeID, curAssigneeType string
+	r.DB.QueryRow(
+		`SELECT COALESCE(assignee_id,''), COALESCE(assignee_type,'') FROM tasks WHERE id = $1`,
+		taskID,
+	).Scan(&curAssigneeID, &curAssigneeType)
+	if curAssigneeType == "agent_profile" {
+		r.DB.Exec(`UPDATE tasks SET assignee_id = NULL, assignee_type = NULL, updated_at = $1 WHERE id = $2`, now, taskID)
+	}
+
+	// Cancel any remaining active queue entries for this task
+	r.DB.Exec(`UPDATE task_agent_queue SET status = 'failed', completed_at = $1
+		WHERE task_id = $2 AND status IN ('queued', 'claimed', 'processing')`, now, taskID)
+
 	if r.Hub != nil {
 		r.Hub.SignalChange("task_agent_queue")
 	}

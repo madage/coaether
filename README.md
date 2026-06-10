@@ -113,6 +113,7 @@ The system uses a **dual WebSocket channel** architecture:
 - **Completion Behavior** — Each task supports `completion_behavior` field (`auto_done`/`auto_review`/`sample_review`/`needs_review`). When set to `auto_done`, agent completion automatically moves the task to `done` and triggers DAG propagation; otherwise moves to `review` for human/agent review
 - **Agent Queue Status** — Task Detail sidebar shows real-time agent queue status: queued/processing/completed/failed with color-coded indicators and result summary on hover
 - **Review Gate for Agent Dispatch** — When an agent calls `create_sub_task` or `assign_task` targeting another agent, the parent task is set to `review` status with an @mention comment to human users (creator + assignees). The dispatch only happens after a human approves the review. Agents cannot approve tasks with pending dispatch actions.
+- **Circular Delegation Prevention** — Self-delegation is blocked (agent cannot assign to itself). Ancestor chain is checked to prevent A→B→A loops. After review approval, the source agent's assignee and active queue entries are cleared from the parent task.
 - Linked to projects, organize tasks by project
 - Trash mechanism: soft delete + restore + permanent delete
 - Isolated by workspace

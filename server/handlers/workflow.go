@@ -379,6 +379,14 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 
 		// Review gate: if assigning to another agent, require human approval first
 		if p.AssigneeType == "agent_profile" && p.AssigneeID != "" && ctx.TaskID != nil {
+			// --- Circular delegation prevention ---
+			if p.AssigneeID == ctx.AgentProfileID {
+				return nil, fmt.Errorf("不能将子任务委派给自己，请选择其他智能体")
+			}
+			if isCircularDelegation(h.DB, *ctx.TaskID, p.AssigneeID) {
+				return nil, fmt.Errorf("目标智能体已在祖先任务链中，不能循环委派")
+			}
+			// --- End circular delegation prevention ---
 			var enabled bool
 			h.DB.QueryRow(`SELECT enabled FROM agent_profiles WHERE id = $1`, p.AssigneeID).Scan(&enabled)
 
@@ -618,6 +626,14 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 
 		// Review gate: assigning to agent requires human approval
 		if p.AssigneeType == "agent_profile" {
+			// --- Circular delegation prevention ---
+			if p.AssigneeID == ctx.AgentProfileID {
+				return nil, fmt.Errorf("不能将任务委派给自己，请选择其他智能体")
+			}
+			if isCircularDelegation(h.DB, p.TaskID, p.AssigneeID) {
+				return nil, fmt.Errorf("目标智能体已在祖先任务链中，不能循环委派")
+			}
+			// --- End circular delegation prevention ---
 			// Update assignee but don't dispatch
 			_, err := h.DB.Exec(
 				`UPDATE tasks SET assignee_id = $1, assignee_type = $2, status = 'review', updated_at = $3 WHERE id = $4 AND deleted_at IS NULL`,
@@ -798,4 +814,26 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 			"task_id": p.TaskID,
 		}, nil
 	})
+}
+
+// isCircularDelegation traverses the ancestor chain of a task to check if
+// targetAgentID appears as an agent_profile assignee anywhere in the chain.
+func isCircularDelegation(db *sql.DB, taskID string, targetAgentID string) bool {
+	currentID := taskID
+	for currentID != "" {
+		var assigneeID, assigneeType, parentID string
+		err := db.QueryRow(
+			`SELECT COALESCE(assignee_id,''), COALESCE(assignee_type,''), COALESCE(parent_id,'')
+			 FROM tasks WHERE id = $1 AND deleted_at IS NULL`,
+			currentID,
+		).Scan(&assigneeID, &assigneeType, &parentID)
+		if err != nil {
+			return false
+		}
+		if assigneeType == "agent_profile" && assigneeID == targetAgentID {
+			return true
+		}
+		currentID = parentID
+	}
+	return false
 }
