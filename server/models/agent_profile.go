@@ -29,7 +29,7 @@ type AgentProfile struct {
 
 	// Protocol & Harness fields
 	ProtocolVersion   string           `json:"protocol_version,omitempty"`    // legacy | v1.0
-	Capabilities      *json.RawMessage `json:"capabilities,omitempty"`        // capabilities JSON
+	Capabilities      json.RawMessage  `json:"capabilities,omitempty"`        // capabilities JSON
 	Permissions       *json.RawMessage `json:"permissions,omitempty"`         // permissions list
 	MaxDepth          int              `json:"max_depth"`
 	MaxReviewLoops    int              `json:"max_review_loops"`

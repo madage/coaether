@@ -219,7 +219,7 @@ func (h *NodeAgentHandler) UpdateQueueStatus(c *gin.Context) {
 				}
 			}
 
-							// If task has a pending decomposition plan, skip status update
+						// If task has a pending decomposition plan, switch to review (waiting for human approval)
 				if taskID != "" {
 					var hasPending bool
 					h.DB.QueryRow(
@@ -227,7 +227,19 @@ func (h *NodeAgentHandler) UpdateQueueStatus(c *gin.Context) {
 						taskID,
 					).Scan(&hasPending)
 					if hasPending {
-						log.Printf("[NodeAgent] Task %s has pending decomposition plan, skipping status update", taskID[:8])
+						log.Printf("[NodeAgent] Task %s has pending decomposition plan → review", taskID[:8])
+						h.DB.Exec(`UPDATE tasks SET status = 'review', updated_at = $1 WHERE id = $2 AND deleted_at IS NULL`, now, taskID)
+						var taskCreatorID, taskTitle string
+						h.DB.QueryRow(`SELECT user_id, title FROM tasks WHERE id = $1`, taskID).Scan(&taskCreatorID, &taskTitle)
+						if taskCreatorID != "" {
+							commentID := uuid.New().String()
+							commentContent := fmt.Sprintf("@%s 任务「%s」的分解方案已准备好，请审核并批准子任务。", taskCreatorID, taskTitle)
+							h.DB.Exec(
+								`INSERT INTO task_comments (id, task_id, user_id, agent_profile_id, content, is_agent_comment, created_at, updated_at)
+								 VALUES ($1, $2, $3, NULL, $4, true, $5, $5)`,
+								commentID, taskID, taskCreatorID, commentContent, now,
+							)
+						}
 						goto afterStatusUpdate
 					}
 				}
@@ -242,7 +254,13 @@ func (h *NodeAgentHandler) UpdateQueueStatus(c *gin.Context) {
 			targetStatus := "review"
 			switch completionBehavior {
 			case "auto_done":
-				targetStatus = "done"
+				// If agent produced output (result_summary), go to review regardless
+				// so the user can see the agent's response (e.g. clarifying questions)
+				if req.ResultSummary != "" {
+					targetStatus = "review"
+				} else {
+					targetStatus = "done"
+				}
 			default:
 				targetStatus = "review"
 			}

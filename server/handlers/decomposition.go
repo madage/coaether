@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 )
 
 // DecompositionHandler handles decomposition plan review operations.
@@ -152,7 +154,7 @@ func (h *DecompositionHandler) ApprovePlan(c *gin.Context) {
 	if len(req.ItemIDs) > 0 {
 		// Build WHERE id = ANY(...)
 		query += ` AND id = ANY($2)`
-		args = append(args, req.ItemIDs)
+		args = append(args, pq.Array(req.ItemIDs))
 	} else {
 		query += ` AND is_approved IS NULL`
 	}
@@ -192,6 +194,49 @@ func (h *DecompositionHandler) ApprovePlan(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "没有可审核的子任务项"})
 		return
 	}
+
+		// Secondary validation: verify all depends_on IDs exist within the plan items
+		itemIDSet := make(map[string]bool, len(pendingItems))
+		for _, item := range pendingItems {
+			itemIDSet[item.ID] = true
+		}
+		var badDeps []string
+		for _, item := range pendingItems {
+			var deps []string
+			if err := json.Unmarshal(item.DependsOn, &deps); err != nil {
+				continue
+			}
+			for _, depID := range deps {
+				if depID == "" {
+					continue
+				}
+				if !itemIDSet[depID] {
+					badDeps = append(badDeps, fmt.Sprintf("%s 引用了无效ID: %s", item.Title[:20], depID))
+				}
+			}
+		}
+		if len(badDeps) > 0 {
+			// Circuit breaker: mark plan as failed, block parent task, notify user
+			h.DB.Exec(`UPDATE decomposition_plans SET status = 'failed', updated_at = $1 WHERE id = $2`, now, planID)
+			h.DB.Exec(`UPDATE tasks SET status = 'blocked', updated_at = $1 WHERE id = $2 AND deleted_at IS NULL`, now, taskID)
+			commentContent := fmt.Sprintf("【严重错误】分解计划中存在无效的依赖关系：\n%s\n任务已被阻塞，请驳回计划后重新尝试。", strings.Join(badDeps, "\n"))
+			commentID := uuid.New().String()
+			h.DB.Exec(
+				`INSERT INTO task_comments (id, task_id, user_id, agent_profile_id, content, is_agent_comment, created_at, updated_at)
+				 VALUES ($1, $2, $3, NULL, $4, false, $5, $5)`,
+				commentID, taskID, userIDStr, commentContent, now,
+			)
+			if h.Hub != nil {
+				h.Hub.SignalChange("tasks")
+			}
+			log.Printf("[Decomposition] APPROVE REJECTED: plan %s has invalid depends_on: %v", planID[:8], badDeps)
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":   fmt.Sprintf("分解计划包含无效的依赖关系，审批已被拒绝。%s", strings.Join(badDeps, "; ")),
+				"blocked": true,
+			})
+			return
+		}
+
 
 	// Phase 1: Create all tasks
 	type createdTask struct {

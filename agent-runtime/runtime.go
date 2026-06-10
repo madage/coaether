@@ -270,13 +270,14 @@ func (r *Runtime) handleAgentMessage(env *protocol.Envelope) {
 // MCP/built-in Claude Code tools (WebSearch, WebFetch, Grep, Read, etc.)
 // are handled locally by the runtime.
 var harnessTools = map[string]bool{
-	"create_sub_task":    true,
-	"assign_task":        true,
-	"review_task":        true,
-	"add_comment":        true,
-	"get_task_detail":    true,
-	"list_sub_tasks":     true,
-	"update_task_status": true,
+	"propose_decomposition_plan": true,
+	"create_sub_task":            true,
+	"assign_task":                true,
+	"review_task":                true,
+	"add_comment":                true,
+	"get_task_detail":            true,
+	"list_sub_tasks":             true,
+	"update_task_status":         true,
 }
 
 // isAutoTaskSession checks if the session is for an auto-task agent.
@@ -317,7 +318,7 @@ func (r *Runtime) handleAutoTaskToolCall(env *protocol.Envelope) {
 				"status": "error",
 				"error": map[string]interface{}{
 					"message": fmt.Sprintf(
-						"MCP tool '%s' is not available. You are a task-decomposition agent. Use ONLY mcp__coaether-harness__ tools: create_sub_task, list_sub_tasks, add_comment, get_task_detail, update_task_status.",
+						"MCP tool '%s' is not available. You are a task-decomposition agent. Use ONLY mcp__coaether-harness__ tools: propose_decomposition_plan, list_sub_tasks, add_comment, get_task_detail.",
 						toolName,
 					),
 				},

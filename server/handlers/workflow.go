@@ -449,7 +449,7 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 			// Only convert if parent is assigned to the calling agent and is in decomposable state
 			log.Printf("[Harness] create_sub_task check: parent=%s agent_profile=%s parentStatus=%s assignee=%s",
 				(*ctx.TaskID)[:8], ctx.AgentProfileID[:8], parentStatus, parentAssigneeID[:8])
-			if parentAssigneeID == ctx.AgentProfileID && (parentStatus == "in_progress" || parentStatus == "todo") {
+			if parentAssigneeID == ctx.AgentProfileID && (parentStatus == "in_progress" || parentStatus == "todo" || parentStatus == "review") {
 				// Find or create a pending plan
 				var planID string
 				err := h.DB.QueryRow(
@@ -472,10 +472,76 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 				}
 
 				// Add as plan item instead of real task
+				// Deduplicate: skip if same title already exists in this plan
+				var existingID string
+				err = h.DB.QueryRow(
+					`SELECT id FROM decomposition_plan_items WHERE plan_id = $1 AND title = $2 LIMIT 1`,
+					planID, p.Title,
+				).Scan(&existingID)
+				if err == nil {
+					log.Printf("[Harness] Duplicate plan item skipped: %s (already exists as %s)", p.Title[:20], existingID[:8])
+					h.DB.Exec(`UPDATE tasks SET updated_at = $1 WHERE id = $2`, now, *ctx.TaskID)
+					return map[string]interface{}{
+						"status":       "plan_item_exists",
+						"plan_item_id": existingID,
+						"plan_id":      planID,
+						"message":      "子任务已在分解计划中（跳过重复）",
+						"title":        p.Title,
+					}, nil
+				}
 				itemID := uuid.New().String()
 				assigneeName := ""
 				if p.AssigneeID != "" {
 					h.DB.QueryRow(`SELECT COALESCE(name,'') FROM agent_profiles WHERE id = $1`, p.AssigneeID).Scan(&assigneeName)
+				}
+
+				// Validate depends_on IDs exist in the current plan
+				if len(p.DependsOn) > 0 {
+					var badIDs []string
+					for _, depID := range p.DependsOn {
+						if depID == "" {
+							continue
+						}
+						var exists bool
+						h.DB.QueryRow(
+							`SELECT EXISTS(SELECT 1 FROM decomposition_plan_items WHERE plan_id = $1 AND id = $2)`,
+							planID, depID,
+						).Scan(&exists)
+						if !exists {
+							badIDs = append(badIDs, depID)
+						}
+					}
+					if len(badIDs) > 0 {
+						// Increment error count on the plan
+						h.DB.Exec(`UPDATE decomposition_plans SET error_count = COALESCE(error_count, 0) + 1, updated_at = $1 WHERE id = $2`, now, planID)
+						var errorCount int
+						h.DB.QueryRow(`SELECT COALESCE(error_count, 0) FROM decomposition_plans WHERE id = $1`, planID).Scan(&errorCount)
+						
+						log.Printf("[Harness] Invalid depends_on IDs for plan %s: %v (error_count=%d)", planID[:8], badIDs, errorCount)
+						
+						if errorCount >= 3 {
+							// Circuit breaker: mark plan as failed, block parent task, notify user
+							h.DB.Exec(`UPDATE decomposition_plans SET status = 'failed', updated_at = $1 WHERE id = $2`, now, planID)
+							h.DB.Exec(`UPDATE tasks SET status = 'blocked', updated_at = $1 WHERE id = $2 AND deleted_at IS NULL`, now, *ctx.TaskID)
+							
+							// Post critical notification comment
+							commentID := uuid.New().String()
+							commentContent := fmt.Sprintf("【严重错误】智能体「%s」已连续3次提交无效的依赖关系，任务已自动阻塞。请驳回计划后重新尝试。", ctx.AgentName)
+							h.DB.Exec(
+								`INSERT INTO task_comments (id, task_id, user_id, agent_profile_id, content, is_agent_comment, created_at, updated_at)
+								 VALUES ($1, $2, $3, NULL, $4, true, $5, $5)`,
+								commentID, *ctx.TaskID, ctx.UserID, commentContent, now,
+							)
+
+							if h.Hub != nil {
+								h.Hub.SignalChange("tasks")
+							}
+
+							log.Printf("[Harness] CIRCUIT BREAKER: plan %s failed after 3 errors, task %s blocked", planID[:8], (*ctx.TaskID)[:8])
+							return nil, fmt.Errorf("【严重错误】分解计划已连续3次提交无效的依赖关系，任务已被阻塞。请驳回计划后重试")
+						}
+
+					}
 				}
 				dependsJSON, _ := json.Marshal(p.DependsOn)
 				cb := p.CompletionBehavior
@@ -487,7 +553,7 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 				var sortOrder int
 				h.DB.QueryRow(`SELECT COUNT(*) FROM decomposition_plan_items WHERE plan_id = $1`, planID).Scan(&sortOrder)
 
-				h.DB.Exec(
+				_, err = h.DB.Exec(
 					`INSERT INTO decomposition_plan_items
 					 (id, plan_id, title, description, assignee_id, assignee_type, assignee_name,
 					  depends_on, parallel_group, sort_order, completion_behavior, created_at)
@@ -496,6 +562,14 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 					p.AssigneeID, p.AssigneeType, assigneeName,
 					dependsJSON, p.ParallelGroup, sortOrder, cb, now,
 				)
+				if err != nil {
+					// Unique constraint violation — duplicate title in same plan, return existing item
+					h.DB.QueryRow(
+						`SELECT id FROM decomposition_plan_items WHERE plan_id = $1 AND title = $2 LIMIT 1`,
+						planID, p.Title,
+					).Scan(&itemID)
+					log.Printf("[Harness] Duplicate plan item (unique constraint): %s → %s", p.Title[:20], itemID[:8])
+				}
 
 				// Keep parent in_progress
 				h.DB.Exec(`UPDATE tasks SET updated_at = $1 WHERE id = $2`, now, *ctx.TaskID)

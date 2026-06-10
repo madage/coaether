@@ -27,7 +27,7 @@ func (h *AgentProfileHandler) List(c *gin.Context) {
 	workspaceID := c.Query("workspace_id")
 	isMember, _ := c.Get("is_workspace_member")
 
-	query := `SELECT id, user_id, name, avatar, description, COALESCE(system_prompt,''), COALESCE(instructions,''), agent_id, node_id, version, model, backend, enabled, COALESCE(max_concurrency,1), COALESCE(current_load,0), COALESCE(tags,'[]'::jsonb), COALESCE(skills,'[]'::jsonb), COALESCE(review_sample_rate,0.0), COALESCE(review_timeout,240), COALESCE(max_review_loops,3), COALESCE(max_depth,5), COALESCE(completion_behavior,''), last_active_at, created_at, updated_at
+	query := `SELECT id, user_id, name, avatar, description, COALESCE(system_prompt,''), COALESCE(instructions,''), agent_id, node_id, version, model, backend, enabled, COALESCE(max_concurrency,1), COALESCE(current_load,0), COALESCE(tags,'[]'::jsonb), COALESCE(capabilities,'[]'::jsonb), COALESCE(skills,'[]'::jsonb), COALESCE(review_sample_rate,0.0), COALESCE(review_timeout,240), COALESCE(max_review_loops,3), COALESCE(max_depth,5), COALESCE(completion_behavior,''), last_active_at, created_at, updated_at
 		 FROM agent_profiles`
 	args := []any{}
 	argIdx := 1
@@ -56,7 +56,7 @@ func (h *AgentProfileHandler) List(c *gin.Context) {
 		var p models.AgentProfile
 		if err := rows.Scan(&p.ID, &p.UserID, &p.Name, &p.Avatar, &p.Description,
 			&p.SystemPrompt, &p.Instructions, &p.AgentID, &p.NodeID, &p.Version, &p.Model, &p.Backend, &p.Enabled,
-				&p.MaxConcurrency, &p.CurrentLoad, &p.Tags, &p.Skills, &p.ReviewSampleRate, &p.ReviewTimeout, &p.MaxReviewLoops, &p.MaxDepth, &p.CompletionBehavior, &p.LastActiveAt, &p.CreatedAt, &p.UpdatedAt); err != nil {
+				&p.MaxConcurrency, &p.CurrentLoad, &p.Tags, &p.Capabilities, &p.Skills, &p.ReviewSampleRate, &p.ReviewTimeout, &p.MaxReviewLoops, &p.MaxDepth, &p.CompletionBehavior, &p.LastActiveAt, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to scan profile"})
 			return
 		}
@@ -70,7 +70,7 @@ func (h *AgentProfileHandler) Get(c *gin.Context) {
 	isMember, _ := c.Get("is_workspace_member")
 	profileID := c.Param("id")
 
-	query := `SELECT id, user_id, name, avatar, description, COALESCE(system_prompt,''), COALESCE(instructions,''), agent_id, node_id, version, model, backend, enabled, COALESCE(max_concurrency,1), COALESCE(current_load,0), COALESCE(tags,'[]'::jsonb), COALESCE(skills,'[]'::jsonb), COALESCE(review_sample_rate,0.0), COALESCE(review_timeout,240), COALESCE(max_review_loops,3), COALESCE(max_depth,5), COALESCE(completion_behavior,''), last_active_at, created_at, updated_at
+	query := `SELECT id, user_id, name, avatar, description, COALESCE(system_prompt,''), COALESCE(instructions,''), agent_id, node_id, version, model, backend, enabled, COALESCE(max_concurrency,1), COALESCE(current_load,0), COALESCE(tags,'[]'::jsonb), COALESCE(capabilities,'[]'::jsonb), COALESCE(skills,'[]'::jsonb), COALESCE(review_sample_rate,0.0), COALESCE(review_timeout,240), COALESCE(max_review_loops,3), COALESCE(max_depth,5), COALESCE(completion_behavior,''), last_active_at, created_at, updated_at
 		 FROM agent_profiles WHERE id = $1`
 	args := []any{profileID}
 	argIdx := 2
@@ -87,7 +87,7 @@ func (h *AgentProfileHandler) Get(c *gin.Context) {
 	var p models.AgentProfile
 	err := h.DB.QueryRow(query, args...).Scan(&p.ID, &p.UserID, &p.Name, &p.Avatar, &p.Description,
 		&p.SystemPrompt, &p.Instructions, &p.AgentID, &p.NodeID, &p.Version, &p.Model, &p.Backend, &p.Enabled,
-		&p.MaxConcurrency, &p.CurrentLoad, &p.Tags, &p.Skills, &p.ReviewSampleRate, &p.ReviewTimeout, &p.MaxReviewLoops, &p.MaxDepth, &p.CompletionBehavior, &p.LastActiveAt, &p.CreatedAt, &p.UpdatedAt)
+		&p.MaxConcurrency, &p.CurrentLoad, &p.Tags, &p.Capabilities, &p.Skills, &p.ReviewSampleRate, &p.ReviewTimeout, &p.MaxReviewLoops, &p.MaxDepth, &p.CompletionBehavior, &p.LastActiveAt, &p.CreatedAt, &p.UpdatedAt)
 	if err == sql.ErrNoRows {
 		c.JSON(http.StatusNotFound, gin.H{"error": "profile not found"})
 		return

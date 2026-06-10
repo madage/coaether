@@ -58,9 +58,13 @@ func (pe *PolicyEngine) Check(ctx *AgentContext, tc *ToolCall) *CheckResult {
 	// 3. Capability check: agent must have declared this tool in capabilities.tools
 	if ctx.Capabilities != nil {
 		if !ctx.Capabilities[tc.Tool] {
+			suggestion := "add the tool to capabilities.tools in the agent profile"
+			if tc.Tool == ToolCreateSubTask {
+				suggestion = "this agent is configured for the decomposition plan workflow — use propose_decomposition_plan instead of create_sub_task"
+			}
 			return deny(ErrPermissionDenied,
 				fmt.Sprintf("agent '%s' has not declared capability for tool '%s'", ctx.AgentName, tc.Tool),
-				"add the tool to capabilities.tools in the agent profile")
+				suggestion)
 		}
 	}
 

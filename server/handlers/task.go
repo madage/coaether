@@ -337,7 +337,7 @@ func buildTaskPrompt(title, description, instructions, systemPrompt string) stri
 	if instructions != "" {
 		prompt += "\n\nInstructions: " + instructions
 	}
-	prompt += fmt.Sprintf("\n\nCRITICAL: Use ONLY the available MCP harness tools (mcp__coaether-harness__ prefix) to complete your work. Do NOT use filesystem tools (Bash, Glob, Grep, Read, Write, Edit). If you are a decomposition agent, your ONLY job is to break this task into sub-tasks using create_sub_task. Do NOT attempt to execute task steps yourself.")
+	prompt += fmt.Sprintf("\n\nCRITICAL: Use ONLY the available MCP harness tools (mcp__coaether-harness__ prefix) to complete your work. Do NOT use filesystem tools (Bash, Glob, Grep, Read, Write, Edit). If you are a decomposition agent, your ONLY job is to break this task into sub-tasks using propose_decomposition_plan. Do NOT attempt to execute task steps yourself.")
 	return prompt
 }
 

@@ -95,6 +95,7 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
     { id: 'get_task_detail', label: 'get_task_detail', desc: lang === 'zh' ? '查看任务详情' : 'View task details' },
     { id: 'list_sub_tasks', label: 'list_sub_tasks', desc: lang === 'zh' ? '列出子任务' : 'List sub-tasks' },
     { id: 'update_task_status', label: 'update_task_status', desc: lang === 'zh' ? '更新任务状态' : 'Update task status' },
+    { id: 'propose_decomposition_plan', label: 'propose_decomposition_plan', desc: lang === 'zh' ? '提交分解方案' : 'Propose decomposition plan' },
   ];
 
   const toggleCapability = (cap: string) => {

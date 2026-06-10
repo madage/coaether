@@ -492,6 +492,8 @@ func Migrate() error {
 
 		"ALTER TABLE sessions ALTER COLUMN prompt DROP NOT NULL",
 
+		"ALTER TABLE decomposition_plans ADD COLUMN IF NOT EXISTS error_count INT NOT NULL DEFAULT 0",
+
 		"ALTER TABLE tasks ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP",
 
 		"ALTER TABLE tasks ADD COLUMN IF NOT EXISTS project_id VARCHAR(36) REFERENCES projects(id)",
@@ -694,6 +696,7 @@ func Migrate() error {
 			created_at      TIMESTAMP NOT NULL DEFAULT NOW()
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_decomp_plan_items_plan ON decomposition_plan_items(plan_id)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_decomp_plan_items_unique_title ON decomposition_plan_items(plan_id, title)`,
 	}
 	for _, t := range harnessTables {
 		if _, err := DB.Exec(t); err != nil {
