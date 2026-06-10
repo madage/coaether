@@ -67,6 +67,8 @@ export function TaskBoard({ initialTaskId, onTaskOpened }: { initialTaskId?: str
 
   const [deleteTaskId, setDeleteTaskId] = useState<string | null>(null);
   const [processingTasks, setProcessingTasks] = useState<Set<string>>(new Set());
+  const [dragTaskId, setDragTaskId] = useState<string | null>(null);
+  const [dragOverColumn, setDragOverColumn] = useState<string | null>(null);
 
   const fetchProcessingTasks = useCallback(async () => {
     try {
@@ -338,10 +340,29 @@ export function TaskBoard({ initialTaskId, onTaskOpened }: { initialTaskId?: str
                   </span>
                 </div>
                 <div
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    setDragOverColumn(col);
+                  }}
+                  onDragLeave={() => setDragOverColumn(null)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const taskId = e.dataTransfer.getData('text/plain');
+                    if (taskId && col) {
+                      handleStatusChange(taskId, col);
+                    }
+                    setDragTaskId(null);
+                    setDragOverColumn(null);
+                  }}
                   style={{
-                    background: '#fff', borderRadius: '0 0 12px 12px', padding: '8px',
+                    background: dragOverColumn === col ? '#e3f2fd' : '#fff',
+                    borderRadius: '0 0 12px 12px', padding: '8px',
                     minHeight: '120px', display: 'flex', flexDirection: 'column', gap: '8px',
-                    boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
+                    boxShadow: dragOverColumn === col
+                      ? '0 2px 12px rgba(25,118,210,0.2), inset 0 0 0 2px #1976d2'
+                      : '0 2px 8px rgba(0,0,0,0.06)',
+                    transition: 'background 0.2s, boxShadow 0.2s',
                   }}
                 >
                   {tasks.map((task) => (
@@ -357,6 +378,9 @@ export function TaskBoard({ initialTaskId, onTaskOpened }: { initialTaskId?: str
                       creatorName={task.creator_name}
                       assigneeNamesMap={assigneeNames}
                       processingTasks={processingTasks}
+                      onDragStart={(id) => setDragTaskId(id)}
+                      onDragEnd={() => { setDragTaskId(null); setDragOverColumn(null); }}
+                      isDragging={dragTaskId === task.id}
                     />
                   ))}
                 </div>

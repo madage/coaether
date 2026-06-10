@@ -696,7 +696,7 @@ export const zh = {
   agentMaxDepth: '最大深度',
   agentSkills: '技能',
   agentProtocolVersion: '协议版本',
-  agentCapabilities: '能力集',
+  agentCapabilities: '工具集',
   agentPermissions: '权限',
 
   // Agent Queue

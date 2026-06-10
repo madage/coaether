@@ -11,7 +11,7 @@ interface TaskDetailProps {
   onRefresh: () => void;
 }
 
-const statusOptions: TaskStatus[] = ['todo', 'in_progress', 'blocked', 'completed', 'review', 'done'];
+const statusOptions: TaskStatus[] = ['todo', 'in_progress', 'blocked', 'review', 'done'];
 const priorityOptions: Priority[] = ['urgent', 'high', 'medium', 'low'];
 
 function highlightMentions(html: string, agentNames: Set<string> = new Set()): string {

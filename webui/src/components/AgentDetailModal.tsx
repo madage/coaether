@@ -27,7 +27,7 @@ const modalStyle: React.CSSProperties = {
   background: '#fff',
   borderRadius: '16px',
   padding: '40px',
-  width: '560px',
+  width: '640px',
   maxWidth: '90vw',
   maxHeight: '85vh',
   overflow: 'auto',
@@ -37,11 +37,24 @@ const modalStyle: React.CSSProperties = {
 
 const inputStyle: React.CSSProperties = {
   width: '100%',
-  padding: '10px',
-  borderRadius: '6px',
+  padding: '12px 14px',
+  borderRadius: '8px',
   border: '1px solid #ddd',
-  fontSize: '1em',
+  fontSize: '0.95em',
   boxSizing: 'border-box',
+  outline: 'none',
+  transition: 'border-color 0.2s',
+};
+
+const sectionLabelStyle: React.CSSProperties = {
+  fontSize: '0.85em',
+  fontWeight: 700,
+  color: '#888',
+  textTransform: 'uppercase',
+  letterSpacing: '0.5px',
+  paddingBottom: '8px',
+  borderBottom: '1px solid #eee',
+  marginBottom: '4px',
 };
 
 export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSave, onDelete }: AgentDetailModalProps) {
@@ -97,16 +110,23 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
     });
   }, [editNodeId, editing]);
 
-  const availableCapabilities = [
-    { id: 'create_sub_task', label: 'create_sub_task', desc: lang === 'zh' ? '创建子任务' : 'Create sub-tasks' },
-    { id: 'assign_task', label: 'assign_task', desc: lang === 'zh' ? '分配任务' : 'Assign tasks' },
-    { id: 'review_task', label: 'review_task', desc: lang === 'zh' ? '审核任务' : 'Review tasks' },
-    { id: 'add_comment', label: 'add_comment', desc: lang === 'zh' ? '添加评论' : 'Add comments' },
-    { id: 'get_task_detail', label: 'get_task_detail', desc: lang === 'zh' ? '查看任务详情' : 'View task details' },
-    { id: 'list_sub_tasks', label: 'list_sub_tasks', desc: lang === 'zh' ? '列出子任务' : 'List sub-tasks' },
-    { id: 'update_task_status', label: 'update_task_status', desc: lang === 'zh' ? '更新任务状态' : 'Update task status' },
-    { id: 'propose_decomposition_plan', label: 'propose_decomposition_plan', desc: lang === 'zh' ? '提交分解方案' : 'Propose decomposition plan' },
-  ];
+  const capabilityNameKeys: Record<string, string> = {
+    create_sub_task: 'toolName_create_sub_task',
+    propose_decomposition_plan: 'toolName_propose_decomposition_plan',
+    assign_task: 'toolName_assign_task',
+    review_task: 'toolName_review_task',
+    add_comment: 'toolName_add_comment',
+    get_task_detail: 'toolName_get_task_detail',
+    list_sub_tasks: 'toolName_list_sub_tasks',
+    update_task_status: 'toolName_update_task_status',
+  };
+
+  const getCapDisplayName = (capId: string): string => {
+    const key = capabilityNameKeys[capId];
+    return key ? (t as (k: string) => string)(key) : capId;
+  };
+
+  const availableCapabilities = Object.keys(capabilityNameKeys);
 
   const toggleCapability = (cap: string) => {
     setEditCapabilities(prev =>
@@ -200,10 +220,12 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
 
         {editing ? (
           /* Edit mode */
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+            {/* ── Basic Info ── */}
+            <div style={sectionLabelStyle}>{lang === 'zh' ? '基本信息' : 'Basic Info'}</div>
             <div>
               <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
-                {t('agentName')}
+                {t('agentName')} <span style={{ color: '#f44336' }}>*</span>
               </label>
               <input
                 value={editName}
@@ -211,44 +233,46 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
                 style={inputStyle}
               />
             </div>
-            <div>
-              <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
-                {t('agentNode')}
-              </label>
-              <select
-                value={editNodeId}
-                onChange={(e) => setEditNodeId(e.target.value)}
-                style={{ ...inputStyle, background: '#fff' }}
-              >
-                <option value="">{lang === 'zh' ? '选择一个节点...' : 'Select a node...'}</option>
-                {nodeList.filter(n => n.status === 'online' || n.status === 'busy').map((n) => (
-                  <option key={n.id} value={n.id}>{n.name} ({n.status})</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
-                {t('agentRuntime')}
-              </label>
-              <select
-                value={editAgentId}
-                onChange={(e) => setEditAgentId(e.target.value)}
-                style={{ ...inputStyle, background: '#fff' }}
-                disabled={!editNodeId}
-              >
-                <option value="">
-                  {!editNodeId
-                    ? (lang === 'zh' ? '请先选择节点' : 'Select a node first')
-                    : loadingAgents
-                      ? (lang === 'zh' ? '加载中...' : 'Loading...')
-                      : agentList.length === 0
-                        ? (lang === 'zh' ? '该节点没有可用 Agent' : 'No agents on this node')
-                        : lang === 'zh' ? '选择一个 Agent...' : 'Select an agent...'}
-                </option>
-                {agentList.map((a) => (
-                  <option key={a.id} value={a.id}>{a.name}</option>
-                ))}
-              </select>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+              <div>
+                <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
+                  {t('agentNode')} <span style={{ color: '#f44336' }}>*</span>
+                </label>
+                <select
+                  value={editNodeId}
+                  onChange={(e) => setEditNodeId(e.target.value)}
+                  style={{ ...inputStyle, background: '#fff' }}
+                >
+                  <option value="">{lang === 'zh' ? '选择节点...' : 'Select node...'}</option>
+                  {nodeList.filter(n => n.status === 'online' || n.status === 'busy').map((n) => (
+                    <option key={n.id} value={n.id}>{n.name} ({n.status})</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
+                  {t('agentRuntime')} <span style={{ color: '#f44336' }}>*</span>
+                </label>
+                <select
+                  value={editAgentId}
+                  onChange={(e) => setEditAgentId(e.target.value)}
+                  style={{ ...inputStyle, background: '#fff' }}
+                  disabled={!editNodeId}
+                >
+                  <option value="">
+                    {!editNodeId
+                      ? (lang === 'zh' ? '请先选择节点' : 'Select a node first')
+                      : loadingAgents
+                        ? (lang === 'zh' ? '加载中...' : 'Loading...')
+                        : agentList.length === 0
+                          ? (lang === 'zh' ? '该节点没有可用 Agent' : 'No agents on this node')
+                          : lang === 'zh' ? '选择 Agent...' : 'Select agent...'}
+                  </option>
+                  {agentList.map((a) => (
+                    <option key={a.id} value={a.id}>{a.name}</option>
+                  ))}
+                </select>
+              </div>
             </div>
             <div>
               <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
@@ -257,10 +281,13 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
               <textarea
                 value={editDesc}
                 onChange={(e) => setEditDesc(e.target.value)}
-                rows={4}
-                style={{ ...inputStyle, resize: 'vertical' }}
+                rows={6}
+                style={{ ...inputStyle, resize: 'vertical', minHeight: '140px' }}
               />
             </div>
+
+            {/* ── Behavior ── */}
+            <div style={sectionLabelStyle}>{lang === 'zh' ? '行为设定' : 'Behavior'}</div>
             <div>
               <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
                 {t('systemPrompt')}
@@ -269,8 +296,8 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
                 value={editSystemPrompt}
                 onChange={(e) => setEditSystemPrompt(e.target.value)}
                 placeholder={t('systemPromptPlaceholder')}
-                rows={3}
-                style={{ ...inputStyle, resize: 'vertical', fontFamily: 'monospace', fontSize: '0.85em' }}
+                rows={14}
+                style={{ ...inputStyle, resize: 'vertical', fontFamily: 'monospace', fontSize: '0.85em', minHeight: '260px' }}
               />
             </div>
             <div>
@@ -281,104 +308,134 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
                 value={editInstructions}
                 onChange={(e) => setEditInstructions(e.target.value)}
                 placeholder={t('instructionsPlaceholder')}
-                rows={3}
-                style={{ ...inputStyle, resize: 'vertical', fontSize: '0.85em' }}
+                rows={4}
+                style={{ ...inputStyle, resize: 'vertical', fontSize: '0.9em', minHeight: '100px' }}
               />
             </div>
-            <div>
-              <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
-                {t('abilityTags')}
-              </label>
-              <input
-                value={editTags}
-                onChange={(e) => setEditTags(e.target.value)}
-                placeholder={t('abilityTagsPlaceholder')}
-                style={inputStyle}
-              />
-            </div>
-            <div>
-              <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
-                {t('maxConcurrency')}
-              </label>
-              <input
-                type="number"
-                value={editMaxConcurrency}
-                onChange={(e) => setEditMaxConcurrency(Math.max(1, parseInt(e.target.value) || 1))}
-                min={1}
-                max={20}
-                style={inputStyle}
-              />
-            </div>
-            <div>
-              <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
-                {t('agentCapabilities')}
-              </label>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                {availableCapabilities.map(cap => {
-                  const isDisabled = disabledTools.has(cap.id);
-                  return (
-                  <label key={cap.id} style={{
-                    display: 'flex', alignItems: 'center', gap: '4px',
-                    padding: '4px 10px', borderRadius: '6px',
-                    cursor: isDisabled ? 'not-allowed' : 'pointer',
-                    background: isDisabled ? '#f0f0f0' : (editCapabilities.includes(cap.id) ? '#e3f2fd' : '#f5f5f5'),
-                    border: isDisabled ? '1px solid #e0e0e0' : (editCapabilities.includes(cap.id) ? '1px solid #1976d2' : '1px solid #ddd'),
-                    fontSize: '0.8em', userSelect: 'none',
-                    opacity: isDisabled ? 0.55 : 1,
-                  }}>
-                    <input
-                      type="checkbox"
-                      checked={editCapabilities.includes(cap.id)}
-                      onChange={() => !isDisabled && toggleCapability(cap.id)}
-                      disabled={isDisabled}
-                      style={{ margin: 0 }}
-                    />
-                    <span style={{
-                      color: isDisabled ? '#999' : (editCapabilities.includes(cap.id) ? '#1565c0' : '#666'),
-                      textDecoration: isDisabled ? 'line-through' : 'none',
-                    }}>{cap.desc}</span>
-                    {isDisabled && (
-                      <span style={{
-                        fontSize: '0.7em', color: '#c62828', marginLeft: '2px',
-                      }} title={lang === 'zh' ? '此工具已被全局禁用' : 'Globally disabled'}>🚫</span>
-                    )}
-                  </label>
-                  );
-                })}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+              <div>
+                <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
+                  {t('abilityTags')}
+                </label>
+                <input
+                  value={editTags}
+                  onChange={(e) => setEditTags(e.target.value)}
+                  placeholder={t('abilityTagsPlaceholder')}
+                  style={inputStyle}
+                />
               </div>
+              <div>
+                <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
+                  {t('agentSkills')}
+                </label>
+                <input
+                  value={editSkills}
+                  onChange={(e) => setEditSkills(e.target.value)}
+                  placeholder={t('abilityTagsPlaceholder')}
+                  style={inputStyle}
+                />
+              </div>
+            </div>
+
+            {/* ── Tool Set ── */}
+            <div style={sectionLabelStyle}>{t('agentCapabilities')}</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+              {availableCapabilities.map(capId => {
+                const isDisabled = disabledTools.has(capId);
+                return (
+                <label key={capId} style={{
+                  display: 'flex', alignItems: 'center', gap: '6px',
+                  padding: '6px 12px', borderRadius: '8px',
+                  cursor: isDisabled ? 'not-allowed' : 'pointer',
+                  background: isDisabled ? '#f0f0f0' : (editCapabilities.includes(capId) ? '#e3f2fd' : '#f5f5f5'),
+                  border: isDisabled ? '1px solid #e0e0e0' : (editCapabilities.includes(capId) ? '1px solid #1976d2' : '1px solid #ddd'),
+                  fontSize: '0.85em', userSelect: 'none',
+                  opacity: isDisabled ? 0.55 : 1,
+                }}>
+                  <input
+                    type="checkbox"
+                    checked={editCapabilities.includes(capId)}
+                    onChange={() => !isDisabled && toggleCapability(capId)}
+                    disabled={isDisabled}
+                    style={{ margin: 0 }}
+                  />
+                  <span style={{
+                    color: isDisabled ? '#999' : (editCapabilities.includes(capId) ? '#1565c0' : '#666'),
+                    textDecoration: isDisabled ? 'line-through' : 'none',
+                  }}>{getCapDisplayName(capId)}</span>
+                  {isDisabled && (
+                    <span style={{
+                      fontSize: '0.7em', color: '#c62828', marginLeft: '2px',
+                    }} title={lang === 'zh' ? '此工具已被全局禁用' : 'Globally disabled'}>🚫</span>
+                  )}
+                </label>
+                );
+              })}
+            </div>
             {disabledTools.size > 0 && (
-              <div style={{ marginTop: '6px', fontSize: '0.75em', color: '#c62828' }}>
+              <div style={{ marginTop: '-16px', fontSize: '0.78em', color: '#c62828' }}>
                 🚫 {lang === 'zh' ? '部分工具已被全局禁用，智能体无法调用。' : 'Some tools are globally disabled.'}
               </div>
             )}
-            </div>
-            <div>
-              <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
-                {t('agentSkills')}
-              </label>
-              <input
-                value={editSkills}
-                onChange={(e) => setEditSkills(e.target.value)}
-                placeholder={t('abilityTagsPlaceholder')}
-                style={inputStyle}
-              />
-            </div>
-            <div>
-              <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
-                {t('reviewSampleRate')}
-              </label>
-              <input
-                type="number"
-                value={editReviewSampleRate}
-                onChange={(e) => setEditReviewSampleRate(Math.max(0, Math.min(1, parseFloat(e.target.value) || 0)))}
-                min={0}
-                max={1}
-                step={0.05}
-                style={inputStyle}
-              />
-              <div style={{ fontSize: '0.75em', color: '#999', marginTop: '2px' }}>{t('reviewSampleRateHint')}</div>
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+
+            {/* ── Harness Params ── */}
+            <div style={sectionLabelStyle}>{lang === 'zh' ? '调度参数' : 'Harness Params'}</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+              <div>
+                <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
+                  {t('maxConcurrency')}
+                </label>
+                <input
+                  type="number"
+                  value={editMaxConcurrency}
+                  onChange={(e) => setEditMaxConcurrency(Math.max(1, parseInt(e.target.value) || 1))}
+                  min={1}
+                  max={20}
+                  style={inputStyle}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
+                  {t('agentMaxDepth')}
+                </label>
+                <input
+                  type="number"
+                  value={editMaxDepth}
+                  onChange={(e) => setEditMaxDepth(Math.max(1, parseInt(e.target.value) || 1))}
+                  min={1}
+                  style={inputStyle}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
+                  {t('reviewSampleRate')}
+                </label>
+                <input
+                  type="number"
+                  value={editReviewSampleRate}
+                  onChange={(e) => setEditReviewSampleRate(Math.max(0, Math.min(1, parseFloat(e.target.value) || 0)))}
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  style={inputStyle}
+                />
+                <div style={{ fontSize: '0.72em', color: '#999', marginTop: '3px' }}>{t('reviewSampleRateHint')}</div>
+              </div>
+              <div>
+                <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
+                  {t('taskCompletionBehavior')}
+                </label>
+                <select
+                  value={editCompletionBehavior}
+                  onChange={(e) => setEditCompletionBehavior(e.target.value)}
+                  style={{ ...inputStyle, background: '#fff' }}
+                >
+                  <option value="auto_done">{t('completionBehaviorAutoDone')}</option>
+                  <option value="auto_review">{t('completionBehaviorAutoReview')}</option>
+                  <option value="sample_review">{t('completionBehaviorSampleReview')}</option>
+                  <option value="needs_review">{t('completionBehaviorNeedsReview')}</option>
+                </select>
+              </div>
               <div>
                 <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
                   {t('maxReviewLoops')}
@@ -403,42 +460,16 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
                   style={inputStyle}
                 />
               </div>
-              <div>
-                <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
-                  {t('agentMaxDepth')}
-                </label>
-                <input
-                  type="number"
-                  value={editMaxDepth}
-                  onChange={(e) => setEditMaxDepth(Math.max(1, parseInt(e.target.value) || 1))}
-                  min={1}
-                  style={inputStyle}
-                />
-              </div>
-              <div>
-                <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
-                  {t('taskCompletionBehavior')}
-                </label>
-                <select
-                  value={editCompletionBehavior}
-                  onChange={(e) => setEditCompletionBehavior(e.target.value)}
-                  style={{ ...inputStyle, background: '#fff' }}
-                >
-                  <option value="auto_done">{t('completionBehaviorAutoDone')}</option>
-                  <option value="auto_review">{t('completionBehaviorAutoReview')}</option>
-                  <option value="sample_review">{t('completionBehaviorSampleReview')}</option>
-                  <option value="needs_review">{t('completionBehaviorNeedsReview')}</option>
-                </select>
-              </div>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', paddingTop: '8px' }}>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', paddingTop: '12px', borderTop: '1px solid #eee' }}>
               <button onClick={handleCancel} style={{
-                padding: '10px 24px', background: '#f5f5f5', color: '#666',
-                border: '1px solid #ddd', borderRadius: '6px', cursor: 'pointer', fontSize: '0.95em',
+                padding: '12px 28px', background: '#f5f5f5', color: '#666',
+                border: '1px solid #ddd', borderRadius: '8px', cursor: 'pointer', fontSize: '0.95em',
               }}>{t('cancel')}</button>
               <button onClick={handleSave} style={{
-                padding: '10px 24px', background: '#1976d2', color: '#fff',
-                border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '0.95em', fontWeight: 600,
+                padding: '12px 28px', background: '#1976d2', color: '#fff',
+                border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '0.95em', fontWeight: 600,
               }}>{t('saveAgent')}</button>
             </div>
           </div>
@@ -524,7 +555,7 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
                       borderRadius: '10px', fontSize: '0.8em', fontWeight: 500,
                       textDecoration: isDisabled ? 'line-through' : 'none',
                       opacity: isDisabled ? 0.7 : 1,
-                    }} title={isDisabled ? (lang === 'zh' ? '此工具已被全局禁用' : 'Globally disabled') : ''}>{cap}</span>
+                    }} title={isDisabled ? (lang === 'zh' ? '此工具已被全局禁用' : 'Globally disabled') : ''}>{getCapDisplayName(cap)}</span>
                     );
                   })}
                 </div>

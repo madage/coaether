@@ -36,7 +36,7 @@ const priorityKeys: Record<Priority, TranslationKey> = {
   low: 'priorityLow',
 };
 
-const allStatuses: TaskStatus[] = ['todo', 'in_progress', 'blocked', 'completed', 'review', 'done'];
+const allStatuses: TaskStatus[] = ['todo', 'in_progress', 'blocked', 'review', 'done'];
 
 interface TaskCardProps {
   task: Task;
@@ -49,9 +49,12 @@ interface TaskCardProps {
   creatorName?: string;
   assigneeNamesMap?: Record<string, string>;
   processingTasks?: Set<string>;
+  onDragStart?: (id: string, status: TaskStatus) => void;
+  onDragEnd?: () => void;
+  isDragging?: boolean;
 }
 
-export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap, subtaskCount, assigneeName, creatorName, assigneeNamesMap, processingTasks }: TaskCardProps) {
+export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap, subtaskCount, assigneeName, creatorName, assigneeNamesMap, processingTasks, onDragStart, onDragEnd, isDragging }: TaskCardProps) {
   const isProcessing = processingTasks?.has(task.id);
   const { t } = useLang();
   const pc = priorityColors[task.priority] || priorityColors.medium;
@@ -84,6 +87,13 @@ export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap, 
         }
       `}</style>
     <div
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData('text/plain', task.id);
+        e.dataTransfer.effectAllowed = 'move';
+        onDragStart?.(task.id, task.status);
+      }}
+      onDragEnd={() => onDragEnd?.()}
       style={{
         background: '#fff',
         borderRadius: '12px',
@@ -91,13 +101,14 @@ export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap, 
         border: isProcessing ? '1px solid #1976d2' : '1px solid #e0e0e0',
         boxShadow: isProcessing ? '0 0 8px rgba(25,118,210,0.3)' : '0 1px 3px rgba(0,0,0,0.06)',
         animation: isProcessing ? 'task-card-pulse 2s ease-in-out infinite' : undefined,
-        transition: 'transform 0.2s, boxShadow 0.2s',
+        transition: 'transform 0.2s, boxShadow 0.2s, opacity 0.2s',
         display: 'flex',
         flexDirection: 'column',
         gap: '6px',
-        cursor: 'pointer',
+        cursor: 'grab',
         position: 'relative',
         zIndex: menuOpen ? 1 : undefined,
+        opacity: isDragging ? 0.4 : 1,
       }}
       onClick={() => onEdit(task)}
       onMouseEnter={(e) => {

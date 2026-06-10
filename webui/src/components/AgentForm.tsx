@@ -22,18 +22,19 @@ const modalStyle: React.CSSProperties = {
   background: '#fff',
   borderRadius: '12px',
   padding: '32px',
-  width: '480px',
+  width: '520px',
   maxWidth: '90vw',
   boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
 };
 
 const inputStyle: React.CSSProperties = {
   width: '100%',
-  padding: '10px',
-  borderRadius: '6px',
+  padding: '12px 14px',
+  borderRadius: '8px',
   border: '1px solid #ddd',
-  fontSize: '1em',
+  fontSize: '0.95em',
   boxSizing: 'border-box',
+  outline: 'none',
 };
 
 const avatars = ['🤖', '🧠', '⚡', '🎯', '🔧', '🛠️', '🌟', '💡', '🚀', '🎨'];
@@ -51,16 +52,23 @@ export function AgentForm({ onClose, onCreated }: AgentFormProps) {
   const [selectedAgent, setSelectedAgent] = useState('');
   const [loadingAgents, setLoadingAgents] = useState(false);
   const [maxConcurrency, setMaxConcurrency] = useState(1);
-  const availableCapabilities = [
-    { id: 'create_sub_task', label: 'create_sub_task', desc: lang === 'zh' ? '创建子任务' : 'Create sub-tasks' },
-    { id: 'assign_task', label: 'assign_task', desc: lang === 'zh' ? '分配任务' : 'Assign tasks' },
-    { id: 'review_task', label: 'review_task', desc: lang === 'zh' ? '审核任务' : 'Review tasks' },
-    { id: 'add_comment', label: 'add_comment', desc: lang === 'zh' ? '添加评论' : 'Add comments' },
-    { id: 'get_task_detail', label: 'get_task_detail', desc: lang === 'zh' ? '查看任务详情' : 'View task details' },
-    { id: 'list_sub_tasks', label: 'list_sub_tasks', desc: lang === 'zh' ? '列出子任务' : 'List sub-tasks' },
-    { id: 'update_task_status', label: 'update_task_status', desc: lang === 'zh' ? '更新任务状态' : 'Update task status' },
-    { id: 'propose_decomposition_plan', label: 'propose_decomposition_plan', desc: lang === 'zh' ? '提交分解方案' : 'Propose decomposition plan' },
-  ];
+  const capabilityNameKeys: Record<string, string> = {
+    create_sub_task: 'toolName_create_sub_task',
+    propose_decomposition_plan: 'toolName_propose_decomposition_plan',
+    assign_task: 'toolName_assign_task',
+    review_task: 'toolName_review_task',
+    add_comment: 'toolName_add_comment',
+    get_task_detail: 'toolName_get_task_detail',
+    list_sub_tasks: 'toolName_list_sub_tasks',
+    update_task_status: 'toolName_update_task_status',
+  };
+
+  const getCapDisplayName = (capId: string): string => {
+    const key = capabilityNameKeys[capId];
+    return key ? (t as (k: string) => string)(key) : capId;
+  };
+
+  const availableCapabilities = Object.keys(capabilityNameKeys);
   const [capabilities, setCapabilities] = useState<string[]>([]);
   const [disabledTools, setDisabledTools] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
@@ -210,8 +218,8 @@ export function AgentForm({ onClose, onCreated }: AgentFormProps) {
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder={t('agentDescriptionPlaceholder')}
-              rows={3}
-              style={{ ...inputStyle, resize: 'vertical' }}
+              rows={6}
+              style={{ ...inputStyle, resize: 'vertical', minHeight: '140px' }}
             />
           </div>
 
@@ -234,8 +242,8 @@ export function AgentForm({ onClose, onCreated }: AgentFormProps) {
               value={systemPrompt}
               onChange={(e) => setSystemPrompt(e.target.value)}
               placeholder={t('systemPromptPlaceholder')}
-              rows={3}
-              style={{ ...inputStyle, resize: 'vertical', fontFamily: 'monospace', fontSize: '0.85em' }}
+              rows={14}
+              style={{ ...inputStyle, resize: 'vertical', fontFamily: 'monospace', fontSize: '0.85em', minHeight: '260px' }}
             />
           </div>
 
@@ -247,8 +255,8 @@ export function AgentForm({ onClose, onCreated }: AgentFormProps) {
               value={instructions}
               onChange={(e) => setInstructions(e.target.value)}
               placeholder={t('instructionsPlaceholder')}
-              rows={3}
-              style={{ ...inputStyle, resize: 'vertical', fontSize: '0.85em' }}
+              rows={4}
+              style={{ ...inputStyle, resize: 'vertical', fontSize: '0.9em', minHeight: '100px' }}
             />
           </div>
 
@@ -269,29 +277,29 @@ export function AgentForm({ onClose, onCreated }: AgentFormProps) {
               {t('agentCapabilities')}
             </label>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-              {availableCapabilities.map(cap => {
-                const isDisabled = disabledTools.has(cap.id);
+              {availableCapabilities.map(capId => {
+                const isDisabled = disabledTools.has(capId);
                 return (
-                <label key={cap.id} style={{
+                <label key={capId} style={{
                   display: 'flex', alignItems: 'center', gap: '4px',
                   padding: '4px 10px', borderRadius: '6px',
                   cursor: isDisabled ? 'not-allowed' : 'pointer',
-                  background: isDisabled ? '#f0f0f0' : (capabilities.includes(cap.id) ? '#e3f2fd' : '#f5f5f5'),
-                  border: isDisabled ? '1px solid #e0e0e0' : (capabilities.includes(cap.id) ? '1px solid #1976d2' : '1px solid #ddd'),
+                  background: isDisabled ? '#f0f0f0' : (capabilities.includes(capId) ? '#e3f2fd' : '#f5f5f5'),
+                  border: isDisabled ? '1px solid #e0e0e0' : (capabilities.includes(capId) ? '1px solid #1976d2' : '1px solid #ddd'),
                   fontSize: '0.8em', userSelect: 'none',
                   opacity: isDisabled ? 0.55 : 1,
                 }}>
                   <input
                     type="checkbox"
-                    checked={capabilities.includes(cap.id)}
-                    onChange={() => !isDisabled && toggleCapability(cap.id)}
+                    checked={capabilities.includes(capId)}
+                    onChange={() => !isDisabled && toggleCapability(capId)}
                     disabled={isDisabled}
                     style={{ margin: 0 }}
                   />
                   <span style={{
-                    color: isDisabled ? '#999' : (capabilities.includes(cap.id) ? '#1565c0' : '#666'),
+                    color: isDisabled ? '#999' : (capabilities.includes(capId) ? '#1565c0' : '#666'),
                     textDecoration: isDisabled ? 'line-through' : 'none',
-                  }}>{cap.desc}</span>
+                  }}>{getCapDisplayName(capId)}</span>
                   {isDisabled && (
                     <span style={{
                       fontSize: '0.7em', color: '#c62828', marginLeft: '2px',

@@ -696,7 +696,7 @@ export const en = {
   agentMaxDepth: 'Max Depth',
   agentSkills: 'Skills',
   agentProtocolVersion: 'Protocol',
-  agentCapabilities: 'Capabilities',
+  agentCapabilities: 'Tool Set',
   agentPermissions: 'Permissions',
 
   // Agent Queue
