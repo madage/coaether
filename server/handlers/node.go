@@ -384,7 +384,7 @@ func generateTokenHex() string {
 
 // getLocalIP returns the first non-loopback IPv4 address of this host.
 func getServerIP() string {
-	return "192.168.0.104"
+	return "192.168.2.45"
 }
 
 // GenerateToken creates a one-time join token for a remote node.

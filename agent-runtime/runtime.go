@@ -937,7 +937,10 @@ func (r *Runtime) registerBackends() {
 		// Configure MCP server path so .mcp.json is written for each session
 		mcpServerPath := "mcp-server.exe"
 		if exe, err := os.Executable(); err == nil {
-			mcpServerPath = filepath.Join(filepath.Dir(exe), "mcp-server.exe")
+			exePath := filepath.Join(filepath.Dir(exe), "mcp-server.exe")
+			if _, err := os.Stat(exePath); err == nil {
+				mcpServerPath = exePath
+			}
 		}
 		cli.SetRuntimeConfig(r.ServerURL, r.NodeID, r.Secret, mcpServerPath)
 		r.RegisterBackend("claude", cli)

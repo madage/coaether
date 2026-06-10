@@ -154,6 +154,16 @@ func main() {
 	reviewRouter.Notifier = notifH
 	taskH.ReviewRouter = reviewRouter
 
+	// Wire DAGEngine Hub for real-time updates
+	workflowH.DAGEngine.Hub = dashHub
+	reviewRouter.DAGEngine.Hub = dashHub
+
+	// Decomposition Handler (plan review flow)
+	decompH := handlers.NewDecompositionHandler(database.DB)
+	decompH.Hub = dashHub
+	decompH.ReviewRouter = reviewRouter
+	decompH.DAGEngine.Hub = dashHub
+
 	// Safety Guard (anti-runaway monitor)
 	safetyGuard := harness.NewSafetyGuard(database.DB)
 	safetyGuard.StartPeriodicCheck(5 * time.Minute)
@@ -302,6 +312,9 @@ func main() {
 			api.POST("/tasks/:id/comments", taskH.CreateComment)
 			api.DELETE("/tasks/:id/comments/:commentId", taskH.DeleteComment)
 			api.POST("/tasks/:id/review", reviewRouter.HandleReviewHTTP)
+			api.GET("/tasks/:id/decomposition-plan", decompH.GetPlan)
+			api.POST("/tasks/:id/decomposition-plan/approve", decompH.ApprovePlan)
+			api.POST("/tasks/:id/decomposition-plan/reject", decompH.RejectPlan)
 
 		// Task rules
 		api.GET("/rules", ruleH.List)

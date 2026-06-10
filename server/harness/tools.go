@@ -15,7 +15,8 @@ const (
 	ToolAddComment     = "add_comment"
 	ToolGetTaskDetail  = "get_task_detail"
 	ToolListSubTasks   = "list_sub_tasks"
-	ToolUpdateStatus   = "update_task_status"
+	ToolUpdateStatus              = "update_task_status"
+	ToolProposeDecompositionPlan  = "propose_decomposition_plan"
 )
 
 // ToolDefinition defines a single tool's schema and metadata.
@@ -31,6 +32,14 @@ type ToolDefinition struct {
 // AllTools returns the registered tool definitions.
 func AllTools() map[string]ToolDefinition {
 	return map[string]ToolDefinition{
+		ToolProposeDecompositionPlan: {
+			Name:        ToolProposeDecompositionPlan,
+			Version:     "1.0",
+			Description: "提出一个分解计划，将任务拆分为多个子任务供人工审核，审核通过后才创建实际子任务",
+			Parameters:  proposeDecompositionPlanSchema,
+			RequiredPerm: "task.write",
+			RequiredCap:  ToolProposeDecompositionPlan,
+		},
 		ToolCreateSubTask: {
 			Name:        ToolCreateSubTask,
 			Version:     "1.0",
@@ -168,6 +177,31 @@ var createSubTaskSchema = json.RawMessage(`{
 		"assignee_id": {"type": "string"},
 		"assignee_type": {"type": "string", "enum": ["user", "agent_profile"]},
 		"completion_behavior": {"type": "string", "enum": ["auto_done", "auto_review", "sample_review", "needs_review"]}
+	}
+}`)
+
+var proposeDecompositionPlanSchema = json.RawMessage(`{
+	"type": "object",
+	"required": ["items"],
+	"properties": {
+		"items": {
+			"type": "array",
+			"minItems": 1,
+			"items": {
+				"type": "object",
+				"required": ["title"],
+				"properties": {
+					"title": {"type": "string", "maxLength": 200},
+					"description": {"type": "string", "maxLength": 5000},
+					"assignee_id": {"type": "string"},
+					"assignee_type": {"type": "string", "enum": ["user", "agent_profile"]},
+					"depends_on": {"type": "array", "items": {"type": "string"}},
+					"parallel_group": {"type": "string"},
+					"completion_behavior": {"type": "string", "enum": ["auto_done", "auto_review", "sample_review", "needs_review"]}
+				}
+			}
+		},
+		"summary": {"type": "string", "maxLength": 2000}
 	}
 }`)
 

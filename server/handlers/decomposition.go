@@ -1,0 +1,381 @@
+package handlers
+
+import (
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+)
+
+// DecompositionHandler handles decomposition plan review operations.
+type DecompositionHandler struct {
+	DB           *sql.DB
+	Hub          *DashboardHub
+	ReviewRouter *ReviewRouter
+	DAGEngine    *DAGEngine
+}
+
+// NewDecompositionHandler creates a new DecompositionHandler.
+func NewDecompositionHandler(db *sql.DB) *DecompositionHandler {
+	return &DecompositionHandler{
+		DB:        db,
+		DAGEngine: NewDAGEngine(db),
+	}
+}
+
+// PlanResponse represents a decomposition plan in API responses.
+type PlanResponse struct {
+	ID            string    `json:"id"`
+	TaskID        string    `json:"task_id"`
+	Status        string    `json:"status"`
+	CreatedBy     string    `json:"created_by"`
+	CreatedByName string    `json:"created_by_name"`
+	Summary       string    `json:"summary"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+// ItemResponse represents a decomposition plan item in API responses.
+type ItemResponse struct {
+	ID                 string          `json:"id"`
+	PlanID             string          `json:"plan_id"`
+	Title              string          `json:"title"`
+	Description        string          `json:"description"`
+	AssigneeID         string          `json:"assignee_id"`
+	AssigneeType       string          `json:"assignee_type"`
+	AssigneeName       string          `json:"assignee_name"`
+	DependsOn          json.RawMessage `json:"depends_on"`
+	ParallelGroup      string          `json:"parallel_group"`
+	SortOrder          int             `json:"sort_order"`
+	IsApproved         *bool           `json:"is_approved"`
+	RealTaskID         *string         `json:"real_task_id"`
+	CompletionBehavior string          `json:"completion_behavior"`
+	CreatedAt          time.Time       `json:"created_at"`
+}
+
+// GetPlan returns the decomposition plan and items for a task.
+func (h *DecompositionHandler) GetPlan(c *gin.Context) {
+	taskID := c.Param("id")
+
+	var plan PlanResponse
+	err := h.DB.QueryRow(
+		`SELECT id, task_id, status, created_by, created_by_name, COALESCE(summary,''), created_at
+		 FROM decomposition_plans WHERE task_id = $1 AND status = 'pending'
+		 ORDER BY created_at DESC LIMIT 1`,
+		taskID,
+	).Scan(&plan.ID, &plan.TaskID, &plan.Status, &plan.CreatedBy, &plan.CreatedByName, &plan.Summary, &plan.CreatedAt)
+
+	if err == sql.ErrNoRows {
+		c.JSON(http.StatusOK, gin.H{"plan": nil, "items": []interface{}{}})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query plan"})
+		return
+	}
+
+	rows, err := h.DB.Query(
+		`SELECT id, plan_id, title, COALESCE(description,''), COALESCE(assignee_id,''),
+		        COALESCE(assignee_type,''), COALESCE(assignee_name,''),
+		        depends_on, COALESCE(parallel_group,''), sort_order,
+		        is_approved, real_task_id, completion_behavior, created_at
+		 FROM decomposition_plan_items
+		 WHERE plan_id = $1
+		 ORDER BY sort_order ASC`,
+		plan.ID,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query items"})
+		return
+	}
+	defer rows.Close()
+
+	items := make([]ItemResponse, 0)
+	for rows.Next() {
+		var item ItemResponse
+		if err := rows.Scan(&item.ID, &item.PlanID, &item.Title, &item.Description,
+			&item.AssigneeID, &item.AssigneeType, &item.AssigneeName,
+			&item.DependsOn, &item.ParallelGroup, &item.SortOrder,
+			&item.IsApproved, &item.RealTaskID, &item.CompletionBehavior, &item.CreatedAt); err != nil {
+			continue
+		}
+		items = append(items, item)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"plan": plan, "items": items})
+}
+
+// ApprovePlan approves selected (or all) items in a decomposition plan.
+func (h *DecompositionHandler) ApprovePlan(c *gin.Context) {
+	taskID := c.Param("id")
+
+	var req struct {
+		ItemIDs []string `json:"item_ids,omitempty"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	userID, _ := c.Get("user_id")
+	userIDStr, _ := userID.(string)
+	now := time.Now()
+
+	// Get the pending plan
+	var planID, createdBy string
+	err := h.DB.QueryRow(
+		`SELECT id, created_by FROM decomposition_plans
+		 WHERE task_id = $1 AND status = 'pending'
+		 ORDER BY created_at DESC LIMIT 1`,
+		taskID,
+	).Scan(&planID, &createdBy)
+	if err == sql.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "没有待审核的分解计划"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query plan"})
+		return
+	}
+
+	// Query items to approve
+	query := `SELECT id, title, COALESCE(description,''), COALESCE(assignee_id,''),
+	                 COALESCE(assignee_type,''), depends_on, COALESCE(parallel_group,''),
+	                 completion_behavior, sort_order
+	          FROM decomposition_plan_items WHERE plan_id = $1`
+	args := []interface{}{planID}
+
+	if len(req.ItemIDs) > 0 {
+		// Build WHERE id = ANY(...)
+		query += ` AND id = ANY($2)`
+		args = append(args, req.ItemIDs)
+	} else {
+		query += ` AND is_approved IS NULL`
+	}
+	query += ` ORDER BY sort_order ASC`
+
+	rows, err := h.DB.Query(query, args...)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query plan items"})
+		return
+	}
+	defer rows.Close()
+
+	type pendingItem struct {
+		ID                 string
+		Title              string
+		Description        string
+		AssigneeID         string
+		AssigneeType       string
+		DependsOn          []byte
+		ParallelGroup      string
+		CompletionBehavior string
+		SortOrder          int
+	}
+
+	var pendingItems []pendingItem
+	for rows.Next() {
+		var item pendingItem
+		if err := rows.Scan(&item.ID, &item.Title, &item.Description,
+			&item.AssigneeID, &item.AssigneeType, &item.DependsOn,
+			&item.ParallelGroup, &item.CompletionBehavior, &item.SortOrder); err != nil {
+			continue
+		}
+		pendingItems = append(pendingItems, item)
+	}
+
+	if len(pendingItems) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "没有可审核的子任务项"})
+		return
+	}
+
+	// Phase 1: Create all tasks
+	type createdTask struct {
+		ItemID    string
+		TaskID    string
+		DependsOn []string
+	}
+
+	var createdTasks []createdTask
+	for _, item := range pendingItems {
+		newTaskID := uuid.New().String()
+
+		// Parse depends_on plan item IDs
+		var dependsOnStr []string
+		json.Unmarshal(item.DependsOn, &dependsOnStr)
+
+		// Inherit workspace_id from parent task
+		var workspaceID sql.NullString
+		h.DB.QueryRow(`SELECT workspace_id FROM tasks WHERE id = $1`, taskID).Scan(&workspaceID)
+
+		cb := item.CompletionBehavior
+		if cb == "" {
+			cb = "needs_review"
+		}
+
+		// Get depth from parent
+		var depth int
+		h.DB.QueryRow(`SELECT COALESCE(depth,0) FROM tasks WHERE id = $1`, taskID).Scan(&depth)
+
+		_, err := h.DB.Exec(
+			`INSERT INTO tasks (id, user_id, parent_id, title, description, status, workspace_id,
+			 completion_behavior, parallel_group, assignee_id, assignee_type, depth, created_at, updated_at)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $13)`,
+			newTaskID, userIDStr, taskID, item.Title, item.Description,
+			"todo", workspaceID, cb, item.ParallelGroup,
+			item.AssigneeID, item.AssigneeType, depth+1, now,
+		)
+		if err != nil {
+			log.Printf("[Decomposition] Failed to create task for item %s: %v", item.ID[:8], err)
+			continue
+		}
+
+		createdTasks = append(createdTasks, createdTask{
+			ItemID:    item.ID,
+			TaskID:    newTaskID,
+			DependsOn: dependsOnStr,
+		})
+	}
+
+	// Phase 2: Resolve plan-item dependencies to real task IDs and create DAG edges
+	itemToTask := make(map[string]string)
+	for _, ct := range createdTasks {
+		itemToTask[ct.ItemID] = ct.TaskID
+	}
+
+	for _, ct := range createdTasks {
+		for _, depPlanItemID := range ct.DependsOn {
+			if realDepID, ok := itemToTask[depPlanItemID]; ok {
+				h.DAGEngine.CreateDependency(ct.TaskID, realDepID)
+			}
+		}
+
+		// Mark blocked if has dependencies
+		if len(ct.DependsOn) > 0 {
+			h.DAGEngine.SetTaskBlocked(ct.TaskID)
+		}
+
+		// If no dependencies and has agent assignee, auto-queue
+		if len(ct.DependsOn) == 0 {
+			var assigneeType, assigneeID string
+			for _, item := range pendingItems {
+				if item.ID == ct.ItemID {
+					assigneeType = item.AssigneeType
+					assigneeID = item.AssigneeID
+					break
+				}
+			}
+			if assigneeType == "agent_profile" && assigneeID != "" {
+				var enabled bool
+				h.DB.QueryRow(`SELECT enabled FROM agent_profiles WHERE id = $1`, assigneeID).Scan(&enabled)
+				if enabled {
+					queueID := uuid.New().String()
+					h.DB.Exec(
+						`INSERT INTO task_agent_queue (id, task_id, agent_profile_id, status, trigger_type, assigned_at, created_at)
+						 VALUES ($1, $2, $3, 'queued', 'sub_task', $4, $4)`,
+						queueID, ct.TaskID, assigneeID, now,
+					)
+					h.DB.Exec(`UPDATE agent_profiles SET current_load = current_load + 1 WHERE id = $1`, assigneeID)
+				}
+			}
+		}
+
+		// Update plan item with real_task_id and is_approved=true
+		h.DB.Exec(
+			`UPDATE decomposition_plan_items SET is_approved = true, real_task_id = $1 WHERE id = $2`,
+			ct.TaskID, ct.ItemID,
+		)
+	}
+
+	// Mark plan as approved
+	h.DB.Exec(`UPDATE decomposition_plans SET status = 'approved', updated_at = $1 WHERE id = $2`, now, planID)
+
+	// Set parent task to "blocked" since it now has sub-tasks
+	h.DB.Exec(`UPDATE tasks SET status = 'blocked', updated_at = $1 WHERE id = $2 AND deleted_at IS NULL`, now, taskID)
+
+	// Post approval comment
+	commentContent := fmt.Sprintf("分解计划已审核通过，共创建 %d 个子任务。", len(createdTasks))
+	commentID := uuid.New().String()
+	h.DB.Exec(
+		`INSERT INTO task_comments (id, task_id, user_id, agent_profile_id, content, is_agent_comment, created_at, updated_at)
+		 VALUES ($1, $2, $3, NULL, $4, false, $5, $5)`,
+		commentID, taskID, userIDStr, commentContent, now,
+	)
+
+	if h.Hub != nil {
+		h.Hub.SignalChange("tasks")
+		h.Hub.SignalChange("task_agent_queue")
+	}
+
+	log.Printf("[Decomposition] Plan %s approved for task %s (%d items → %d tasks)",
+		planID[:8], taskID[:8], len(pendingItems), len(createdTasks))
+
+	c.JSON(http.StatusOK, gin.H{
+		"status": "approved",
+		"count":  len(createdTasks),
+	})
+}
+
+// RejectPlan rejects the entire decomposition plan.
+func (h *DecompositionHandler) RejectPlan(c *gin.Context) {
+	taskID := c.Param("id")
+
+	var req struct {
+		Comment string `json:"comment,omitempty"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	userID, _ := c.Get("user_id")
+	userIDStr, _ := userID.(string)
+	now := time.Now()
+
+	var planID string
+	err := h.DB.QueryRow(
+		`SELECT id FROM decomposition_plans
+		 WHERE task_id = $1 AND status = 'pending'
+		 ORDER BY created_at DESC LIMIT 1`,
+		taskID,
+	).Scan(&planID)
+	if err == sql.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "没有待审核的分解计划"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query plan"})
+		return
+	}
+
+	// Mark plan as rejected
+	h.DB.Exec(`UPDATE decomposition_plans SET status = 'rejected', updated_at = $1 WHERE id = $2`, now, planID)
+	// Mark all items as rejected
+	h.DB.Exec(`UPDATE decomposition_plan_items SET is_approved = false WHERE plan_id = $1 AND is_approved IS NULL`, planID)
+
+	// Parent stays in_progress — agent can retry
+	h.DB.Exec(`UPDATE tasks SET status = 'in_progress', updated_at = $1 WHERE id = $2 AND deleted_at IS NULL`, now, taskID)
+
+	// Post rejection comment
+	commentText := "分解计划已被驳回"
+	if req.Comment != "" {
+		commentText += "：\n" + req.Comment
+	}
+	commentID := uuid.New().String()
+	h.DB.Exec(
+		`INSERT INTO task_comments (id, task_id, user_id, agent_profile_id, content, is_agent_comment, created_at, updated_at)
+		 VALUES ($1, $2, $3, NULL, $4, false, $5, $5)`,
+		commentID, taskID, userIDStr, commentText, now,
+	)
+
+	if h.Hub != nil {
+		h.Hub.SignalChange("tasks")
+	}
+
+	log.Printf("[Decomposition] Plan %s rejected for task %s (re-opened for agent)", planID[:8], taskID[:8])
+	c.JSON(http.StatusOK, gin.H{"status": "rejected"})
+}

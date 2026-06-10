@@ -15,6 +15,7 @@ import (
 type DAGEngine struct {
 	DB  *sql.DB
 	mu  sync.Mutex
+	Hub *DashboardHub // optional, for real-time updates
 }
 
 // NewDAGEngine creates a new DAG engine.
@@ -215,19 +216,44 @@ func (e *DAGEngine) tryAutoCloseParentLocked(taskID string, now time.Time) {
 	).Scan(&allDone)
 
 	if allDone {
-		// Only close if parent is not already done
+		// Only close if parent is not already done or in review
 		var parentStatus string
 		e.DB.QueryRow(`SELECT status FROM tasks WHERE id = $1 AND deleted_at IS NULL`, parentID).Scan(&parentStatus)
-		if parentStatus == "done" {
+		if parentStatus == "done" || parentStatus == "review" {
 			return
 		}
 
-		e.DB.Exec(`UPDATE tasks SET status = 'done', completed_at = $1, updated_at = $1 WHERE id = $2 AND deleted_at IS NULL`,
-			now, parentID)
-		log.Printf("[DAGEngine] Parent task %s auto-closed (all sub-tasks done)", parentID[:8])
+		// Check if parent has an approved decomposition plan
+		var hasPlan bool
+		e.DB.QueryRow(
+			`SELECT COUNT(*) > 0 FROM decomposition_plans
+			 WHERE task_id = $1 AND status = 'approved'`,
+			parentID,
+		).Scan(&hasPlan)
 
-		// Recursively advance the DAG for the parent
-		e.onTaskCompletedLocked(parentID)
+		if hasPlan {
+			// Set to "review" instead of "done" — human needs to sign off
+			e.DB.Exec(`UPDATE tasks SET status = 'review', updated_at = $1 WHERE id = $2 AND deleted_at IS NULL`,
+				now, parentID)
+			log.Printf("[DAGEngine] Parent task %s set to review (had decomposition plan)", parentID[:8])
+			// Post a comment notifying humans
+			commentID := uuid.New().String()
+			e.DB.Exec(
+				`INSERT INTO task_comments (id, task_id, user_id, agent_profile_id, content, is_agent_comment, created_at, updated_at)
+				 VALUES ($1, $2, '', NULL, '所有子任务已完成，等待人工审核父任务。', true, $3, $3)`,
+				commentID, parentID, now,
+			)
+			if e.Hub != nil {
+				e.Hub.SignalChange("tasks")
+			}
+		} else {
+			// Original auto-done logic
+			e.DB.Exec(`UPDATE tasks SET status = 'done', completed_at = $1, updated_at = $1 WHERE id = $2 AND deleted_at IS NULL`,
+				now, parentID)
+			log.Printf("[DAGEngine] Parent task %s auto-closed (all sub-tasks done)", parentID[:8])
+			// Recursively advance the DAG for the parent
+			e.onTaskCompletedLocked(parentID)
+		}
 	}
 }
 

@@ -1,4 +1,4 @@
-import type { Node, Session, CreateSessionReq, Agent, AgentProfile, RuntimeEntity, Task, CreateTaskReq, UpdateTaskReq, TaskStatus, TaskAssignee, AddAssigneeReq, Priority, Project, CreateProjectReq, UpdateProjectReq, ProjectStatus, Workspace, CreateWorkspaceReq, UpdateWorkspaceReq, WorkspaceMember, AddMemberReq, UpdateMemberRoleReq, PendingInvitation, InviteMemberReq, UserSummary, Comment, CreateCommentReq, PluginInfo, AppNotification, TaskRule, TaskRuleLog, CreateRuleReq, UpdateRuleReq, Skill, CreateSkillReq, ExtractSkillReq, AgentQueueItem, AgentLoadInfo, ReviewTaskReq, Workflow, CreateWorkflowReq, AttachToWorkflowReq } from '../types';
+import type { Node, Session, CreateSessionReq, Agent, AgentProfile, RuntimeEntity, Task, CreateTaskReq, UpdateTaskReq, TaskStatus, TaskAssignee, AddAssigneeReq, Priority, Project, CreateProjectReq, UpdateProjectReq, ProjectStatus, Workspace, CreateWorkspaceReq, UpdateWorkspaceReq, WorkspaceMember, AddMemberReq, UpdateMemberRoleReq, PendingInvitation, InviteMemberReq, UserSummary, Comment, CreateCommentReq, PluginInfo, AppNotification, TaskRule, TaskRuleLog, CreateRuleReq, UpdateRuleReq, Skill, CreateSkillReq, ExtractSkillReq, AgentQueueItem, AgentLoadInfo, ReviewTaskReq, Workflow, CreateWorkflowReq, AttachToWorkflowReq, DecompositionPlan, DecompositionPlanItem, ApprovePlanReq } from '../types';
 
 
 
@@ -350,6 +350,14 @@ export const tasks = {
   // Review
   review: (id: string, data: ReviewTaskReq) =>
     request<{ status: string }>(`/tasks/${id}/review`, { method: 'POST', body: JSON.stringify(data) }),
+
+  // Decomposition Plan
+  getDecompositionPlan: (id: string) =>
+    request<{ plan: DecompositionPlan | null; items: DecompositionPlanItem[] }>(`/tasks/${id}/decomposition-plan`),
+  approveDecompositionPlan: (id: string, data: ApprovePlanReq) =>
+    request<{ status: string; count: number }>(`/tasks/${id}/decomposition-plan/approve`, { method: 'POST', body: JSON.stringify(data) }),
+  rejectDecompositionPlan: (id: string, data?: { comment?: string }) =>
+    request<{ status: string }>(`/tasks/${id}/decomposition-plan/reject`, { method: 'POST', body: JSON.stringify(data || {}) }),
 };
 
 

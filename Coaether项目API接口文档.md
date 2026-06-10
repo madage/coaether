@@ -584,6 +584,128 @@ POST /api/tasks/:id/review
 
 ---
 
+### 2.19 获取分解计划
+
+获取任务最新的待审核分解计划及其子项列表。
+
+```
+GET /api/tasks/:id/decomposition-plan
+```
+
+**认证：** JWT
+
+**响应（200）：**
+
+```json
+{
+  "plan": {
+    "id": "plan-uuid",
+    "task_id": "task-uuid",
+    "status": "pending",
+    "created_by": "agent-profile-uuid",
+    "created_by_name": "智能体名称",
+    "summary": "将任务拆分为3个子任务：前端实现、后端API、数据库设计",
+    "created_at": "2026-06-10T10:00:00Z"
+  },
+  "items": [
+    {
+      "id": "item-uuid",
+      "plan_id": "plan-uuid",
+      "title": "前端实现",
+      "description": "实现用户登录界面",
+      "assignee_id": "profile-uuid",
+      "assignee_type": "agent_profile",
+      "assignee_name": "前端工程师",
+      "depends_on": [],
+      "parallel_group": "",
+      "sort_order": 1,
+      "is_approved": null,
+      "real_task_id": null,
+      "completion_behavior": "needs_review",
+      "created_at": "2026-06-10T10:00:00Z"
+    }
+  ]
+}
+```
+
+**说明：** `plan` 为 `null` 时表示该任务没有待审核的分解计划。`items` 始终为数组。`is_approved` 为 `null`（待审核）、`true`（已批准）、`false`（已驳回）。
+
+---
+
+### 2.20 批准分解计划
+
+批准分解计划中选中的子任务项，系统自动创建实际任务、设置 DAG 依赖、派发智能体。
+
+```
+POST /api/tasks/:id/decomposition-plan/approve
+```
+
+**请求体：**
+
+```json
+{
+  "item_ids": ["item-uuid-1", "item-uuid-2"]
+}
+```
+
+**说明：** `item_ids` 可选：
+- 传入数组 → 只批准指定的项
+- 不传或传空数组 → 批准所有待审核的项
+
+**流程：**
+1. 获取该任务最新的 pending 计划
+2. 为每个选中的子项创建实际 task（继承父任务的 workspace_id、depth+1）
+3. 解析子项间的依赖关系（plan_item_id → real_task_id），创建 DAG 依赖
+4. 有依赖的子任务设为 blocked，无依赖 + 智能体负责人 → 自动入队列
+5. 更新 plan_items 的 `real_task_id` 和 `is_approved=true`
+6. 计划状态改为 `approved`
+7. 父任务状态改为 `blocked`（等待子任务完成）
+8. 发布审核通过评论
+
+**响应（200）：**
+
+```json
+{
+  "status": "approved",
+  "count": 2
+}
+```
+
+---
+
+### 2.21 驳回分解计划
+
+驳回整个分解计划，父任务回到 `in_progress` 供智能体重试。
+
+```
+POST /api/tasks/:id/decomposition-plan/reject
+```
+
+**请求体：**
+
+```json
+{
+  "comment": "缺少数据库设计部分，请补充"
+}
+```
+
+**说明：** `comment` 可选，会以评论形式附加在任务下供智能体参考。
+
+**流程：**
+1. 计划状态 → `rejected`，所有 items → `is_approved=false`
+2. 父任务 → `in_progress`（智能体可重新提出计划）
+3. 发布驳回评论（含驳回原因）
+
+**响应（200）：**
+
+```json
+{
+  "status": "rejected"
+}
+```
+
+---
+
 ## 3. 项目（列表）管理
 
 ### 3.1 项目模型
@@ -1558,6 +1680,7 @@ PUT /api/node/queue/:id/status?node_id=<node_id>&node_secret=<secret>
 **说明：** 状态设为 `completed` 时，服务端会自动：
 - 在任务下发布 Agent 评论（附 `result_summary`）
 - 如果任务存在 `pending_review_actions`（有待人工审核的智能体派发操作），**跳过状态更新**，保留 `review` 状态，不覆盖审核门禁
+- 如果任务有待审核的分解计划（`decomposition_plans` 表中 status=pending），**跳过状态更新**，保持当前状态
 - 否则根据任务的 `completion_behavior` 决定目标状态：
   - `auto_done` → 设为 `done`，并触发 DAGEngine 推进依赖任务
   - 其他值（含 `auto_review`/`sample_review`/`needs_review`）→ 设为 `review`
@@ -2552,7 +2675,9 @@ DAGEngine 在工作流执行过程中自动管理任务依赖：
 
 **子任务自动入队：** 使用 `create_sub_task` 创建子任务时，如果 `assignee_type=agent_profile` 且未设置 `depends_on`（无前置依赖），系统自动创建队列条目（`trigger_type=sub_task`），无需等待 DAG 解阻塞。
 
-**自动关闭父任务：** 解阻塞后检查当前任务的父任务的所有子任务是否均已 `done`。若是，自动将父任务设为 `done`，并递归调用 DAGEngine 继续推进父任务的依赖链。
+**自动关闭父任务：** 解阻塞后检查当前任务的父任务的所有子任务是否均已 `done`。若是：
+  - 如果父任务有已批准的分解计划 → 父任务设为 `review`（交用户审核），不在此时自动 `done`
+  - 如果没有分解计划 → 父任务设为 `done`，并递归调用 DAGEngine 继续推进父任务的依赖链
 
 **入口：** DAGEngine.OnTaskCompleted(taskID) 在以下场景被调用：
 - 节点侧队列项完成且 `completion_behavior=auto_done`（见 8.3）
@@ -2569,6 +2694,7 @@ DAGEngine 在工作流执行过程中自动管理任务依赖：
 | 工具 | 描述 | 所需权限 | 所需能力 |
 |------|------|---------|---------|
 | `create_sub_task` | 在当前工作流下创建子任务，支持设置依赖关系和并行分组；若负责人为智能体，需人工审核后才派发 | `task.write` | `create_sub_task` |
+| `propose_decomposition_plan` | 提出一个分解计划，将任务拆分为多个子任务方案供人工审核，审核通过后才创建实际子任务 | `task.write` | `propose_decomposition_plan` |
 | `assign_task` | 分配任务给用户或智能体；若负责人为智能体，需人工审核后才生效 | `task.assign` | `assign_task` |
 | `review_task` | 审核已完成的任务，批准或打回 | `task.review` | `review_task` |
 | `add_comment` | 在任务下添加评论 | `comment.write` | `add_comment` |
@@ -2623,6 +2749,31 @@ DAGEngine 在工作流执行过程中自动管理任务依赖：
 - **循环委派**：目标智能体不能在祖先任务链中已存在（防止 A→B→A 循环）
 
 **注意：** `depends_on` 在审核门禁场景下仍会被记录，审核通过后 DAG 依赖关系生效。
+
+**propose_decomposition_plan:**
+
+```json
+{
+  "items": [
+    {
+      "title": "子任务标题（必填，最长200字符）",
+      "description": "任务描述",
+      "assignee_id": "负责人ID",
+      "assignee_type": "user | agent_profile",
+      "depends_on": ["前置子项ID（对应items数组中的其他项）"],
+      "parallel_group": "并行分组名称",
+      "completion_behavior": "auto_done | auto_review | sample_review | needs_review"
+    }
+  ],
+  "summary": "分解策略说明（最长2000字符）"
+}
+```
+
+**说明：** 智能体调用此工具提出分解方案，不会创建实际任务。方案存入数据库后父任务保持 `in_progress`，用户在 UI 上逐条勾选审核。
+
+**审核通过后：** 系统自动为每个选中的 items 创建实际 task，解析 `depends_on` 建立 DAG 依赖关系，无依赖的智能体任务自动入队列。
+
+**驳回后：** 父任务回到 `in_progress`，智能体可重新提出计划。
 
 **assign_task:**
 
@@ -2803,6 +2954,9 @@ GET /api/nodes/bin/:os/:arch
 | 2.16 | 创建评论 | `POST` | `/api/tasks/:id/comments` | JWT |
 | 2.17 | 删除评论 | `DELETE` | `/api/tasks/:id/comments/:commentId` | JWT |
 | 2.18 | 审核任务 | `POST` | `/api/tasks/:id/review` | JWT |
+| 2.19 | 获取分解计划 | `GET` | `/api/tasks/:id/decomposition-plan` | JWT |
+| 2.20 | 批准分解计划 | `POST` | `/api/tasks/:id/decomposition-plan/approve` | JWT |
+| 2.21 | 驳回分解计划 | `POST` | `/api/tasks/:id/decomposition-plan/reject` | JWT |
 | 3.2 | 列出项目 | `GET` | `/api/projects` | JWT |
 | 3.3 | 创建项目 | `POST` | `/api/projects` | JWT |
 | 3.4 | 获取项目 | `GET` | `/api/projects/:id` | JWT |

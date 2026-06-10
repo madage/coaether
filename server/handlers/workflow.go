@@ -317,6 +317,111 @@ func (h *WorkflowHandler) AttachToWorkflow(c *gin.Context) {
 // RegisterToolExecutors registers all Harness tool executors with the database.
 // These are called by the agent runtime when an agent makes a Tool Call.
 func (h *WorkflowHandler) RegisterToolExecutors() {
+	harness.RegisterExecutor(harness.ToolProposeDecompositionPlan, func(ctx *harness.AgentContext, params json.RawMessage) (interface{}, error) {
+		var p struct {
+			Items   []struct {
+				Title              string   `json:"title"`
+				Description        string   `json:"description"`
+				DependsOn          []string `json:"depends_on"`
+				ParallelGroup      string   `json:"parallel_group"`
+				AssigneeID         string   `json:"assignee_id"`
+				AssigneeType       string   `json:"assignee_type"`
+				CompletionBehavior string   `json:"completion_behavior"`
+			} `json:"items"`
+			Summary string `json:"summary"`
+		}
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, fmt.Errorf("invalid params: %w", err)
+		}
+		if len(p.Items) == 0 {
+			return nil, fmt.Errorf("至少需要包含一个子任务")
+		}
+
+		now := time.Now()
+		planID := uuid.New().String()
+
+		// Check parent task exists and is in a decomposable state
+		if ctx.TaskID == nil || *ctx.TaskID == "" {
+			return nil, fmt.Errorf("必须在任务上下文中提出分解计划")
+		}
+
+		var parentStatus string
+		h.DB.QueryRow(`SELECT status FROM tasks WHERE id = $1 AND deleted_at IS NULL`, *ctx.TaskID).Scan(&parentStatus)
+		if parentStatus != "in_progress" && parentStatus != "todo" {
+			return nil, fmt.Errorf("当前任务状态为 %s，不能提出分解计划", parentStatus)
+		}
+
+		// Cancel any pending plan for this task
+		h.DB.Exec(`UPDATE decomposition_plans SET status = 'rejected' WHERE task_id = $1 AND status = 'pending'`, *ctx.TaskID)
+
+		// Insert plan
+		agentName := ctx.AgentName
+		if agentName == "" {
+			agentName = "Unknown"
+		}
+		h.DB.Exec(
+			`INSERT INTO decomposition_plans (id, task_id, status, created_by, created_by_name, summary, created_at, updated_at)
+			 VALUES ($1, $2, 'pending', $3, $4, $5, $6, $6)`,
+			planID, *ctx.TaskID, ctx.AgentProfileID, agentName, p.Summary, now,
+		)
+
+		// Insert plan items
+		for i, item := range p.Items {
+			itemID := uuid.New().String()
+			assigneeName := ""
+			if item.AssigneeID != "" {
+				h.DB.QueryRow(`SELECT COALESCE(name,'') FROM agent_profiles WHERE id = $1`, item.AssigneeID).Scan(&assigneeName)
+			}
+			dependsJSON, _ := json.Marshal(item.DependsOn)
+			cb := item.CompletionBehavior
+			if cb == "" {
+				cb = models.CompletionNeedsReview
+			}
+			h.DB.Exec(
+				`INSERT INTO decomposition_plan_items
+				 (id, plan_id, title, description, assignee_id, assignee_type, assignee_name,
+				  depends_on, parallel_group, sort_order, completion_behavior, created_at)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+				itemID, planID, item.Title, item.Description,
+				item.AssigneeID, item.AssigneeType, assigneeName,
+				dependsJSON, item.ParallelGroup, i, cb, now,
+			)
+		}
+
+		// Post summary comment
+		var creatorName string
+		h.DB.QueryRow(`SELECT COALESCE(username,'') FROM users WHERE id = $1`, ctx.UserID).Scan(&creatorName)
+		mentionStr := ""
+		if creatorName != "" {
+			mentionStr = "@" + creatorName
+		}
+		commentContent := fmt.Sprintf("%s\n\n智能体「%s」提出了分解计划（共 %d 个子任务），请审核。\n\n概要：%s",
+			mentionStr, ctx.AgentName, len(p.Items), p.Summary)
+		commentID := uuid.New().String()
+		h.DB.Exec(
+			`INSERT INTO task_comments (id, task_id, user_id, agent_profile_id, content, is_agent_comment, created_at, updated_at)
+			 VALUES ($1, $2, $3, $4, $5, true, $6, $6)`,
+			commentID, *ctx.TaskID, ctx.UserID, ctx.AgentProfileID, commentContent, now,
+		)
+
+		// Keep parent in "in_progress" (do NOT change status to review)
+		h.DB.Exec(`UPDATE tasks SET updated_at = $1 WHERE id = $2`, now, *ctx.TaskID)
+
+		if h.Hub != nil {
+			h.Hub.SignalChange("tasks")
+		}
+
+		log.Printf("[Harness] Agent %s proposed decomposition plan %s for task %s (%d items)",
+			ctx.AgentName[:8], planID[:8], (*ctx.TaskID)[:8], len(p.Items))
+
+		return map[string]interface{}{
+			"plan_id": planID,
+			"status":  "pending_review",
+			"message": "分解计划已提交，等待人工审核",
+			"count":   len(p.Items),
+		}, nil
+	})
+
 	harness.RegisterExecutor(harness.ToolCreateSubTask, func(ctx *harness.AgentContext, params json.RawMessage) (interface{}, error) {
 		var p struct {
 			Title              string   `json:"title"`

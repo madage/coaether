@@ -230,6 +230,38 @@ export interface ReviewTaskReq {
   reviewer_agent_id?: string;
 }
 
+// === Decomposition Plan Types ===
+export interface DecompositionPlan {
+  id: string;
+  task_id: string;
+  status: string;
+  created_by: string;
+  created_by_name: string;
+  summary: string;
+  created_at: string;
+}
+
+export interface DecompositionPlanItem {
+  id: string;
+  plan_id: string;
+  title: string;
+  description: string;
+  assignee_id: string;
+  assignee_type: string;
+  assignee_name: string;
+  depends_on: string[];
+  parallel_group: string;
+  sort_order: number;
+  is_approved: boolean | null;
+  real_task_id: string | null;
+  completion_behavior: string;
+  created_at: string;
+}
+
+export interface ApprovePlanReq {
+  item_ids?: string[];
+}
+
 // === Workflow Types ===
 export type WorkflowStatus = 'active' | 'paused' | 'done' | 'stuck';
 

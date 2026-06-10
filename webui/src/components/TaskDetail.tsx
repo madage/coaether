@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useLang } from '../i18n/context';
 import { tasks as tasksApi, projects as projectsApi, workspaceMembers as workspaceMembersApi, agentProfiles as agentProfilesApi, comments as commentsApi, agentQueue as agentQueueApi, workflows as workflowsApi } from '../api/client';
 import { useWorkspace } from '../hooks/WorkspaceContext';
-import type { Task, TaskStatus, Project, Priority, AssigneeType, WorkspaceMember, AgentProfile, Comment, Workflow, AgentQueueItem } from '../types';
+import type { Task, TaskStatus, Project, Priority, AssigneeType, WorkspaceMember, AgentProfile, Comment, Workflow, AgentQueueItem, DecompositionPlan, DecompositionPlanItem, ApprovePlanReq } from '../types';
 
 interface TaskDetailProps {
   task: Task;
@@ -79,6 +79,16 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
   const [reviewComment, setReviewComment] = useState('');
   const [reviewing, setReviewing] = useState(false);
 
+  // Decomposition plan state
+  const [decompPlan, setDecompPlan] = useState<DecompositionPlan | null>(null);
+  const [decompItems, setDecompItems] = useState<DecompositionPlanItem[]>([]);
+  const [decompLoading, setDecompLoading] = useState(false);
+  const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
+  const [approving, setApproving] = useState(false);
+  const [rejecting, setRejecting] = useState(false);
+  const [showRejectInput, setShowRejectInput] = useState(false);
+  const [rejectComment, setRejectComment] = useState('');
+
   const isOverdue = currentTask.due_at && new Date(currentTask.due_at) < new Date() && !['done', 'completed', 'stuck'].includes(currentTask.status);
 
   useEffect(() => {
@@ -105,6 +115,14 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
 
       tasksApi.listSubtasks(task.id).then(res => setSubtasks(res.tasks)).catch(() => {});
       commentsApi.list(task.id).then(res => setComments(res.comments)).catch(() => {});
+
+      // Load decomposition plan
+      setDecompLoading(true);
+      tasksApi.getDecompositionPlan(task.id).then(res => {
+        setDecompPlan(res.plan);
+        setDecompItems(res.items);
+        setSelectedItems(new Set());
+      }).catch(() => {}).finally(() => setDecompLoading(false));
 
       const names: Record<string, string> = {};
       if (workspaceId) {
@@ -251,6 +269,62 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
       alert('Failed to review task');
     } finally {
       setReviewing(false);
+    }
+  };
+
+  const handleApprovePlan = async (itemIds?: string[]) => {
+    setApproving(true);
+    try {
+      const res = await tasksApi.approveDecompositionPlan(currentTask.id, { item_ids: itemIds });
+      const refreshed = await tasksApi.get(currentTask.id);
+      setCurrentTask(refreshed);
+      setDecompPlan(null);
+      setDecompItems([]);
+      setSelectedItems(new Set());
+      onRefresh();
+    } catch (err) {
+      console.error('Failed to approve plan', err);
+      alert('Failed to approve plan');
+    } finally {
+      setApproving(false);
+    }
+  };
+
+  const handleRejectPlan = async () => {
+    setRejecting(true);
+    try {
+      await tasksApi.rejectDecompositionPlan(currentTask.id, { comment: rejectComment || undefined });
+      setDecompPlan(null);
+      setDecompItems([]);
+      setShowRejectInput(false);
+      setRejectComment('');
+      onRefresh();
+    } catch (err) {
+      console.error('Failed to reject plan', err);
+      alert('Failed to reject plan');
+    } finally {
+      setRejecting(false);
+    }
+  };
+
+  const toggleItemSelection = (itemId: string) => {
+    setSelectedItems(prev => {
+      const next = new Set(prev);
+      if (next.has(itemId)) {
+        next.delete(itemId);
+      } else {
+        next.add(itemId);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    const unapproved = decompItems.filter(i => i.is_approved === null);
+    if (selectedItems.size === unapproved.length) {
+      setSelectedItems(new Set());
+    } else {
+      setSelectedItems(new Set(unapproved.map(i => i.id)));
     }
   };
 
@@ -799,6 +873,212 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
                   : <span style={{ color: '#ccc', fontStyle: 'italic' }}>{t('taskDetailNoDescription')}</span>}
               </div>
             </div>
+
+            {/* Decomposition Plan Review Panel */}
+            {decompPlan && decompPlan.status === 'pending' && (
+              <div style={{ marginBottom: '24px', padding: '16px', background: '#fff8e1', borderRadius: '12px', border: '1px solid #ffe0b2' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                  <span style={{ fontSize: '1.1em' }}>📋</span>
+                  <span style={{ fontWeight: 700, fontSize: '0.95em', color: '#e65100' }}>{t('decompPlanTitle')}</span>
+                  <span style={{
+                    fontSize: '0.7em', padding: '2px 8px', borderRadius: '8px',
+                    background: '#fff3e0', color: '#e65100', fontWeight: 500, border: '1px solid #ffe0b2',
+                  }}>
+                    {t('decompPlanPending')}
+                  </span>
+                  <span style={{ fontSize: '0.8em', color: '#888', marginLeft: 'auto' }}>
+                    {t('decompPlanBy')} {decompPlan.created_by_name || decompPlan.created_by.slice(0, 8)}
+                  </span>
+                </div>
+
+                {/* Summary */}
+                {decompPlan.summary && (
+                  <div style={{
+                    fontSize: '0.85em', color: '#555', marginBottom: '12px',
+                    padding: '8px 12px', background: '#fff', borderRadius: '8px',
+                    border: '1px solid #ffe0b2',
+                  }}>
+                    <span style={{ fontWeight: 600, color: '#e65100' }}>{t('decompPlanSummary')}: </span>
+                    {decompPlan.summary}
+                  </div>
+                )}
+
+                {/* Items */}
+                {decompItems.length === 0 ? (
+                  <div style={{ textAlign: 'center', color: '#999', fontSize: '0.85em', padding: '12px' }}>
+                    {t('decompPlanNoItems')}
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '12px' }}>
+                    {decompItems.map(item => {
+                      const isPending = item.is_approved === null;
+                      const isApproved = item.is_approved === true;
+                      const isRejected = item.is_approved === false;
+                      const isSelected = selectedItems.has(item.id);
+                      const dependsDisplay = Array.isArray(item.depends_on) ? item.depends_on : [];
+                      return (
+                        <div key={item.id} style={{
+                          display: 'flex', alignItems: 'flex-start', gap: '10px',
+                          padding: '10px 12px', background: isApproved ? '#e8f5e9' : isRejected ? '#ffebee' : '#fff',
+                          borderRadius: '8px', border: isSelected ? '2px solid #1976d2' : '1px solid #e0e0e0',
+                          opacity: isRejected ? 0.6 : 1,
+                          transition: 'border-color 0.15s',
+                        }}>
+                          {/* Checkbox — only for pending items */}
+                          {isPending ? (
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => toggleItemSelection(item.id)}
+                              style={{ marginTop: '2px', cursor: 'pointer', flexShrink: 0 }}
+                            />
+                          ) : (
+                            <span style={{
+                              width: '16px', height: '16px', borderRadius: '3px', flexShrink: 0,
+                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              fontSize: '0.75em', marginTop: '2px',
+                              background: isApproved ? '#c8e6c9' : '#ffcdd2',
+                              color: isApproved ? '#2e7d32' : '#c62828',
+                            }}>
+                              {isApproved ? '✓' : '✕'}
+                            </span>
+                          )}
+                          {/* Item content */}
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontWeight: 600, fontSize: '0.9em', color: '#333', marginBottom: '2px' }}>
+                              {item.title}
+                            </div>
+                            {item.description && (
+                              <div style={{
+                                fontSize: '0.8em', color: '#666', marginBottom: '4px',
+                                overflow: 'hidden', textOverflow: 'ellipsis',
+                                maxHeight: '2.8em', lineHeight: 1.4,
+                              }}>
+                                {item.description.length > 200
+                                  ? item.description.slice(0, 200) + '...'
+                                  : item.description}
+                              </div>
+                            )}
+                            {/* Tags */}
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                              {item.assignee_name && (
+                                <span style={{
+                                  fontSize: '0.7em', padding: '1px 6px', borderRadius: '4px',
+                                  background: '#e3f2fd', color: '#1565c0',
+                                }}>
+                                  👤 {item.assignee_name}
+                                </span>
+                              )}
+                              {dependsDisplay.length > 0 && (
+                                <span style={{
+                                  fontSize: '0.7em', padding: '1px 6px', borderRadius: '4px',
+                                  background: '#f3e5f5', color: '#7b1fa2',
+                                }}>
+                                  ⛓ {dependsDisplay.length} dep{dependsDisplay.length > 1 ? 's' : ''}
+                                </span>
+                              )}
+                              {item.parallel_group && (
+                                <span style={{
+                                  fontSize: '0.7em', padding: '1px 6px', borderRadius: '4px',
+                                  background: '#fff3e0', color: '#e65100',
+                                }}>
+                                  ⇄ {item.parallel_group}
+                                </span>
+                              )}
+                              {item.completion_behavior === 'auto_done' && (
+                                <span style={{
+                                  fontSize: '0.7em', padding: '1px 6px', borderRadius: '4px',
+                                  background: '#e8f5e9', color: '#2e7d32',
+                                }}>
+                                  auto
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Actions */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  <button onClick={toggleSelectAll}
+                    style={{
+                      padding: '5px 12px', borderRadius: '6px', border: '1px solid #1976d2',
+                      background: '#e3f2fd', color: '#1976d2', cursor: 'pointer',
+                      fontSize: '0.8em', fontWeight: 500,
+                    }}
+                  >
+                    {selectedItems.size === decompItems.filter(i => i.is_approved === null).length
+                      ? t('decompPlanDeselectAll') : t('decompPlanSelectAll')}
+                  </button>
+                  <button onClick={() => handleApprovePlan(Array.from(selectedItems))}
+                    disabled={approving || selectedItems.size === 0}
+                    style={{
+                      padding: '5px 12px', borderRadius: '6px', border: 'none',
+                      background: (approving || selectedItems.size === 0) ? '#ccc' : '#2e7d32',
+                      color: '#fff', cursor: (approving || selectedItems.size === 0) ? 'default' : 'pointer',
+                      fontSize: '0.8em', fontWeight: 600,
+                    }}
+                  >
+                    {approving ? '...' : t('decompPlanApproveSelected') + ` (${selectedItems.size})`}
+                  </button>
+                  <button onClick={() => handleApprovePlan(undefined)}
+                    disabled={approving}
+                    style={{
+                      padding: '5px 12px', borderRadius: '6px', border: '1px solid #2e7d32',
+                      background: approving ? '#ccc' : '#e8f5e9', color: '#2e7d32',
+                      cursor: approving ? 'default' : 'pointer', fontSize: '0.8em', fontWeight: 500,
+                    }}
+                  >
+                    {approving ? '...' : t('decompPlanApproveAll')}
+                  </button>
+                  <div style={{ flex: 1 }} />
+                  {showRejectInput ? (
+                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                      <input
+                        value={rejectComment}
+                        onChange={e => setRejectComment(e.target.value)}
+                        placeholder={t('decompPlanRejectPlaceholder')}
+                        style={{
+                          padding: '5px 8px', borderRadius: '6px', border: '1px solid #ddd',
+                          fontSize: '0.8em', width: '180px',
+                        }}
+                      />
+                      <button onClick={handleRejectPlan}
+                        disabled={rejecting}
+                        style={{
+                          padding: '5px 12px', borderRadius: '6px', border: 'none',
+                          background: rejecting ? '#ccc' : '#c62828',
+                          color: '#fff', cursor: rejecting ? 'default' : 'pointer',
+                          fontSize: '0.8em', fontWeight: 600,
+                        }}
+                      >
+                        {rejecting ? '...' : t('decompPlanConfirmReject')}
+                      </button>
+                      <button onClick={() => { setShowRejectInput(false); setRejectComment(''); }}
+                        style={{
+                          padding: '5px 8px', borderRadius: '6px', border: '1px solid #ddd',
+                          background: '#fff', cursor: 'pointer', fontSize: '0.8em', color: '#666',
+                        }}
+                      >{t('cancel')}</button>
+                    </div>
+                  ) : (
+                    <button onClick={() => setShowRejectInput(true)}
+                      disabled={rejecting}
+                      style={{
+                        padding: '5px 12px', borderRadius: '6px', border: '1px solid #c62828',
+                        background: rejecting ? '#ccc' : '#fff', color: '#c62828',
+                        cursor: rejecting ? 'default' : 'pointer', fontSize: '0.8em', fontWeight: 500,
+                      }}
+                    >
+                      {rejecting ? '...' : t('decompPlanReject')}
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Subtasks */}
             {subtasks.length > 0 && (

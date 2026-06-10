@@ -694,5 +694,21 @@ export const zh = {
   agentQueueCompleted: '已完成',
   agentQueueFailed: '失败',
 
+  // Decomposition Plan
+  decompPlanTitle: '分解计划',
+  decompPlanPending: '待审核',
+  decompPlanApproved: '已通过',
+  decompPlanRejected: '已驳回',
+  decompPlanBy: '提出人',
+  decompPlanSelectAll: '全选',
+  decompPlanDeselectAll: '取消全选',
+  decompPlanApproveSelected: '批准所选',
+  decompPlanApproveAll: '全部批准',
+  decompPlanReject: '驳回',
+  decompPlanRejectPlaceholder: '输入驳回原因...',
+  decompPlanConfirmReject: '确认驳回',
+  decompPlanNoItems: '计划中暂无条目。',
+  decompPlanSummary: '概要',
+
 } as const;
 

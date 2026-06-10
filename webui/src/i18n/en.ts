@@ -694,5 +694,21 @@ export const en = {
   agentQueueCompleted: 'Completed',
   agentQueueFailed: 'Failed',
 
+  // Decomposition Plan
+  decompPlanTitle: 'Decomposition Plan',
+  decompPlanPending: 'Pending',
+  decompPlanApproved: 'Approved',
+  decompPlanRejected: 'Rejected',
+  decompPlanBy: 'by',
+  decompPlanSelectAll: 'Select All',
+  decompPlanDeselectAll: 'Deselect All',
+  decompPlanApproveSelected: 'Approve Selected',
+  decompPlanApproveAll: 'Approve All',
+  decompPlanReject: 'Reject',
+  decompPlanRejectPlaceholder: 'Enter reason for rejection...',
+  decompPlanConfirmReject: 'Confirm Reject',
+  decompPlanNoItems: 'No items in plan.',
+  decompPlanSummary: 'Summary',
+
 } as const;
 

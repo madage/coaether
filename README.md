@@ -114,6 +114,7 @@ The system uses a **dual WebSocket channel** architecture:
 - **Agent Queue Status** — Task Detail sidebar shows real-time agent queue status: queued/processing/completed/failed with color-coded indicators and result summary on hover
 - **Review Gate for Agent Dispatch** — When an agent calls `create_sub_task` or `assign_task` targeting another agent, the parent task is set to `review` status with an @mention comment to human users (creator + assignees). The dispatch only happens after a human approves the review. Agents cannot approve tasks with pending dispatch actions.
 - **Circular Delegation Prevention** — Self-delegation is blocked (agent cannot assign to itself). Ancestor chain is checked to prevent A→B→A loops. After review approval, the source agent's assignee and active queue entries are cleared from the parent task.
+- **Decomposition Plan Review** — Agents can propose a decomposition plan listing all sub-tasks with assignees, dependencies, and execution order. The plan is displayed in the UI with per-task checkboxes and "Approve All" / "Approve Selected" / "Reject" buttons. After approval, the system automatically creates actual sub-tasks, sets up DAG dependencies, and dispatches agents. Parent task lifecycle: plan proposed → stays `in_progress`, plan approved → `blocked`, all sub-tasks done → `review` (user reviews and approves), user approves → `done`.
 - Linked to projects, organize tasks by project
 - Trash mechanism: soft delete + restore + permanent delete
 - Isolated by workspace
@@ -272,6 +273,8 @@ All communication is based on JSON `Envelope` format:
 | `task_tags` | Task tags | task_id, tag |
 | `task_comments` | Task comments | task_id, user_id, agent_profile_id, content, parent_id |
 | `task_agent_queue` | Agent processing queue | task_id, agent_profile_id, status, trigger_type, metadata (JSONB) |
+| `decomposition_plans` | Decomposition plans | task_id, status, created_by, summary |
+| `decomposition_plan_items` | Plan items with review status | plan_id, title, assignee, depends_on (JSONB), is_approved, real_task_id |
 | `task_rules` | Automation rules | workspace_id, name, trigger_type, conditions (JSONB), actions (JSONB) |
 | `task_rule_logs` | Rule execution logs | rule_id, task_id, trigger_event, matched |
 | `projects` | Projects | name, color, status, assignee, started_at, due_at, workspace_id |
@@ -345,6 +348,9 @@ All communication is based on JSON `Envelope` format:
 - `POST /api/tasks/:id/comments` — Create comment
 - `DELETE /api/tasks/:id/comments/:commentId` — Delete comment
 - `POST /api/tasks/:id/review` — Review task (approve/reject)
+- `GET /api/tasks/:id/decomposition-plan` — Get decomposition plan with items
+- `POST /api/tasks/:id/decomposition-plan/approve` — Approve plan (selected or all items)
+- `POST /api/tasks/:id/decomposition-plan/reject` — Reject plan
 
 ### Task Rules
 - `GET /api/rules?workspace_id=` — List rules
@@ -531,6 +537,7 @@ coaether/
 │   │   ├── node.go           # Runtime node management
 │   │   ├── user.go           # User management
 │   │   ├── ws.go             # DashboardHub (notifications/signals)
+│   │   ├── decomposition.go  # Decomposition plan review (get/approve/reject)
 │   │   └── bus_handler.go    # Message Bus WebSocket entry
 │   ├── middleware/           # Gin middleware
 │   │   ├── auth.go           # JWT authentication

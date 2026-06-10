@@ -666,6 +666,34 @@ func Migrate() error {
 			created_at      TIMESTAMP NOT NULL DEFAULT NOW()
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_esc_wf ON workflow_escalations(workflow_id)`,
+		`CREATE TABLE IF NOT EXISTS decomposition_plans (
+			id              VARCHAR(36) PRIMARY KEY,
+			task_id         VARCHAR(36) NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+			status          VARCHAR(16) NOT NULL DEFAULT 'pending',
+			created_by      VARCHAR(36) NOT NULL,
+			created_by_name VARCHAR(64) NOT NULL DEFAULT '',
+			summary         TEXT NOT NULL DEFAULT '',
+			created_at      TIMESTAMP NOT NULL DEFAULT NOW(),
+			updated_at      TIMESTAMP NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_decomp_plans_task ON decomposition_plans(task_id)`,
+		`CREATE TABLE IF NOT EXISTS decomposition_plan_items (
+			id              VARCHAR(36) PRIMARY KEY,
+			plan_id         VARCHAR(36) NOT NULL REFERENCES decomposition_plans(id) ON DELETE CASCADE,
+			title           VARCHAR(200) NOT NULL,
+			description     TEXT NOT NULL DEFAULT '',
+			assignee_id     VARCHAR(36),
+			assignee_type   VARCHAR(16),
+			assignee_name   VARCHAR(64) NOT NULL DEFAULT '',
+			depends_on      JSONB DEFAULT '[]'::jsonb,
+			parallel_group  VARCHAR(64),
+			sort_order      INT NOT NULL DEFAULT 0,
+			is_approved     BOOLEAN,
+			real_task_id    VARCHAR(36) REFERENCES tasks(id) ON DELETE SET NULL,
+			completion_behavior VARCHAR(16) NOT NULL DEFAULT 'needs_review',
+			created_at      TIMESTAMP NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_decomp_plan_items_plan ON decomposition_plan_items(plan_id)`,
 	}
 	for _, t := range harnessTables {
 		if _, err := DB.Exec(t); err != nil {

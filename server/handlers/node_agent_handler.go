@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -218,6 +219,19 @@ func (h *NodeAgentHandler) UpdateQueueStatus(c *gin.Context) {
 				}
 			}
 
+							// If task has a pending decomposition plan, skip status update
+				if taskID != "" {
+					var planCount int
+					h.DB.QueryRow(
+						`SELECT COUNT(*) > 0 FROM decomposition_plans WHERE task_id = $1 AND status = 'pending'`,
+						taskID,
+					).Scan(&planCount)
+					if planCount > 0 {
+						log.Printf("[NodeAgent] Task %s has pending decomposition plan, skipping status update", taskID[:8])
+						goto afterStatusUpdate
+					}
+				}
+
 			// Read completion_behavior from the task
 			var completionBehavior string
 			h.DB.QueryRow(
@@ -378,17 +392,65 @@ func (h *NodeAgentHandler) CreateSession(c *gin.Context) {
 		agentID = "claude"
 	}
 
-		prompt := fmt.Sprintf(`Task ID: %s
-	Title: %s
+		// Fetch available agent profiles for the workspace
+			agentRows, _ := h.DB.Query(
+				`SELECT id, name, COALESCE(description, '') FROM agent_profiles WHERE enabled = true
+				 AND workspace_id = (SELECT workspace_id FROM tasks WHERE id = $1) ORDER BY name`,
+				req.TaskID,
+			)
+			var agentList string
+			if agentRows != nil {
+				var agents []string
+				for agentRows.Next() {
+					var id, name, desc string
+					if err := agentRows.Scan(&id, &name, &desc); err == nil {
+						short := id
+						if len(short) > 8 {
+							short = short[:8]
+						}
+						if len(desc) > 60 {
+							desc = desc[:60] + "..."
+						}
+						agents = append(agents, fmt.Sprintf("  - %s (%s): %s", name, short, desc))
+					}
+				}
+				agentRows.Close()
+				if len(agents) > 0 {
+					agentList = "\nAvailable agents to assign sub-tasks to:\n" + strings.Join(agents, "\n")
+				}
+			}
 
-	Description: %s
+			prompt := fmt.Sprintf(`Task ID: %s
+Title: %s
 
-	You are a task-decomposition agent. Your ONLY job is to break down this task into sub-tasks and assign them to agents. Available MCP tools (use mcp__ prefix):
-	- list_sub_tasks: Check existing sub-tasks
-	- create_sub_task: Create ONE sub-task per call. REQUIRED fields: title, assignee_id (agent UUID), assignee_type (must be "agent_profile")
-	- add_comment: Summarize the decomposition plan after creating all sub-tasks
+Description: %s
 
-	CRITICAL: For EVERY create_sub_task call, you MUST provide BOTH assignee_id AND assignee_type="agent_profile". Sub-tasks without assignments will NOT start. Do NOT use filesystem/shell tools.`, req.TaskID, title, description)
+## Your Role
+
+You are a task-decomposition agent. Your ONLY job is to break down this task into sub-tasks and assign them to appropriate agents. You MUST NOT attempt to do the work yourself. Do NOT research, analyze, or produce content — only decompose and assign.
+
+## How It Works
+
+1. Analyze the task and decide how to split it into manageable sub-tasks
+2. Call mcp__coaether-harness__propose_decomposition_plan ONCE with ALL sub-tasks as an items array:
+   - Each item must have: title, description, assignee_id, assignee_type="agent_profile"
+   - Optional: depends_on (array of other item indices/groups), parallel_group, completion_behavior
+3. Add a summary explaining your decomposition strategy
+4. The system will present your plan to the user for human review with per-task checkboxes
+5. After a human approves (per-item or all), the system creates sub-tasks automatically
+6. Do NOT call create_sub_task directly — propose_decomposition_plan handles the entire plan
+
+## CRITICAL RULES
+
+- Call propose_decomposition_plan ONCE with ALL sub-tasks in the items array
+- Every item MUST include assignee_id AND assignee_type="agent_profile"
+- Do NOT call create_sub_task — use propose_decomposition_plan for decomposition
+- Do NOT use WebSearch, codegraph, or any research tools — you decompose, you do NOT execute
+- Do NOT attempt to answer the task question yourself
+- Do NOT use filesystem, shell, or code execution tools
+- Use ONLY mcp__coaether-harness__ tools: propose_decomposition_plan, list_sub_tasks, add_comment, get_task_detail
+- If you do not know which agent to assign, use get_task_detail to inspect the task further%s`,
+				req.TaskID, title, description, agentList)
 
 	sessionID := uuid.New().String()
 	now := time.Now()

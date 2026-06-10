@@ -85,7 +85,7 @@ func NewClaudeCLIBackend(cmdPath string) *ClaudeCLIBackend {
 	}
 	return &ClaudeCLIBackend{
 		command:  cmdPath,
-		timeout:  5 * time.Minute,
+		timeout:  30 * time.Minute,
 		sessions: make(map[string]*claudeSession),
 	}
 }
