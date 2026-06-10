@@ -132,6 +132,7 @@ const (
 	ErrDepthExceeded    = "depth_exceeded"
 	ErrLoopExceeded     = "loop_exceeded"
 	ErrBudgetExceeded   = "budget_exceeded"
+	ErrToolDisabled     = "tool_disabled"
 	ErrInternalError    = "internal_error"
 )
 

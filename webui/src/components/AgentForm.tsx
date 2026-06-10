@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useLang } from '../i18n/context';
-import { agentProfiles, nodes, agents } from '../api/client';
-import type { Node, Agent } from '../types';
+import { agentProfiles, nodes, agents, tools } from '../api/client';
+import type { Node, Agent, SystemTool } from '../types';
 
 interface AgentFormProps {
   onClose: () => void;
@@ -62,8 +62,24 @@ export function AgentForm({ onClose, onCreated }: AgentFormProps) {
     { id: 'propose_decomposition_plan', label: 'propose_decomposition_plan', desc: lang === 'zh' ? '提交分解方案' : 'Propose decomposition plan' },
   ];
   const [capabilities, setCapabilities] = useState<string[]>([]);
+  const [disabledTools, setDisabledTools] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Fetch global tool disabled state
+  const fetchDisabledTools = useCallback(async () => {
+    try {
+      const res = await tools.list();
+      const disabled = new Set(res.tools.filter(t => !t.enabled).map(t => t.name));
+      setDisabledTools(disabled);
+    } catch {
+      // silently fail
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchDisabledTools();
+  }, [fetchDisabledTools]);
 
   useEffect(() => {
     nodes.list().then((res) => {
@@ -253,24 +269,43 @@ export function AgentForm({ onClose, onCreated }: AgentFormProps) {
               {t('agentCapabilities')}
             </label>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-              {availableCapabilities.map(cap => (
+              {availableCapabilities.map(cap => {
+                const isDisabled = disabledTools.has(cap.id);
+                return (
                 <label key={cap.id} style={{
                   display: 'flex', alignItems: 'center', gap: '4px',
-                  padding: '4px 10px', borderRadius: '6px', cursor: 'pointer',
-                  background: capabilities.includes(cap.id) ? '#e3f2fd' : '#f5f5f5',
-                  border: capabilities.includes(cap.id) ? '1px solid #1976d2' : '1px solid #ddd',
+                  padding: '4px 10px', borderRadius: '6px',
+                  cursor: isDisabled ? 'not-allowed' : 'pointer',
+                  background: isDisabled ? '#f0f0f0' : (capabilities.includes(cap.id) ? '#e3f2fd' : '#f5f5f5'),
+                  border: isDisabled ? '1px solid #e0e0e0' : (capabilities.includes(cap.id) ? '1px solid #1976d2' : '1px solid #ddd'),
                   fontSize: '0.8em', userSelect: 'none',
+                  opacity: isDisabled ? 0.55 : 1,
                 }}>
                   <input
                     type="checkbox"
                     checked={capabilities.includes(cap.id)}
-                    onChange={() => toggleCapability(cap.id)}
+                    onChange={() => !isDisabled && toggleCapability(cap.id)}
+                    disabled={isDisabled}
                     style={{ margin: 0 }}
                   />
-                  <span style={{ color: capabilities.includes(cap.id) ? '#1565c0' : '#666' }}>{cap.desc}</span>
+                  <span style={{
+                    color: isDisabled ? '#999' : (capabilities.includes(cap.id) ? '#1565c0' : '#666'),
+                    textDecoration: isDisabled ? 'line-through' : 'none',
+                  }}>{cap.desc}</span>
+                  {isDisabled && (
+                    <span style={{
+                      fontSize: '0.7em', color: '#c62828', marginLeft: '2px',
+                    }} title={lang === 'zh' ? '此工具已被全局禁用' : 'Globally disabled'}>🚫</span>
+                  )}
                 </label>
-              ))}
+                );
+              })}
             </div>
+            {disabledTools.size > 0 && (
+              <div style={{ marginTop: '6px', fontSize: '0.75em', color: '#c62828' }}>
+                🚫 {lang === 'zh' ? '部分工具已被全局禁用，智能体无法调用这些工具，即使能力集中已勾选。' : 'Some tools are globally disabled. Agents cannot call them even if checked above.'}
+              </div>
+            )}
           </div>
 
           {error && (

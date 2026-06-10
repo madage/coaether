@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import type { AgentProfile, Node, Agent } from '../types';
-import { agentProfiles, nodes, agents } from '../api/client';
+import { agentProfiles, nodes, agents, tools } from '../api/client';
 import { useLang } from '../i18n/context';
+import type { SystemTool } from '../types';
 
 interface AgentDetailModalProps {
   profile: AgentProfile;
@@ -64,6 +65,15 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
   const [nodeList, setNodeList] = useState<Node[]>([]);
   const [agentList, setAgentList] = useState<Agent[]>([]);
   const [loadingAgents, setLoadingAgents] = useState(false);
+  const [disabledTools, setDisabledTools] = useState<Set<string>>(new Set());
+
+  // Fetch global tool disabled state
+  useEffect(() => {
+    tools.list().then(res => {
+      const disabled = new Set(res.tools.filter(t => !t.enabled).map(t => t.name));
+      setDisabledTools(disabled);
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     nodes.list().then((res) => {
@@ -304,24 +314,43 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
                 {t('agentCapabilities')}
               </label>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                {availableCapabilities.map(cap => (
+                {availableCapabilities.map(cap => {
+                  const isDisabled = disabledTools.has(cap.id);
+                  return (
                   <label key={cap.id} style={{
                     display: 'flex', alignItems: 'center', gap: '4px',
-                    padding: '4px 10px', borderRadius: '6px', cursor: 'pointer',
-                    background: editCapabilities.includes(cap.id) ? '#e3f2fd' : '#f5f5f5',
-                    border: editCapabilities.includes(cap.id) ? '1px solid #1976d2' : '1px solid #ddd',
+                    padding: '4px 10px', borderRadius: '6px',
+                    cursor: isDisabled ? 'not-allowed' : 'pointer',
+                    background: isDisabled ? '#f0f0f0' : (editCapabilities.includes(cap.id) ? '#e3f2fd' : '#f5f5f5'),
+                    border: isDisabled ? '1px solid #e0e0e0' : (editCapabilities.includes(cap.id) ? '1px solid #1976d2' : '1px solid #ddd'),
                     fontSize: '0.8em', userSelect: 'none',
+                    opacity: isDisabled ? 0.55 : 1,
                   }}>
                     <input
                       type="checkbox"
                       checked={editCapabilities.includes(cap.id)}
-                      onChange={() => toggleCapability(cap.id)}
+                      onChange={() => !isDisabled && toggleCapability(cap.id)}
+                      disabled={isDisabled}
                       style={{ margin: 0 }}
                     />
-                    <span style={{ color: editCapabilities.includes(cap.id) ? '#1565c0' : '#666' }}>{cap.desc}</span>
+                    <span style={{
+                      color: isDisabled ? '#999' : (editCapabilities.includes(cap.id) ? '#1565c0' : '#666'),
+                      textDecoration: isDisabled ? 'line-through' : 'none',
+                    }}>{cap.desc}</span>
+                    {isDisabled && (
+                      <span style={{
+                        fontSize: '0.7em', color: '#c62828', marginLeft: '2px',
+                      }} title={lang === 'zh' ? '此工具已被全局禁用' : 'Globally disabled'}>🚫</span>
+                    )}
                   </label>
-                ))}
+                  );
+                })}
               </div>
+            {disabledTools.size > 0 && (
+              <div style={{ marginTop: '6px', fontSize: '0.75em', color: '#c62828' }}>
+                🚫 {lang === 'zh' ? '部分工具已被全局禁用，智能体无法调用。' : 'Some tools are globally disabled.'}
+              </div>
+            )}
             </div>
             <div>
               <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
@@ -485,12 +514,19 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
                   {t('agentCapabilities')}
                 </div>
                 <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                  {profile.capabilities.map((cap, i) => (
+                  {profile.capabilities.map((cap, i) => {
+                    const isDisabled = disabledTools.has(cap);
+                    return (
                     <span key={i} style={{
-                      background: '#e8f5e9', color: '#2e7d32', padding: '2px 10px',
+                      background: isDisabled ? '#fbe9e7' : '#e8f5e9',
+                      color: isDisabled ? '#c62828' : '#2e7d32',
+                      padding: '2px 10px',
                       borderRadius: '10px', fontSize: '0.8em', fontWeight: 500,
-                    }}>{cap}</span>
-                  ))}
+                      textDecoration: isDisabled ? 'line-through' : 'none',
+                      opacity: isDisabled ? 0.7 : 1,
+                    }} title={isDisabled ? (lang === 'zh' ? '此工具已被全局禁用' : 'Globally disabled') : ''}>{cap}</span>
+                    );
+                  })}
                 </div>
               </div>
             )}

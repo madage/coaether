@@ -423,6 +423,18 @@ export interface ExtractSkillReq {
   agent_profile_id?: string;
 }
 
+// === System Tool Types ===
+export interface SystemTool {
+  name: string;
+  description: string;
+  version: string;
+  required_perm: string;
+  enabled: boolean;
+  status: string;
+  linked_agent_names: string[];
+  linked_agent_count: number;
+}
+
 // === Task Rule Types ===
 export interface TaskRule {
   id: string;

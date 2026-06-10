@@ -697,6 +697,12 @@ func Migrate() error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_decomp_plan_items_plan ON decomposition_plan_items(plan_id)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_decomp_plan_items_unique_title ON decomposition_plan_items(plan_id, title)`,
+		`CREATE TABLE IF NOT EXISTS system_tool_settings (
+			tool_name   VARCHAR(64) PRIMARY KEY,
+			enabled     BOOLEAN NOT NULL DEFAULT true,
+			status      VARCHAR(16) NOT NULL DEFAULT 'active',
+			updated_at  TIMESTAMP NOT NULL DEFAULT NOW()
+		)`,
 	}
 	for _, t := range harnessTables {
 		if _, err := DB.Exec(t); err != nil {

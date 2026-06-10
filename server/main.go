@@ -164,6 +164,11 @@ func main() {
 	decompH.ReviewRouter = reviewRouter
 	decompH.DAGEngine.Hub = dashHub
 
+	// Tool Set Handler (global tool on/off management)
+	toolSetH := handlers.NewToolSetHandler(database.DB)
+	toolSetH.Hub = dashHub
+	toolSetH.PolicyEngine = workflowH.Harness.Policy
+
 	// Safety Guard (anti-runaway monitor)
 	safetyGuard := harness.NewSafetyGuard(database.DB)
 	safetyGuard.StartPeriodicCheck(5 * time.Minute)
@@ -323,6 +328,10 @@ func main() {
 		api.PUT("/rules/:id", ruleH.Update)
 		api.DELETE("/rules/:id", ruleH.Delete)
 		api.GET("/rules/:id/logs", ruleH.ListLogs)
+
+		// Tools (system harness tool management)
+		api.GET("/tools", toolSetH.List)
+		api.POST("/tools/:toolName/toggle", toolSetH.Toggle)
 
 		// Skills
 		api.GET("/skills", skillH.List)

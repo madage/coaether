@@ -9,6 +9,7 @@ import { TrashView } from './components/TrashView';
 import { PluginList } from './components/PluginList';
 import { RuleList } from './components/RuleList';
 import { SkillList } from './components/SkillList';
+import { ToolSet } from './components/ToolSet';
 import { AgentQueuePanel } from './components/AgentQueuePanel';
 import { WorkflowList } from './components/WorkflowList';
 import { FloatingChat } from './components/FloatingChat';
@@ -23,7 +24,7 @@ import type { Node, Session, AuthState, Workspace, WorkspaceRole, WorkspaceMembe
 import WorkspaceContext from './hooks/WorkspaceContext';
 import { pluginClient } from './plugin/PluginClient';
 
-type Page = 'nodes' | 'tasks' | 'rules' | 'projects' | 'agents' | 'skills' | 'agent-queue' | 'workflows' | 'plugins' | 'trash';
+type Page = 'nodes' | 'tasks' | 'rules' | 'projects' | 'agents' | 'tools' | 'skills' | 'agent-queue' | 'workflows' | 'plugins' | 'trash';
 
 function App() {
   const { t, lang } = useLang();
@@ -565,9 +566,9 @@ function App() {
 
         {/* Navigation */}
         <nav style={{ display: 'flex', flexDirection: 'column', padding: sidebarCollapsed ? '4px' : '8px', flex: 1 }}>
-          {(['nodes', 'tasks', 'rules', 'projects', 'agents', 'skills', 'agent-queue', 'workflows', ...(auth.workspace_role === 'owner' || auth.workspace_role === 'admin' ? ['plugins'] : []), 'trash'] as Page[]).map((p) => {
-            const icon = p === 'nodes' ? '📡' : p === 'tasks' ? '📋' : p === 'projects' ? '📁' : p === 'agents' ? '🤖' : p === 'rules' ? '⚡' : p === 'skills' ? '📚' : p === 'agent-queue' ? '⏳' : p === 'workflows' ? '🔗' : p === 'plugins' ? '🧩' : '🗑';
-            const label = p === 'nodes' ? t('navNodes') : p === 'tasks' ? t('navTasks') : p === 'projects' ? t('navProjects') : p === 'agents' ? t('agents') : p === 'rules' ? t('navAutomation') : p === 'skills' ? t('navSkills') : p === 'agent-queue' ? t('navAgentQueue') || 'Queue' : p === 'workflows' ? (t('taskWorkflow') || 'Workflows') : p === 'plugins' ? t('navPlugins') : t('navTrash');
+          {(['nodes', 'tasks', 'rules', 'projects', 'agents', 'tools', 'skills', 'agent-queue', 'workflows', ...(auth.workspace_role === 'owner' || auth.workspace_role === 'admin' ? ['plugins'] : []), 'trash'] as Page[]).map((p) => {
+            const icon = p === 'nodes' ? '📡' : p === 'tasks' ? '📋' : p === 'projects' ? '📁' : p === 'agents' ? '🤖' : p === 'rules' ? '⚡' : p === 'tools' ? '🔧' : p === 'skills' ? '📚' : p === 'agent-queue' ? '⏳' : p === 'workflows' ? '🔗' : p === 'plugins' ? '🧩' : '🗑';
+            const label = p === 'nodes' ? t('navNodes') : p === 'tasks' ? t('navTasks') : p === 'projects' ? t('navProjects') : p === 'agents' ? t('agents') : p === 'rules' ? t('navAutomation') : p === 'tools' ? t('navTools') : p === 'skills' ? t('navSkills') : p === 'agent-queue' ? t('navAgentQueue') || 'Queue' : p === 'workflows' ? (t('taskWorkflow') || 'Workflows') : p === 'plugins' ? t('navPlugins') : t('navTrash');
             return (
               <button
                 key={p}
@@ -764,6 +765,11 @@ function App() {
         {/* Rules page */}
         <div style={{ display: page === 'rules' ? 'block' : 'none', height: '100%', overflow: 'auto' }}>
           <RuleList key={workspaceKey} />
+        </div>
+
+        {/* Tools page */}
+        <div style={{ display: page === 'tools' ? 'block' : 'none', height: '100%', overflow: 'auto' }}>
+          <ToolSet />
         </div>
 
         {/* Skills page */}

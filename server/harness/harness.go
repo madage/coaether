@@ -18,7 +18,7 @@ type Harness struct {
 // NewHarness creates a new Harness instance.
 func NewHarness(db *sql.DB) *Harness {
 	return &Harness{
-		Policy:  NewPolicyEngine(),
+		Policy:  NewPolicyEngine(db),
 		Auditor: NewAuditor(db),
 		DB:      db,
 	}

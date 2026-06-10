@@ -1,9 +1,12 @@
 package harness
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
+	"sync"
 )
 
 // AgentContext represents the context of an agent making a tool call.
@@ -25,11 +28,56 @@ type AgentContext struct {
 
 // PolicyEngine checks whether a tool call is allowed.
 type PolicyEngine struct {
+	DB           *sql.DB
+	mu           sync.RWMutex
+	toolSettings map[string]bool // tool_name → enabled
 }
 
 // NewPolicyEngine creates a new policy engine.
-func NewPolicyEngine() *PolicyEngine {
-	return &PolicyEngine{}
+func NewPolicyEngine(db *sql.DB) *PolicyEngine {
+	pe := &PolicyEngine{
+		DB:           db,
+		toolSettings: make(map[string]bool),
+	}
+	pe.RefreshToolSettings()
+	return pe
+}
+
+// RefreshToolSettings reloads global tool on/off settings from the database.
+func (pe *PolicyEngine) RefreshToolSettings() {
+	if pe.DB == nil {
+		return
+	}
+	rows, err := pe.DB.Query(`SELECT tool_name, enabled FROM system_tool_settings`)
+	if err != nil {
+		log.Printf("[PolicyEngine] Failed to load tool settings: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	settings := make(map[string]bool)
+	for rows.Next() {
+		var name string
+		var enabled bool
+		if err := rows.Scan(&name, &enabled); err != nil {
+			continue
+		}
+		settings[name] = enabled
+	}
+
+	pe.mu.Lock()
+	pe.toolSettings = settings
+	pe.mu.Unlock()
+}
+
+// IsToolEnabled checks whether a tool is globally enabled.
+func (pe *PolicyEngine) IsToolEnabled(toolName string) bool {
+	pe.mu.RLock()
+	defer pe.mu.RUnlock()
+	if enabled, exists := pe.toolSettings[toolName]; exists {
+		return enabled
+	}
+	return true // default: enabled if no setting record
 }
 
 // CheckResult describes the result of a policy check.
@@ -50,12 +98,19 @@ func (pe *PolicyEngine) Check(ctx *AgentContext, tc *ToolCall) *CheckResult {
 		return deny(ErrToolNotFound, fmt.Sprintf("tool '%s' not found", tc.Tool), "")
 	}
 
-	// 2. Schema validation
+	// 2. Global tool enabled check
+	if !pe.IsToolEnabled(tc.Tool) {
+		return deny(ErrToolDisabled,
+			fmt.Sprintf("tool '%s' is globally disabled", tc.Tool),
+			"contact workspace admin to re-enable this tool")
+	}
+
+	// 3. Schema validation
 	if err := ValidateParams(def, tc.Params); err != nil {
 		return deny(ErrSchemaInvalid, err.Error(), "check the required parameters and try again")
 	}
 
-	// 3. Capability check: agent must have declared this tool in capabilities.tools
+	// 4. Capability check: agent must have declared this tool in capabilities.tools
 	if ctx.Capabilities != nil {
 		if !ctx.Capabilities[tc.Tool] {
 			suggestion := "add the tool to capabilities.tools in the agent profile"
