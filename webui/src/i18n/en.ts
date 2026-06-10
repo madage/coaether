@@ -665,6 +665,7 @@ export const en = {
   toolName_get_task_detail: 'View Detail',
   toolName_list_sub_tasks: 'List Sub-tasks',
   toolName_update_task_status: 'Update Status',
+  toolName_search_agent_profiles: 'Search Agents',
   navSkills: 'Skills',
   navAgentQueue: 'Queue',
 

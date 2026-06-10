@@ -13,6 +13,7 @@ const toolNameKeyMap: Record<string, string> = {
   get_task_detail: 'toolName_get_task_detail',
   list_sub_tasks: 'toolName_list_sub_tasks',
   update_task_status: 'toolName_update_task_status',
+  search_agent_profiles: 'toolName_search_agent_profiles',
 };
 
 export function ToolSet() {

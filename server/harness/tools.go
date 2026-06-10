@@ -17,6 +17,7 @@ const (
 	ToolListSubTasks   = "list_sub_tasks"
 	ToolUpdateStatus              = "update_task_status"
 	ToolProposeDecompositionPlan  = "propose_decomposition_plan"
+	ToolSearchAgentProfiles       = "search_agent_profiles"
 )
 
 // ToolDefinition defines a single tool's schema and metadata.
@@ -95,6 +96,14 @@ func AllTools() map[string]ToolDefinition {
 			Parameters:  updateStatusSchema,
 			RequiredPerm: "task.write",
 			RequiredCap:  ToolUpdateStatus,
+		},
+		ToolSearchAgentProfiles: {
+			Name:        ToolSearchAgentProfiles,
+			Version:     "1.0",
+			Description: "搜索可用的智能体配置，按名称、标签或能力集过滤，用于运行时发现其他智能体",
+			Parameters:  searchAgentProfilesSchema,
+			RequiredPerm: "agent.read",
+			RequiredCap:  ToolSearchAgentProfiles,
 		},
 	}
 }
@@ -257,6 +266,16 @@ var updateStatusSchema = json.RawMessage(`{
 	"properties": {
 		"task_id": {"type": "string"},
 		"status": {"type": "string", "enum": ["todo", "in_progress", "completed", "blocked"]}
+	}
+}`)
+
+var searchAgentProfilesSchema = json.RawMessage(`{
+	"type": "object",
+	"properties": {
+		"name": {"type": "string", "description": "按名称模糊搜索"},
+		"tags": {"type": "array", "items": {"type": "string"}, "description": "按能力标签过滤"},
+		"capability": {"type": "string", "description": "筛选挂载了特定工具的智能体"},
+		"limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 10}
 	}
 }`)
 

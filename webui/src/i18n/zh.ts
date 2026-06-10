@@ -665,6 +665,7 @@ export const zh = {
   toolName_get_task_detail: '查看详情',
   toolName_list_sub_tasks: '列出子任务',
   toolName_update_task_status: '更新状态',
+  toolName_search_agent_profiles: '搜索智能体',
   navSkills: '技能库',
   navAgentQueue: '队列',
 

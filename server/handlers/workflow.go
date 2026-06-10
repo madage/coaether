@@ -1082,6 +1082,113 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 			"task_id": p.TaskID,
 		}, nil
 	})
+
+	harness.RegisterExecutor(harness.ToolSearchAgentProfiles, func(ctx *harness.AgentContext, params json.RawMessage) (interface{}, error) {
+		var p struct {
+			Name       string   `json:"name"`
+			Tags       []string `json:"tags"`
+			Capability string   `json:"capability"`
+			Limit      int      `json:"limit"`
+		}
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, fmt.Errorf("invalid params: %w", err)
+		}
+		if p.Limit <= 0 {
+			p.Limit = 10
+		}
+		if p.Limit > 20 {
+			p.Limit = 20
+		}
+
+		// Get the calling agent's workspace_id
+		var workspaceID string
+		h.DB.QueryRow(
+			`SELECT COALESCE(workspace_id,'') FROM agent_profiles WHERE id = $1`,
+			ctx.AgentProfileID,
+		).Scan(&workspaceID)
+
+		query := `SELECT id, name, COALESCE(description,''), COALESCE(tags,'[]'::jsonb),
+				COALESCE(capabilities,'[]'::jsonb), COALESCE(current_load,0),
+				enabled, last_active_at
+			 FROM agent_profiles
+			 WHERE enabled = true
+			   AND id != $1`
+		args := []interface{}{ctx.AgentProfileID}
+		argIdx := 2
+
+		if workspaceID != "" {
+			query += fmt.Sprintf(" AND workspace_id = $%d", argIdx)
+			args = append(args, workspaceID)
+			argIdx++
+		}
+
+		if p.Name != "" {
+			query += fmt.Sprintf(" AND name ILIKE $%d", argIdx)
+			args = append(args, "%"+p.Name+"%")
+			argIdx++
+		}
+
+		if len(p.Tags) > 0 {
+			tagsJSON, _ := json.Marshal(p.Tags)
+			query += fmt.Sprintf(" AND tags ?| $%d", argIdx)
+			args = append(args, string(tagsJSON))
+			argIdx++
+		}
+
+		if p.Capability != "" {
+			capArray, _ := json.Marshal([]string{p.Capability})
+			query += fmt.Sprintf(" AND capabilities @> $%d", argIdx)
+			args = append(args, string(capArray))
+			argIdx++
+		}
+
+		query += fmt.Sprintf(" ORDER BY name LIMIT $%d", argIdx)
+		args = append(args, p.Limit)
+
+		rows, err := h.DB.Query(query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query agent profiles: %w", err)
+		}
+		defer rows.Close()
+
+		type AgentInfo struct {
+			ID           string   `json:"id"`
+			Name         string   `json:"name"`
+			Description  string   `json:"description"`
+			Tags         []string `json:"tags"`
+			Capabilities []string `json:"capabilities"`
+			CurrentLoad  int      `json:"current_load"`
+			Enabled      bool     `json:"enabled"`
+			LastActiveAt *string  `json:"last_active_at"`
+		}
+
+		agents := make([]AgentInfo, 0)
+		for rows.Next() {
+			var a AgentInfo
+			var tagsJSON, capsJSON string
+			if err := rows.Scan(&a.ID, &a.Name, &a.Description, &tagsJSON, &capsJSON,
+				&a.CurrentLoad, &a.Enabled, &a.LastActiveAt); err != nil {
+				continue
+			}
+			json.Unmarshal([]byte(tagsJSON), &a.Tags)
+			json.Unmarshal([]byte(capsJSON), &a.Capabilities)
+			agents = append(agents, a)
+		}
+
+		log.Printf("[Harness] Agent %s searched agent profiles (name=%q tags=%v capability=%s) → %d results",
+			ctx.AgentName[:8], p.Name, p.Tags, p.Capability, len(agents))
+
+		return map[string]interface{}{
+			"agents": agents,
+			"total":  len(agents),
+			"query": map[string]interface{}{
+				"name":       p.Name,
+				"tags":       p.Tags,
+				"capability": p.Capability,
+				"limit":      p.Limit,
+			},
+		}, nil
+	})
 }
 
 // isCircularDelegation traverses the ancestor chain of a task to check if

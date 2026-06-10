@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useLang, type TranslationKey } from '../i18n/context';
 import { tasks as tasksApi, projects as projectsApi, workspaceMembers as workspaceMembersApi, agentProfiles as agentProfilesApi, agentQueue as agentQueueApi } from '../api/client';
 import { useResourceSync } from '../hooks/useResourceSync';
@@ -67,7 +67,7 @@ export function TaskBoard({ initialTaskId, onTaskOpened }: { initialTaskId?: str
 
   const [deleteTaskId, setDeleteTaskId] = useState<string | null>(null);
   const [processingTasks, setProcessingTasks] = useState<Set<string>>(new Set());
-  const [dragTaskId, setDragTaskId] = useState<string | null>(null);
+  const [drag, setDrag] = useState<{ taskId: string; task: Task; x: number; y: number; width: number; height: number; offsetX: number; offsetY: number } | null>(null);
   const [dragOverColumn, setDragOverColumn] = useState<string | null>(null);
 
   const fetchProcessingTasks = useCallback(async () => {
@@ -153,6 +153,45 @@ export function TaskBoard({ initialTaskId, onTaskOpened }: { initialTaskId?: str
   });
 
   useResourceSync('task_agent_queue', fetchProcessingTasks);
+
+  // Custom drag: document-level move/up
+  const dragRef = useRef(drag);
+  dragRef.current = drag;
+  const hasDrag = drag !== null;
+
+  useEffect(() => {
+    if (!hasDrag) return;
+    const prevUserSelect = document.body.style.userSelect;
+    document.body.style.userSelect = 'none';
+    const handleMove = (e: MouseEvent) => {
+      e.preventDefault();
+      const cur = dragRef.current;
+      if (!cur) return;
+      setDrag({ ...cur, x: e.clientX, y: e.clientY });
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      if (el) {
+        const col = (el as HTMLElement).closest('[data-column]')?.getAttribute('data-column');
+        setDragOverColumn(col || null);
+      }
+    };
+    const handleUp = (e: MouseEvent) => {
+      const cur = dragRef.current;
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      const col = el ? (el as HTMLElement).closest('[data-column]')?.getAttribute('data-column') : null;
+      if (col && cur && col !== cur.task.status) {
+        handleStatusChange(cur.taskId, col as TaskStatus);
+      }
+      setDrag(null);
+      setDragOverColumn(null);
+    };
+    document.addEventListener('mousemove', handleMove);
+    document.addEventListener('mouseup', handleUp);
+    return () => {
+      document.body.style.userSelect = prevUserSelect;
+      document.removeEventListener('mousemove', handleMove);
+      document.removeEventListener('mouseup', handleUp);
+    };
+  }, [hasDrag]);
 
   const grouped = taskList.reduce(
     (acc, task) => {
@@ -340,21 +379,7 @@ export function TaskBoard({ initialTaskId, onTaskOpened }: { initialTaskId?: str
                   </span>
                 </div>
                 <div
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    e.dataTransfer.dropEffect = 'move';
-                    setDragOverColumn(col);
-                  }}
-                  onDragLeave={() => setDragOverColumn(null)}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    const taskId = e.dataTransfer.getData('text/plain');
-                    if (taskId && col) {
-                      handleStatusChange(taskId, col);
-                    }
-                    setDragTaskId(null);
-                    setDragOverColumn(null);
-                  }}
+                  data-column={col}
                   style={{
                     background: dragOverColumn === col ? '#e3f2fd' : '#fff',
                     borderRadius: '0 0 12px 12px', padding: '8px',
@@ -378,9 +403,22 @@ export function TaskBoard({ initialTaskId, onTaskOpened }: { initialTaskId?: str
                       creatorName={task.creator_name}
                       assigneeNamesMap={assigneeNames}
                       processingTasks={processingTasks}
-                      onDragStart={(id) => setDragTaskId(id)}
-                      onDragEnd={() => { setDragTaskId(null); setDragOverColumn(null); }}
-                      isDragging={dragTaskId === task.id}
+                      onDragMouseDown={(el, id, clientX, clientY) => {
+                        const t = taskList.find(tk => tk.id === id);
+                        if (!t) return;
+                        const rect = el.getBoundingClientRect();
+                        setDrag({
+                          taskId: id,
+                          task: t,
+                          x: clientX,
+                          y: clientY,
+                          width: rect.width,
+                          height: rect.height,
+                          offsetX: clientX - rect.left,
+                          offsetY: clientY - rect.top,
+                        });
+                      }}
+                      isDragging={drag?.taskId === task.id}
                     />
                   ))}
                 </div>
@@ -509,9 +547,111 @@ export function TaskBoard({ initialTaskId, onTaskOpened }: { initialTaskId?: str
           })}
         />
       )}
+
+      {/* Floating drag card */}
+      {drag && (() => {
+        const task = drag.task;
+        const isOverdue = task.due_at && new Date(task.due_at) < new Date() && task.status !== 'done';
+        const sc = statusColors[task.status] || statusColors.todo;
+        const pc = priorityColors[task.priority] || priorityColors.medium;
+        return (
+        <div
+          style={{
+            position: 'fixed',
+            left: drag.x - drag.offsetX,
+            top: drag.y - drag.offsetY,
+            width: drag.width,
+            background: '#fff',
+            borderRadius: '12px',
+            padding: '14px 16px',
+            border: '2px solid #1976d2',
+            boxShadow: '0 16px 32px rgba(0,0,0,0.2)',
+            zIndex: 9999,
+            pointerEvents: 'none',
+            userSelect: 'none',
+            transform: 'rotate(2deg)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '6px',
+            boxSizing: 'border-box',
+          }}
+        >
+          {/* Badges row */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{
+              fontSize: '0.7em', padding: '1px 6px', borderRadius: '8px',
+              background: sc.bg, color: sc.color, fontWeight: 500,
+            }}>{t(columnLabels[task.status])}</span>
+            <span style={{
+              fontSize: '0.7em', padding: '1px 6px', borderRadius: '8px',
+              background: pc.bg, color: pc.color, fontWeight: 600, textTransform: 'uppercase',
+            }}>{t(priorityKeys[task.priority])}</span>
+            {task.completion_behavior && task.completion_behavior !== 'auto_done' && (
+              <span style={{ fontSize: '0.65em', padding: '1px 5px', borderRadius: '4px', background: '#e8f5e9', color: '#2e7d32', fontWeight: 500 }}>
+                {task.completion_behavior === 'auto_review' ? 'Auto Review' : task.completion_behavior === 'sample_review' ? 'Sampling' : task.completion_behavior === 'needs_review' ? 'Needs Review' : task.completion_behavior}
+              </span>
+            )}
+          </div>
+
+          {/* Title */}
+          <h4 style={{ margin: 0, fontSize: '0.95em', fontWeight: 600, color: '#333', wordBreak: 'break-word' }}>
+            {task.title}
+          </h4>
+
+          {/* Description */}
+          {task.description && (
+            <p style={{ margin: 0, fontSize: '0.85em', color: '#666', lineHeight: 1.4 }}>
+              {task.description.replace(/<[^>]*>/g, '').length > 100
+                ? task.description.replace(/<[^>]*>/g, '').slice(0, 100) + '...'
+                : task.description.replace(/<[^>]*>/g, '')}
+            </p>
+          )}
+
+          {/* Bottom row */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px', marginTop: '4px' }}>
+            {task.tags && task.tags.length > 0 && task.tags.slice(0, 3).map(tag => (
+              <span key={tag} style={{ fontSize: '0.7em', padding: '1px 6px', borderRadius: '6px', background: '#e3f2fd', color: '#1565c0' }}>{tag}</span>
+            ))}
+            {task.tags && task.tags.length > 3 && (
+              <span style={{ fontSize: '0.7em', color: '#999' }}>+{task.tags.length - 3}</span>
+            )}
+            {task.creator_name && (
+              <span style={{ fontSize: '0.75em', color: '#888' }}>✏️ {task.creator_name}</span>
+            )}
+            {task.assignee_id && (
+              <span style={{ fontSize: '0.75em', color: '#555' }}>👤 {assigneeNames[task.assignee_id] || task.assignee_id.slice(0, 8)}</span>
+            )}
+            {task.assignees && task.assignees.length > 0 && (
+              <span style={{ fontSize: '0.75em', color: '#777' }}>👥 {task.assignees.map(a => assigneeNames[a.assignee_id] || a.assignee_id.slice(0, 6)).join(', ')}</span>
+            )}
+            {task.due_at && (
+              <span style={{ fontSize: '0.75em', color: isOverdue ? '#c62828' : '#555', fontWeight: isOverdue ? 600 : 400 }}>
+                {isOverdue ? '⚠ ' : '📅 '}{new Date(task.due_at).toLocaleDateString()}
+              </span>
+            )}
+          </div>
+        </div>
+        );
+      })()}
     </div>
   );
 }
+
+const statusColors: Record<string, { bg: string; color: string }> = {
+  todo: { bg: '#e0e0e0', color: '#616161' },
+  in_progress: { bg: '#bbdefb', color: '#1565c0' },
+  blocked: { bg: '#d1c4e9', color: '#4527a0' },
+  review: { bg: '#ffe0b2', color: '#e65100' },
+  done: { bg: '#c8e6c9', color: '#2e7d32' },
+  stuck: { bg: '#f8d7da', color: '#721c24' },
+};
+
+const priorityColors: Record<string, { bg: string; color: string }> = {
+  urgent: { bg: '#ffcdd2', color: '#c62828' },
+  high: { bg: '#ffe0b2', color: '#e65100' },
+  medium: { bg: '#bbdefb', color: '#1565c0' },
+  low: { bg: '#e0e0e0', color: '#757575' },
+};
 
 const filterSelectStyle: React.CSSProperties = {
   padding: '6px 10px', borderRadius: '6px', border: '1px solid #ddd',

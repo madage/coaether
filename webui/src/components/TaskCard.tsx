@@ -49,19 +49,26 @@ interface TaskCardProps {
   creatorName?: string;
   assigneeNamesMap?: Record<string, string>;
   processingTasks?: Set<string>;
-  onDragStart?: (id: string, status: TaskStatus) => void;
-  onDragEnd?: () => void;
+  onDragMouseDown?: (el: HTMLElement, taskId: string, clientX: number, clientY: number) => void;
   isDragging?: boolean;
 }
 
-export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap, subtaskCount, assigneeName, creatorName, assigneeNamesMap, processingTasks, onDragStart, onDragEnd, isDragging }: TaskCardProps) {
+export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap, subtaskCount, assigneeName, creatorName, assigneeNamesMap, processingTasks, onDragMouseDown, isDragging }: TaskCardProps) {
   const isProcessing = processingTasks?.has(task.id);
   const { t } = useLang();
   const pc = priorityColors[task.priority] || priorityColors.medium;
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pressStart = useRef<{ x: number; y: number } | null>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
 
   const isOverdue = task.due_at && new Date(task.due_at) < new Date() && task.status !== 'done';
+
+  const clearPress = () => {
+    if (pressTimer.current) { clearTimeout(pressTimer.current); pressTimer.current = null; }
+    pressStart.current = null;
+  };
 
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
@@ -87,26 +94,30 @@ export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap, 
         }
       `}</style>
     <div
-      draggable
-      onDragStart={(e) => {
-        e.dataTransfer.setData('text/plain', task.id);
-        e.dataTransfer.effectAllowed = 'move';
-        // Clone the card as drag image so it follows the cursor clearly
+      ref={cardRef}
+      onMouseDown={(e) => {
+        if ((e.target as HTMLElement).closest('button')) return;
+        const cx = e.clientX, cy = e.clientY;
+        pressStart.current = { x: cx, y: cy };
         const el = e.currentTarget as HTMLElement;
-        const clone = el.cloneNode(true) as HTMLElement;
-        clone.style.position = 'fixed';
-        clone.style.left = '-9999px';
-        clone.style.top = '0';
-        clone.style.width = el.offsetWidth + 'px';
-        clone.style.opacity = '1';
-        clone.style.transform = 'rotate(2deg)';
-        clone.style.pointerEvents = 'none';
-        document.body.appendChild(clone);
-        e.dataTransfer.setDragImage(clone, el.offsetWidth / 2, 20);
-        requestAnimationFrame(() => clone.remove());
-        onDragStart?.(task.id, task.status);
+        pressTimer.current = setTimeout(() => {
+          pressTimer.current = null;
+          onDragMouseDown?.(el, task.id, cx, cy);
+        }, 60);
       }}
-      onDragEnd={() => onDragEnd?.()}
+      onMouseMove={(e) => {
+        if (!pressStart.current) return;
+        const dx = Math.abs(e.clientX - pressStart.current.x);
+        const dy = Math.abs(e.clientY - pressStart.current.y);
+        if (dx > 5 || dy > 5) clearPress();
+      }}
+      onMouseUp={clearPress}
+      onMouseLeave={(e) => {
+        clearPress();
+        e.currentTarget.style.transform = '';
+        e.currentTarget.style.borderColor = '#e0e0e0';
+        e.currentTarget.style.boxShadow = '';
+      }}
       style={{
         background: '#fff',
         borderRadius: '12px',
@@ -114,25 +125,21 @@ export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap, 
         border: isProcessing ? '1px solid #1976d2' : '1px solid #e0e0e0',
         boxShadow: isProcessing ? '0 0 8px rgba(25,118,210,0.3)' : '0 1px 3px rgba(0,0,0,0.06)',
         animation: isProcessing ? 'task-card-pulse 2s ease-in-out infinite' : undefined,
-        transition: 'transform 0.2s, boxShadow 0.2s, opacity 0.2s',
+        transition: 'transform 0.2s, boxShadow 0.2s',
         display: 'flex',
         flexDirection: 'column',
         gap: '6px',
         cursor: 'grab',
+        userSelect: 'none',
         position: 'relative',
         zIndex: menuOpen ? 1 : undefined,
-        opacity: isDragging ? 0.6 : 1,
+        visibility: isDragging ? 'hidden' : 'visible',
       }}
       onClick={() => onEdit(task)}
       onMouseEnter={(e) => {
         e.currentTarget.style.transform = 'translateY(-4px)';
         e.currentTarget.style.borderColor = '#bbb';
         e.currentTarget.style.boxShadow = '0 12px 24px rgba(0,0,0,0.15), 0 4px 8px rgba(0,0,0,0.1)';
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.transform = '';
-        e.currentTarget.style.borderColor = '#e0e0e0';
-        e.currentTarget.style.boxShadow = '';
       }}
     >
       {/* Top row: menu + priority + project dot + status badge */}
