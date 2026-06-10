@@ -195,47 +195,78 @@ func (h *DecompositionHandler) ApprovePlan(c *gin.Context) {
 		return
 	}
 
-		// Secondary validation: verify all depends_on IDs exist within the plan items
-		itemIDSet := make(map[string]bool, len(pendingItems))
-		for _, item := range pendingItems {
-			itemIDSet[item.ID] = true
+	// Secondary validation: resolve depends_on (titles or IDs) to actual plan item IDs
+	itemIDSet := make(map[string]bool, len(pendingItems))
+	titleToID := make(map[string]string, len(pendingItems))
+	for _, item := range pendingItems {
+		itemIDSet[item.ID] = true
+		titleToID[item.Title] = item.ID
+		titleToID[strings.TrimSpace(item.Title)] = item.ID
+	}
+
+	var badDeps []string
+	resolvedDeps := make(map[string][]string) // item ID → resolved dependency IDs
+
+	for _, item := range pendingItems {
+		var deps []string
+		if err := json.Unmarshal(item.DependsOn, &deps); err != nil || len(deps) == 0 {
+			continue
 		}
-		var badDeps []string
-		for _, item := range pendingItems {
-			var deps []string
-			if err := json.Unmarshal(item.DependsOn, &deps); err != nil {
+		var resolved []string
+		for _, dep := range deps {
+			dep = strings.TrimSpace(dep)
+			if dep == "" {
 				continue
 			}
-			for _, depID := range deps {
-				if depID == "" {
-					continue
-				}
-				if !itemIDSet[depID] {
-					badDeps = append(badDeps, fmt.Sprintf("%s 引用了无效ID: %s", item.Title[:20], depID))
+			// 1) Direct ID match
+			if itemIDSet[dep] {
+				resolved = append(resolved, dep)
+				continue
+			}
+			// 2) Exact title match
+			if id, ok := titleToID[dep]; ok {
+				resolved = append(resolved, id)
+				continue
+			}
+			// 3) Case-insensitive title match
+			found := false
+			for title, id := range titleToID {
+				if strings.EqualFold(title, dep) {
+					resolved = append(resolved, id)
+					found = true
+					break
 				}
 			}
-		}
-		if len(badDeps) > 0 {
-			// Circuit breaker: mark plan as failed, block parent task, notify user
-			h.DB.Exec(`UPDATE decomposition_plans SET status = 'failed', updated_at = $1 WHERE id = $2`, now, planID)
-			h.DB.Exec(`UPDATE tasks SET status = 'blocked', updated_at = $1 WHERE id = $2 AND deleted_at IS NULL`, now, taskID)
-			commentContent := fmt.Sprintf("【严重错误】分解计划中存在无效的依赖关系：\n%s\n任务已被阻塞，请驳回计划后重新尝试。", strings.Join(badDeps, "\n"))
-			commentID := uuid.New().String()
-			h.DB.Exec(
-				`INSERT INTO task_comments (id, task_id, user_id, agent_profile_id, content, is_agent_comment, created_at, updated_at)
-				 VALUES ($1, $2, $3, NULL, $4, false, $5, $5)`,
-				commentID, taskID, userIDStr, commentContent, now,
-			)
-			if h.Hub != nil {
-				h.Hub.SignalChange("tasks")
+			if !found {
+				badDeps = append(badDeps, fmt.Sprintf("%s depends_on '%s' 未找到对应项", item.Title, dep))
 			}
-			log.Printf("[Decomposition] APPROVE REJECTED: plan %s has invalid depends_on: %v", planID[:8], badDeps)
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error":   fmt.Sprintf("分解计划包含无效的依赖关系，审批已被拒绝。%s", strings.Join(badDeps, "; ")),
-				"blocked": true,
-			})
-			return
 		}
+		if len(resolved) > 0 {
+			resolvedDeps[item.ID] = resolved
+		}
+	}
+
+	if len(badDeps) > 0 {
+		// Circuit breaker: mark plan as failed, block parent task, notify user
+		h.DB.Exec(`UPDATE decomposition_plans SET status = 'failed', updated_at = $1 WHERE id = $2`, now, planID)
+		h.DB.Exec(`UPDATE tasks SET status = 'blocked', updated_at = $1 WHERE id = $2 AND deleted_at IS NULL`, now, taskID)
+		commentContent := fmt.Sprintf("【严重错误】分解计划中存在无效的依赖关系：\n%s\n任务已被阻塞，请驳回计划后重新尝试。", strings.Join(badDeps, "\n"))
+		commentID := uuid.New().String()
+		h.DB.Exec(
+			`INSERT INTO task_comments (id, task_id, user_id, agent_profile_id, content, is_agent_comment, created_at, updated_at)
+			 VALUES ($1, $2, $3, NULL, $4, false, $5, $5)`,
+			commentID, taskID, userIDStr, commentContent, now,
+		)
+		if h.Hub != nil {
+			h.Hub.SignalChange("tasks")
+		}
+		log.Printf("[Decomposition] APPROVE REJECTED: plan %s has invalid depends_on: %v", planID[:8], badDeps)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   fmt.Sprintf("分解计划包含无效的依赖关系，审批已被拒绝。%s", strings.Join(badDeps, "; ")),
+			"blocked": true,
+		})
+		return
+	}
 
 
 	// Phase 1: Create all tasks
@@ -249,9 +280,11 @@ func (h *DecompositionHandler) ApprovePlan(c *gin.Context) {
 	for _, item := range pendingItems {
 		newTaskID := uuid.New().String()
 
-		// Parse depends_on plan item IDs
-		var dependsOnStr []string
-		json.Unmarshal(item.DependsOn, &dependsOnStr)
+		// Use resolved dependency IDs from the secondary validation above
+		dependsOnResolved := resolvedDeps[item.ID]
+		if dependsOnResolved == nil {
+			dependsOnResolved = []string{}
+		}
 
 		// Inherit workspace_id from parent task
 		var workspaceID sql.NullString
@@ -282,7 +315,7 @@ func (h *DecompositionHandler) ApprovePlan(c *gin.Context) {
 		createdTasks = append(createdTasks, createdTask{
 			ItemID:    item.ID,
 			TaskID:    newTaskID,
-			DependsOn: dependsOnStr,
+			DependsOn: dependsOnResolved,
 		})
 	}
 
