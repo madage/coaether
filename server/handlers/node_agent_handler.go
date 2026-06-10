@@ -410,6 +410,19 @@ func (h *NodeAgentHandler) CreateSession(c *gin.Context) {
 		agentID = "claude"
 	}
 
+	// Fetch agent capabilities to determine if this is a decomposition or execution agent
+	var capsJSON, agentSysPrompt, agentInstructions string
+	isDecomposer := false
+	if agentID != "claude" && agentID != "echo" {
+		h.DB.QueryRow(
+			`SELECT COALESCE(capabilities::text,'[]'), COALESCE(system_prompt,''), COALESCE(instructions,'')
+			 FROM agent_profiles WHERE id = $1`, agentID,
+		).Scan(&capsJSON, &agentSysPrompt, &agentInstructions)
+		isDecomposer = strings.Contains(capsJSON, "propose_decomposition_plan")
+	}
+
+	var prompt string
+	if isDecomposer {
 		// Fetch available agent profiles for the workspace
 			agentRows, _ := h.DB.Query(
 				`SELECT id, name, COALESCE(description, '') FROM agent_profiles WHERE enabled = true
@@ -423,9 +436,6 @@ func (h *NodeAgentHandler) CreateSession(c *gin.Context) {
 					var id, name, desc string
 					if err := agentRows.Scan(&id, &name, &desc); err == nil {
 						short := id
-						if len(short) > 8 {
-							short = short[:8]
-						}
 						if len(desc) > 60 {
 							desc = desc[:60] + "..."
 						}
@@ -438,7 +448,7 @@ func (h *NodeAgentHandler) CreateSession(c *gin.Context) {
 				}
 			}
 
-			prompt := fmt.Sprintf(`Task ID: %s
+			prompt = fmt.Sprintf(`Task ID: %s
 Title: %s
 
 Description: %s
@@ -469,6 +479,13 @@ You are a task-decomposition agent. Your ONLY job is to break down this task int
 - Use ONLY mcp__coaether-harness__ tools: propose_decomposition_plan, list_sub_tasks, add_comment, get_task_detail
 - If you do not know which agent to assign, use get_task_detail to inspect the task further%s`,
 				req.TaskID, title, description, agentList)
+	} else {
+		if agentSysPrompt != "" {
+			prompt = fmt.Sprintf("SYSTEM: %s\n\nTask ID: %s\nTitle: %s\n\nDescription: %s\n\n## Your Role\n\nYou are an execution agent. Complete this task directly using your available tools.\n\n## Instructions\n\n%s\n\n## CRITICAL RULES\n\n- Do NOT call propose_decomposition_plan or create_sub_task — you execute, you do NOT decompose\n- Complete the task described above using the appropriate tools available to you\n- Report your results clearly when done\n- Use harness tools (mcp__coaether-harness__ prefix) for task management: add_comment, get_task_detail, update_task_status", agentSysPrompt, req.TaskID, title, description, agentInstructions)
+		} else {
+			prompt = fmt.Sprintf("Task ID: %s\nTitle: %s\n\nDescription: %s\n\n## Your Role\n\nYou are an execution agent. Complete this task directly using your available tools.\n\n## CRITICAL RULES\n\n- Do NOT call propose_decomposition_plan or create_sub_task — you execute, you do NOT decompose\n- Complete the task described above using the appropriate tools available to you\n- Report your results clearly when done\n- Use harness tools (mcp__coaether-harness__ prefix) for task management: add_comment, get_task_detail, update_task_status", req.TaskID, title, description)
+		}
+	}
 
 	sessionID := uuid.New().String()
 	now := time.Now()
@@ -656,6 +673,15 @@ func (h *NodeAgentHandler) resolveAgentContext(auth *nodeAuthInfo, profileID, ta
 						if b, ok := v.(bool); ok && b {
 							capsList = append(capsList, k)
 						}
+					}
+				}
+				// Fallback: try {"tools": [...]} format (UI format)
+				if len(capsList) == 0 {
+					var capsObj struct {
+						Tools []string `json:"tools"`
+					}
+					if e3 := json.Unmarshal([]byte(capsJSON), &capsObj); e3 == nil {
+						capsList = append(capsList, capsObj.Tools...)
 					}
 				}
 			}

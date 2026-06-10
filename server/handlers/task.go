@@ -328,7 +328,7 @@ func (h *TaskHandler) processAgentTask(taskID, agentProfileID, queueID string) {
 // to the connected agent runtime. It is shared between TaskHandler and AgentScheduler.
 
 // buildTaskPrompt constructs the work prompt combining task details with agent instructions.
-func buildTaskPrompt(title, description, instructions, systemPrompt string) string {
+func buildTaskPrompt(title, description, instructions, systemPrompt string, isDecomposer bool) string {
 	prompt := ""
 	if systemPrompt != "" {
 		prompt += fmt.Sprintf("SYSTEM: %s\n\n", systemPrompt)
@@ -337,7 +337,11 @@ func buildTaskPrompt(title, description, instructions, systemPrompt string) stri
 	if instructions != "" {
 		prompt += "\n\nInstructions: " + instructions
 	}
-	prompt += fmt.Sprintf("\n\nCRITICAL: Use ONLY the available MCP harness tools (mcp__coaether-harness__ prefix) to complete your work. Do NOT use filesystem tools (Bash, Glob, Grep, Read, Write, Edit). If you are a decomposition agent, your ONLY job is to break this task into sub-tasks using propose_decomposition_plan. Do NOT attempt to execute task steps yourself.")
+	if isDecomposer {
+		prompt += "\n\nCRITICAL: You are a task-decomposition agent. Your ONLY job is to break this task into sub-tasks. Call propose_decomposition_plan ONCE with ALL sub-tasks. Do NOT attempt to execute task steps yourself — do NOT research, analyze, or produce content. Use ONLY mcp__coaether-harness__ tools."
+	} else {
+		prompt += "\n\nCRITICAL: You are an execution agent. Complete the task described above directly. Do NOT decompose this task or create sub-tasks — execute it yourself. Use ONLY the available MCP harness tools (mcp__coaether-harness__ prefix). Do NOT use filesystem tools (Bash, Glob, Grep, Read, Write, Edit) unless your task explicitly requires them."
+	}
 	return prompt
 }
 
@@ -347,14 +351,14 @@ func autoProcessTask(db *sql.DB, bus *protocol.MessageBus, taskID, agentProfileI
 	}
 
 	// Get task details + agent profile node_id + task owner
-	var title, description, workspaceID, nodeID, userID, instructions, systemPrompt string
+	var title, description, workspaceID, nodeID, userID, instructions, systemPrompt, capsJSON string
 	err := db.QueryRow(`
-		SELECT t.title, COALESCE(t.description,''), t.workspace_id, ap.node_id, t.user_id, COALESCE(ap.instructions,''), COALESCE(ap.system_prompt,'')
+		SELECT t.title, COALESCE(t.description,''), t.workspace_id, ap.node_id, t.user_id, COALESCE(ap.instructions,''), COALESCE(ap.system_prompt,''), COALESCE(ap.capabilities::text,'[]')
 		FROM tasks t
 		JOIN agent_profiles ap ON ap.id = $2
 		WHERE t.id = $1 AND t.deleted_at IS NULL`,
 		taskID, agentProfileID,
-	).Scan(&title, &description, &workspaceID, &nodeID, &userID, &instructions, &systemPrompt)
+	).Scan(&title, &description, &workspaceID, &nodeID, &userID, &instructions, &systemPrompt, &capsJSON)
 	if err != nil || nodeID == "" {
 		return // can't process without a node
 	}
@@ -377,7 +381,8 @@ func autoProcessTask(db *sql.DB, bus *protocol.MessageBus, taskID, agentProfileI
 	// Create a session
 	sessionID := uuid.New().String()
 	now := time.Now()
-	prompt := buildTaskPrompt(title, description, instructions, systemPrompt)
+	isDecomposer := strings.Contains(capsJSON, "propose_decomposition_plan")
+	prompt := buildTaskPrompt(title, description, instructions, systemPrompt, isDecomposer)
 
 	bus.CreateSession(sessionID, map[string]protocol.MemberRole{
 		"system://api": protocol.RoleOwner,
@@ -432,14 +437,14 @@ func autoProcessReview(db *sql.DB, bus *protocol.MessageBus, taskID, agentProfil
 		return
 	}
 
-	var title, description, workspaceID, nodeID, userID, instructions, systemPrompt string
+	var title, description, workspaceID, nodeID, userID, instructions, systemPrompt, capsJSON string
 	err := db.QueryRow(`
-		SELECT t.title, COALESCE(t.description,''), t.workspace_id, ap.node_id, t.user_id, COALESCE(ap.instructions,''), COALESCE(ap.system_prompt,'')
+		SELECT t.title, COALESCE(t.description,''), t.workspace_id, ap.node_id, t.user_id, COALESCE(ap.instructions,''), COALESCE(ap.system_prompt,''), COALESCE(ap.capabilities::text,'[]')
 		FROM tasks t
 		JOIN agent_profiles ap ON ap.id = $2
 		WHERE t.id = $1 AND t.deleted_at IS NULL`,
 		taskID, agentProfileID,
-	).Scan(&title, &description, &workspaceID, &nodeID, &userID, &instructions, &systemPrompt)
+	).Scan(&title, &description, &workspaceID, &nodeID, &userID, &instructions, &systemPrompt, &capsJSON)
 	if err != nil || nodeID == "" {
 		return
 	}
@@ -459,7 +464,8 @@ func autoProcessReview(db *sql.DB, bus *protocol.MessageBus, taskID, agentProfil
 	sessionID := uuid.New().String()
 	now := time.Now()
 
-	reviewPrompt := buildTaskPrompt(title, description, instructions, systemPrompt)
+	isDecomposer := strings.Contains(capsJSON, "propose_decomposition_plan")
+	reviewPrompt := buildTaskPrompt(title, description, instructions, systemPrompt, isDecomposer)
 	if resultSummary != "" {
 		reviewPrompt += "\n\nCompleted work to review:\n\n---\n" + resultSummary + "\n---\n\nApprove the work or provide feedback on what needs to change."
 	}

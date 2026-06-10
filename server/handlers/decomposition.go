@@ -271,9 +271,11 @@ func (h *DecompositionHandler) ApprovePlan(c *gin.Context) {
 
 	// Phase 1: Create all tasks
 	type createdTask struct {
-		ItemID    string
-		TaskID    string
-		DependsOn []string
+		ItemID       string
+		TaskID       string
+		DependsOn    []string
+		AssigneeID   string
+		AssigneeType string
 	}
 
 	var createdTasks []createdTask
@@ -295,6 +297,19 @@ func (h *DecompositionHandler) ApprovePlan(c *gin.Context) {
 			cb = "needs_review"
 		}
 
+		// Resolve truncated assignee_id (agent may only see first 8 chars in prompt)
+		assigneeID := item.AssigneeID
+		if assigneeID != "" && len(assigneeID) < 36 && item.AssigneeType == "agent_profile" {
+			var fullID string
+			if err := h.DB.QueryRow(
+				`SELECT id FROM agent_profiles WHERE id LIKE $1 || '%' AND enabled = true LIMIT 1`,
+				assigneeID,
+			).Scan(&fullID); err == nil {
+				log.Printf("[Decomposition] Resolved assignee %s → %s", assigneeID, fullID[:8])
+				assigneeID = fullID
+			}
+		}
+
 		// Get depth from parent
 		var depth int
 		h.DB.QueryRow(`SELECT COALESCE(depth,0) FROM tasks WHERE id = $1`, taskID).Scan(&depth)
@@ -305,7 +320,7 @@ func (h *DecompositionHandler) ApprovePlan(c *gin.Context) {
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $13)`,
 			newTaskID, userIDStr, taskID, item.Title, item.Description,
 			"todo", workspaceID, cb, item.ParallelGroup,
-			item.AssigneeID, item.AssigneeType, depth+1, now,
+			assigneeID, item.AssigneeType, depth+1, now,
 		)
 		if err != nil {
 			log.Printf("[Decomposition] Failed to create task for item %s: %v", item.ID[:8], err)
@@ -313,9 +328,11 @@ func (h *DecompositionHandler) ApprovePlan(c *gin.Context) {
 		}
 
 		createdTasks = append(createdTasks, createdTask{
-			ItemID:    item.ID,
-			TaskID:    newTaskID,
-			DependsOn: dependsOnResolved,
+			ItemID:       item.ID,
+			TaskID:       newTaskID,
+			DependsOn:    dependsOnResolved,
+			AssigneeID:   assigneeID,
+			AssigneeType: item.AssigneeType,
 		})
 	}
 
@@ -339,25 +356,20 @@ func (h *DecompositionHandler) ApprovePlan(c *gin.Context) {
 
 		// If no dependencies and has agent assignee, auto-queue
 		if len(ct.DependsOn) == 0 {
-			var assigneeType, assigneeID string
-			for _, item := range pendingItems {
-				if item.ID == ct.ItemID {
-					assigneeType = item.AssigneeType
-					assigneeID = item.AssigneeID
-					break
-				}
-			}
-			if assigneeType == "agent_profile" && assigneeID != "" {
+			if ct.AssigneeType == "agent_profile" && ct.AssigneeID != "" {
 				var enabled bool
-				h.DB.QueryRow(`SELECT enabled FROM agent_profiles WHERE id = $1`, assigneeID).Scan(&enabled)
-				if enabled {
+				err := h.DB.QueryRow(`SELECT enabled FROM agent_profiles WHERE id = $1`, ct.AssigneeID).Scan(&enabled)
+				if err == nil && enabled {
 					queueID := uuid.New().String()
 					h.DB.Exec(
 						`INSERT INTO task_agent_queue (id, task_id, agent_profile_id, status, trigger_type, assigned_at, created_at)
 						 VALUES ($1, $2, $3, 'queued', 'sub_task', $4, $4)`,
-						queueID, ct.TaskID, assigneeID, now,
+						queueID, ct.TaskID, ct.AssigneeID, now,
 					)
-					h.DB.Exec(`UPDATE agent_profiles SET current_load = current_load + 1 WHERE id = $1`, assigneeID)
+					h.DB.Exec(`UPDATE agent_profiles SET current_load = current_load + 1 WHERE id = $1`, ct.AssigneeID)
+					log.Printf("[Decomposition] Auto-queued task %s to agent %s", ct.TaskID[:8], ct.AssigneeID[:8])
+				} else if err != nil {
+					log.Printf("[Decomposition] Auto-queue failed: agent %s not found for task %s", ct.AssigneeID, ct.TaskID[:8])
 				}
 			}
 		}

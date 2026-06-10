@@ -491,8 +491,18 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 				}
 				itemID := uuid.New().String()
 				assigneeName := ""
-				if p.AssigneeID != "" {
-					h.DB.QueryRow(`SELECT COALESCE(name,'') FROM agent_profiles WHERE id = $1`, p.AssigneeID).Scan(&assigneeName)
+				resolvedAssigneeID := p.AssigneeID
+				if p.AssigneeID != "" && len(p.AssigneeID) < 36 {
+					var fullID string
+					if err := h.DB.QueryRow(
+						`SELECT id FROM agent_profiles WHERE id LIKE $1 || '%' AND enabled = true LIMIT 1`,
+						p.AssigneeID,
+					).Scan(&fullID); err == nil {
+						resolvedAssigneeID = fullID
+					}
+				}
+				if resolvedAssigneeID != "" {
+					h.DB.QueryRow(`SELECT COALESCE(name,'') FROM agent_profiles WHERE id = $1`, resolvedAssigneeID).Scan(&assigneeName)
 				}
 
 				// Validate depends_on IDs exist in the current plan
@@ -559,7 +569,7 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 					  depends_on, parallel_group, sort_order, completion_behavior, created_at)
 					 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 					itemID, planID, p.Title, p.Description,
-					p.AssigneeID, p.AssigneeType, assigneeName,
+					resolvedAssigneeID, p.AssigneeType, assigneeName,
 					dependsJSON, p.ParallelGroup, sortOrder, cb, now,
 				)
 				if err != nil {
