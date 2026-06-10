@@ -369,7 +369,9 @@ func autoProcessTask(db *sql.DB, bus *protocol.MessageBus, taskID, agentProfileI
 		}
 	}
 	if !found {
-		return // runtime not connected, leave as queued
+		// Runtime not connected - reset queue to "queued" so the runtime poller can claim it later
+		db.Exec(`UPDATE task_agent_queue SET status = 'queued' WHERE id = $1 AND status = 'processing'`, queueID)
+		return
 	}
 
 	// Create a session

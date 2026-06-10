@@ -221,12 +221,12 @@ func (h *NodeAgentHandler) UpdateQueueStatus(c *gin.Context) {
 
 							// If task has a pending decomposition plan, skip status update
 				if taskID != "" {
-					var planCount int
+					var hasPending bool
 					h.DB.QueryRow(
-						`SELECT COUNT(*) > 0 FROM decomposition_plans WHERE task_id = $1 AND status = 'pending'`,
+						`SELECT EXISTS(SELECT 1 FROM decomposition_plans WHERE task_id = $1 AND status = 'pending')`,
 						taskID,
-					).Scan(&planCount)
-					if planCount > 0 {
+					).Scan(&hasPending)
+					if hasPending {
 						log.Printf("[NodeAgent] Task %s has pending decomposition plan, skipping status update", taskID[:8])
 						goto afterStatusUpdate
 					}
@@ -438,13 +438,13 @@ You are a task-decomposition agent. Your ONLY job is to break down this task int
 3. Add a summary explaining your decomposition strategy
 4. The system will present your plan to the user for human review with per-task checkboxes
 5. After a human approves (per-item or all), the system creates sub-tasks automatically
-6. Do NOT call create_sub_task directly — propose_decomposition_plan handles the entire plan
+6. DO NOT call create_sub_task - your capabilities do not include this tool, calls will be DENIED
 
 ## CRITICAL RULES
 
 - Call propose_decomposition_plan ONCE with ALL sub-tasks in the items array
 - Every item MUST include assignee_id AND assignee_type="agent_profile"
-- Do NOT call create_sub_task — use propose_decomposition_plan for decomposition
+- DO NOT call create_sub_task - your capabilities do not include this tool, calls will be DENIED
 - Do NOT use WebSearch, codegraph, or any research tools — you decompose, you do NOT execute
 - Do NOT attempt to answer the task question yourself
 - Do NOT use filesystem, shell, or code execution tools

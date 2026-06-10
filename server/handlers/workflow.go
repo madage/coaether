@@ -437,6 +437,85 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 		}
 
 		now := time.Now()
+
+		// === Decomposition flow: convert create_sub_task to plan items ===
+		// If the agent is calling create_sub_task on a parent they are assigned to,
+		// auto-create a decomposition plan so the human can review before real tasks are created.
+		if ctx.TaskID != nil && *ctx.TaskID != "" {
+			var parentStatus, parentAssigneeID string
+			h.DB.QueryRow(`SELECT status, COALESCE(assignee_id,'') FROM tasks WHERE id = $1 AND deleted_at IS NULL`,
+				*ctx.TaskID).Scan(&parentStatus, &parentAssigneeID)
+
+			// Only convert if parent is assigned to the calling agent and is in decomposable state
+			log.Printf("[Harness] create_sub_task check: parent=%s agent_profile=%s parentStatus=%s assignee=%s",
+				(*ctx.TaskID)[:8], ctx.AgentProfileID[:8], parentStatus, parentAssigneeID[:8])
+			if parentAssigneeID == ctx.AgentProfileID && (parentStatus == "in_progress" || parentStatus == "todo") {
+				// Find or create a pending plan
+				var planID string
+				err := h.DB.QueryRow(
+					`SELECT id FROM decomposition_plans WHERE task_id = $1 AND status = 'pending' LIMIT 1`,
+					*ctx.TaskID,
+				).Scan(&planID)
+				if err != nil {
+					// Create a new plan automatically
+					planID = uuid.New().String()
+					agentName := ctx.AgentName
+					if agentName == "" {
+						agentName = "Unknown"
+					}
+					h.DB.Exec(
+						`INSERT INTO decomposition_plans (id, task_id, status, created_by, created_by_name, summary, created_at, updated_at)
+						 VALUES ($1, $2, 'pending', $3, $4, $5, $6, $6)`,
+						planID, *ctx.TaskID, ctx.AgentProfileID, agentName,
+						"智能体通过 create_sub_task 自动创建了分解计划", now,
+					)
+				}
+
+				// Add as plan item instead of real task
+				itemID := uuid.New().String()
+				assigneeName := ""
+				if p.AssigneeID != "" {
+					h.DB.QueryRow(`SELECT COALESCE(name,'') FROM agent_profiles WHERE id = $1`, p.AssigneeID).Scan(&assigneeName)
+				}
+				dependsJSON, _ := json.Marshal(p.DependsOn)
+				cb := p.CompletionBehavior
+				if cb == "" {
+					cb = models.CompletionNeedsReview
+				}
+
+				// Count existing items for sort_order
+				var sortOrder int
+				h.DB.QueryRow(`SELECT COUNT(*) FROM decomposition_plan_items WHERE plan_id = $1`, planID).Scan(&sortOrder)
+
+				h.DB.Exec(
+					`INSERT INTO decomposition_plan_items
+					 (id, plan_id, title, description, assignee_id, assignee_type, assignee_name,
+					  depends_on, parallel_group, sort_order, completion_behavior, created_at)
+					 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+					itemID, planID, p.Title, p.Description,
+					p.AssigneeID, p.AssigneeType, assigneeName,
+					dependsJSON, p.ParallelGroup, sortOrder, cb, now,
+				)
+
+				// Keep parent in_progress
+				h.DB.Exec(`UPDATE tasks SET updated_at = $1 WHERE id = $2`, now, *ctx.TaskID)
+
+				if h.Hub != nil {
+					h.Hub.SignalChange("tasks")
+				}
+
+				log.Printf("[Harness] Agent %s create_sub_task → plan item %s (plan=%s)", ctx.AgentName[:8], itemID[:8], planID[:8])
+				return map[string]interface{}{
+					"status":       "plan_item_created",
+					"plan_item_id": itemID,
+					"plan_id":      planID,
+					"message":      "子任务已加入分解计划，等待人工审核通过后创建实际任务",
+					"title":        p.Title,
+				}, nil
+			}
+		}
+		// === End decomposition flow ===
+
 		taskID := uuid.New().String()
 		cb := p.CompletionBehavior
 		if cb == "" {
