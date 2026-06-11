@@ -135,7 +135,12 @@ func (r *ReviewRouter) processPendingActions(taskID string) {
 		tx.Exec(`UPDATE tasks SET assignee_id = NULL, assignee_type = NULL, updated_at = $1 WHERE id = $2`, now, taskID)
 	}
 
-	// Cancel any remaining active queue entries for this task
+	// Cancel any remaining active queue entries for this task and decrement agent load
+	tx.Exec(`UPDATE agent_profiles SET current_load = GREATEST(0, current_load - 1)
+		WHERE id IN (
+			SELECT agent_profile_id FROM task_agent_queue
+			WHERE task_id = $1 AND status IN ('queued', 'claimed', 'processing')
+		)`, taskID)
 	tx.Exec(`UPDATE task_agent_queue SET status = 'failed', completed_at = $1
 		WHERE task_id = $2 AND status IN ('queued', 'claimed', 'processing')`, now, taskID)
 

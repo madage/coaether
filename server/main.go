@@ -45,6 +45,15 @@ func main() {
 
 	}
 
+	// Fix orphaned agent loads: reset current_load to match actual active queue entries
+	database.DB.Exec(
+		`UPDATE agent_profiles SET current_load = (
+			SELECT COUNT(*) FROM task_agent_queue
+			WHERE agent_profile_id = agent_profiles.id
+			AND status IN ('queued', 'claimed', 'processing')
+		) WHERE current_load > 0`,
+	)
+
 	// Mailer
 
 	mail := mailer.New(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPass, cfg.SMTPFrom, cfg.PublicURL)

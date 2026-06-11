@@ -342,7 +342,12 @@ func (s *TaskService) handleReviewToDone(taskID string, snap taskSnapshot, opts 
 	// DAG advancement
 	s.DAGEngine.OnTaskCompleted(taskID)
 
-	// Cancel remaining active queue entries for this task
+	// Cancel remaining active queue entries for this task and decrement agent load
+	s.DB.Exec(`UPDATE agent_profiles SET current_load = GREATEST(0, current_load - 1)
+		WHERE id IN (
+			SELECT agent_profile_id FROM task_agent_queue
+			WHERE task_id = $1 AND status IN ('queued', 'claimed', 'processing')
+		)`, taskID)
 	s.DB.Exec(`UPDATE task_agent_queue SET status = 'failed', completed_at = $1
 		WHERE task_id = $2 AND status IN ('queued', 'claimed', 'processing')`, now, taskID)
 
