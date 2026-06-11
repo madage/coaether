@@ -652,21 +652,30 @@ func (h *NodeAgentHandler) resolveAgentContext(auth *nodeAuthInfo, profileID, ta
 		}
 	}
 
-	// Get workflow info and user_id from task
+	// Get workflow info, user_id, and server-side token tracking from task+workflow
 	var workflowID *string
 	var depth int
 	var userID string
+	var tokenBudget, tokensUsed int64
 	maxDepth := ctx.MaxDepth
 	h.DB.QueryRow(
-		`SELECT workflow_id, depth, COALESCE(max_depth, $1), user_id FROM tasks WHERE id = $2 AND deleted_at IS NULL`,
+		`SELECT t.workflow_id, t.depth, COALESCE(t.max_depth, $1), t.user_id,
+		        COALESCE(w.token_budget, 0), COALESCE(w.tokens_used, 0)
+		 FROM tasks t
+		 LEFT JOIN workflows w ON t.workflow_id = w.id
+		 WHERE t.id = $2 AND t.deleted_at IS NULL`,
 		maxDepth, taskID,
-	).Scan(&workflowID, &depth, &maxDepth, &userID)
+	).Scan(&workflowID, &depth, &maxDepth, &userID, &tokenBudget, &tokensUsed)
 	if workflowID != nil && *workflowID != "" {
 		ctx.WorkflowID = workflowID
 	}
 	ctx.Depth = depth
 	ctx.MaxDepth = maxDepth
 	ctx.UserID = userID
+
+	// Server-side token tracking — authoritative for budget enforcement
+	ctx.TokenBudget = tokenBudget
+	ctx.TokensUsed = tokensUsed
 
 	return ctx
 }

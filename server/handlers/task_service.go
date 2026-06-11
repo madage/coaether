@@ -90,19 +90,10 @@ func (s *TaskService) TransitionStatus(taskID string, newStatus string, opts Tra
 
 		now := time.Now()
 
-		// Handle completion_behavior routing: if going to 'completed', determine real target
+		// Resolve 'completed' to final target before writing — eliminates nested transition
 		actualStatus := newStatus
 		if newStatus == string(models.TaskCompleted) {
-			// Guard: pending decomposition plan — override to review
-			var hasPending bool
-			s.DB.QueryRow(
-				`SELECT EXISTS(SELECT 1 FROM decomposition_plans WHERE task_id = $1 AND status = 'pending')`,
-				taskID,
-			).Scan(&hasPending)
-			if hasPending {
-				actualStatus = string(models.TaskReview)
-				log.Printf("[TaskService] Task %s has pending decomposition plan → review", safe8(taskID))
-			}
+			actualStatus = s.resolveCompletionTarget(taskID, snap, opts)
 		}
 
 		// Write the status — the only UPDATE tasks SET status in the system
@@ -219,21 +210,13 @@ func (s *TaskService) transitionValid(from, to string) bool {
 // dispatchSideEffects fires all orchestration logic based on the from/to pair.
 func (s *TaskService) dispatchSideEffects(taskID, from, to string, snap taskSnapshot, opts TransitionOpts, now time.Time) {
 	switch {
-	// ---- in_progress -> completed ----
-	case from == string(models.TaskInProgress) && to == string(models.TaskCompleted):
-		s.handleInProgressToCompleted(taskID, snap, opts)
+	// ---- in_progress -> done (resolved from completed, single write) ----
+	case from == string(models.TaskInProgress) && to == string(models.TaskDone):
+		s.handleInProgressToDone(taskID, snap, opts)
 
-	// ---- in_progress -> completed (routed to review by pending plan) ----
+	// ---- in_progress -> review (resolved from completed, single write) ----
 	case from == string(models.TaskInProgress) && to == string(models.TaskReview):
 		s.handleInProgressToReview(taskID, snap, opts)
-
-	// ---- completed -> done (via RouteTask auto_done) ----
-	case from == string(models.TaskCompleted) && to == string(models.TaskDone):
-		s.handleCompletedToDone(taskID, snap, opts)
-
-	// ---- completed -> review (via RouteTask) ----
-	case from == string(models.TaskCompleted) && to == string(models.TaskReview):
-		s.handleCompletedToReview(taskID, snap, opts)
 
 	// ---- review -> done (approved) ----
 	case from == string(models.TaskReview) && to == string(models.TaskDone):
@@ -267,13 +250,6 @@ func (s *TaskService) dispatchSideEffects(taskID, from, to string, snap taskSnap
 			s.Reviewer.notifyStuck(taskID, snap.WorkflowID, snap.AgentLoopCount, snap.MaxAgentLoops)
 		}
 
-	// ---- in_progress -> done (DAG auto-close parent without plan) ----
-		case from == string(models.TaskInProgress) && to == string(models.TaskDone):
-			s.DAGEngine.OnTaskCompleted(taskID)
-			if s.RuleEngine != nil {
-				s.RuleEngine.Evaluate("on_status_change", taskID, ExtractTaskContext(taskID, snap.Title, snap.AssigneeID, snap.AssigneeType))
-			}
-
 		// ---- done -> todo / in_progress (re-open) ----
 	case from == string(models.TaskDone) && (to == string(models.TaskTodo) || to == string(models.TaskInProgress)):
 		// Re-open: just signal, no other side effects needed
@@ -286,16 +262,18 @@ func (s *TaskService) dispatchSideEffects(taskID, from, to string, snap taskSnap
 
 // ========== Transition handlers ==========
 
-func (s *TaskService) handleInProgressToCompleted(taskID string, snap taskSnapshot, opts TransitionOpts) {
+// handleInProgressToDone is the unified handler for in_progress → done.
+// It combines what was previously split across in_progress→completed→done (two writes).
+func (s *TaskService) handleInProgressToDone(taskID string, snap taskSnapshot, opts TransitionOpts) {
 	// 1. Post agent comment if result summary provided
 	if opts.ResultSummary != "" && opts.AgentProfileID != "" {
 		s.postAgentComment(taskID, opts.AgentProfileID, opts.ResultSummary, snap.UserID)
 	}
 
-	// 2. Route completion: determine real target based on completion_behavior
-	s.routeCompletion(taskID, snap, opts)
+	// 2. Process pending dispatch actions (create_sub_task, assign_task)
+	s.processPendingActions(taskID)
 
-	// 3. DAG advancement (completed tasks always advance DAG since work product is ready)
+	// 3. DAG advancement
 	s.DAGEngine.OnTaskCompleted(taskID)
 
 	// 4. Rule engine
@@ -304,9 +282,17 @@ func (s *TaskService) handleInProgressToCompleted(taskID string, snap taskSnapsh
 	}
 }
 
+// handleInProgressToReview is the unified handler for in_progress → review.
+// It combines what was previously split across in_progress→completed→review (two writes).
 func (s *TaskService) handleInProgressToReview(taskID string, snap taskSnapshot, opts TransitionOpts) {
-	// Agent completed but decomposition plan is pending; post comment asking for review
-	if opts.AgentProfileID != "" {
+	// 1. Post agent comment if result summary provided
+	if opts.ResultSummary != "" && opts.AgentProfileID != "" {
+		s.postAgentComment(taskID, opts.AgentProfileID, opts.ResultSummary, snap.UserID)
+	}
+
+	// 2. Completion-behavior-specific review setup
+	hasPendingPlan := s.hasPendingDecompositionPlan(taskID)
+	if hasPendingPlan && opts.AgentProfileID != "" {
 		var creatorID, taskTitle string
 		s.DB.QueryRow(`SELECT user_id, title FROM tasks WHERE id = $1`, taskID).Scan(&creatorID, &taskTitle)
 		if creatorID != "" {
@@ -321,33 +307,21 @@ func (s *TaskService) handleInProgressToReview(taskID string, snap taskSnapshot,
 			)
 		}
 	}
-	// DAG advancement still applies (work product is ready)
-	s.DAGEngine.OnTaskCompleted(taskID)
-}
 
-func (s *TaskService) handleCompletedToDone(taskID string, snap taskSnapshot, opts TransitionOpts) {
-	// Process any pending dispatch actions (create_sub_task, assign_task)
-	s.processPendingActions(taskID)
-
-	// DAG advancement
-	s.DAGEngine.OnTaskCompleted(taskID)
-
-	// Rule engine
-	if s.RuleEngine != nil {
-		s.RuleEngine.Evaluate("on_status_change", taskID, ExtractTaskContext(taskID, snap.Title, snap.AssigneeID, snap.AssigneeType))
+	// 3. If auto_review with agent assignee, create review queue for the agent
+	if snap.CompletionBehavior == models.CompletionAutoReview && snap.AssigneeType == "agent_profile" && snap.AssigneeID != "" && s.Reviewer != nil {
+		s.Reviewer.createReviewQueue(taskID, snap.AssigneeID, snap.WorkflowID)
 	}
-}
 
-func (s *TaskService) handleCompletedToReview(taskID string, snap taskSnapshot, opts TransitionOpts) {
-	// Notify workspace about review needed
+	// 4. Notify workspace about review needed
 	if s.Reviewer != nil {
 		s.Reviewer.notifyWorkspace(taskID, "task_needs_review", "任务等待审核")
 	}
 
-	// DAG advancement (work product is ready even though review is pending)
+	// 5. DAG advancement (work product is ready even though review is pending)
 	s.DAGEngine.OnTaskCompleted(taskID)
 
-	// Rule engine
+	// 6. Rule engine
 	if s.RuleEngine != nil {
 		s.RuleEngine.Evaluate("on_status_change", taskID, ExtractTaskContext(taskID, snap.Title, snap.AssigneeID, snap.AssigneeType))
 	}
@@ -415,25 +389,27 @@ func (s *TaskService) handleReviewToStuck(taskID string, snap taskSnapshot, opts
 		fmt.Sprintf("Task %s reached review loop limit", safe8(taskID)), taskID, "")
 }
 
-// ========== Completion routing (inlined from ReviewRouter.RouteTask) ==========
+// ========== Completion routing (single-write, no nested transitions) ==========
 
-func (s *TaskService) routeCompletion(taskID string, snap taskSnapshot, opts TransitionOpts) {
+// resolveCompletionTarget determines the final status for a task completing from in_progress.
+// Returns "done" or "review" — never "completed", eliminating the nested transition.
+// Does NOT call TransitionStatus or have DB write side effects.
+func (s *TaskService) resolveCompletionTarget(taskID string, snap taskSnapshot, opts TransitionOpts) string {
+	// Guard: pending decomposition plan always forces review
+	if s.hasPendingDecompositionPlan(taskID) {
+		log.Printf("[TaskService] Task %s has pending decomposition plan → review", safe8(taskID))
+		return string(models.TaskReview)
+	}
+
 	switch snap.CompletionBehavior {
 	case models.CompletionAutoDone:
-		// If result_summary is non-empty, go to review so user can see output
 		if opts.ResultSummary != "" {
-			s.TransitionStatus(taskID, string(models.TaskReview), opts)
-		} else {
-			s.TransitionStatus(taskID, string(models.TaskDone), opts)
+			return string(models.TaskReview)
 		}
+		return string(models.TaskDone)
 
 	case models.CompletionAutoReview:
-		if snap.AssigneeType == "agent_profile" && snap.AssigneeID != "" && s.Reviewer != nil {
-			s.Reviewer.createReviewQueue(taskID, snap.AssigneeID, snap.WorkflowID)
-			s.TransitionStatus(taskID, string(models.TaskReview), opts)
-		} else {
-			s.TransitionStatus(taskID, string(models.TaskReview), opts)
-		}
+		return string(models.TaskReview)
 
 	case models.CompletionSampleReview:
 		sampleRate := 0.2
@@ -445,19 +421,29 @@ func (s *TaskService) routeCompletion(taskID string, snap taskSnapshot, opts Tra
 			).Scan(&sampleRate)
 		}
 		if rand.Float64() < sampleRate {
-			s.TransitionStatus(taskID, string(models.TaskReview), opts)
-		} else {
-			s.TransitionStatus(taskID, string(models.TaskDone), opts)
+			return string(models.TaskReview)
 		}
+		return string(models.TaskDone)
 
 	case models.CompletionNeedsReview:
-		s.TransitionStatus(taskID, string(models.TaskReview), opts)
+		return string(models.TaskReview)
 
 	default:
 		log.Printf("[TaskService] WARNING: unknown completion_behavior '%s' for task %s, defaulting to review",
 			snap.CompletionBehavior, safe8(taskID))
-		s.TransitionStatus(taskID, string(models.TaskReview), opts)
+		return string(models.TaskReview)
 	}
+}
+
+// hasPendingDecompositionPlan checks whether a task has a pending decomposition plan
+// that requires human review before the task can be auto-completed.
+func (s *TaskService) hasPendingDecompositionPlan(taskID string) bool {
+	var hasPending bool
+	s.DB.QueryRow(
+		`SELECT EXISTS(SELECT 1 FROM decomposition_plans WHERE task_id = $1 AND status = 'pending')`,
+		taskID,
+	).Scan(&hasPending)
+	return hasPending
 }
 
 // ========== Review handling (inlined from ReviewRouter.HandleReview) ==========
