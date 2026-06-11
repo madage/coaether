@@ -20,13 +20,15 @@
 10. [技能库（Skills）](#9-技能库-skills)
 11. [任务规则引擎](#10-任务规则引擎)
 12. [通知系统](#11-通知系统)
-13. [会话管理](#12-会话管理)
-14. [插件管理](#13-插件管理)
-15. [工作流管理](#14-工作流管理)
-16. [Harness 智能体工具调用](#15-harness-智能体工具调用)
-17. [工具集管理](#16-工具集管理)
-18. [辅助接口](#17-辅助接口)
-19. [接口一览表](#18-接口一览表)
+13. [API Token 管理](#12-api-token-管理)
+14. [日志管理](#13-日志管理)
+15. [会话管理](#14-会话管理)
+16. [插件管理](#15-插件管理)
+17. [工作流管理](#16-工作流管理)
+18. [Harness 智能体工具调用](#17-harness-智能体工具调用)
+19. [工具集管理](#18-工具集管理)
+20. [辅助接口](#19-辅助接口)
+21. [接口一览表](#20-接口一览表)
 
 ---
 
@@ -49,7 +51,7 @@ http://<server>:8088/api
 | `/api/nodes/install.*` | 公开（安装脚本） |
 | `/api/nodes/bin/*` | 公开（二进制下载） |
 | `/api/node/*` | `node_secret` + `node_id` 查询参数 |
-| 其余 `/api/*` | JWT Bearer Token |
+| 其余 `/api/*` | JWT Bearer Token 或 API Token Bearer |
 
 ### JWT 认证请求头
 
@@ -57,6 +59,16 @@ http://<server>:8088/api
 Content-Type: application/json
 Authorization: Bearer <jwt_token>
 ```
+
+### API Token 认证请求头
+
+API Token 可替代 JWT 用于第三方集成：
+
+```
+Authorization: Bearer coaether_<64-hex-chars>
+```
+
+Token 通过 `POST /api/tokens` 创建，支持 7d/30d/90d/permanent 有效期。
 
 ### node_secret 认证
 
@@ -668,7 +680,7 @@ POST /api/tasks/:id/decomposition-plan/approve
 4. 有依赖的子任务设为 blocked，无依赖 + 智能体负责人 → 自动入队列
 5. 更新 plan_items 的 `real_task_id` 和 `is_approved=true`
 6. 计划状态改为 `approved`
-7. 父任务状态改为 `in_progress`（等待子任务完成）
+7. 父任务状态改为 `blocked`（等待子任务完成，防止重复派发分解智能体）
 8. 发布审核通过评论
 
 **响应（200）：**
@@ -702,7 +714,7 @@ POST /api/tasks/:id/decomposition-plan/reject
 
 **流程：**
 1. 计划状态 → `rejected`，所有 items → `is_approved=false`
-2. 父任务 → `in_progress`（智能体可重新提出计划）
+2. 父任务 → `in_progress`（智能体可重新提出计划）；若已有通过的分解计划则禁止重复分解
 3. 发布驳回评论（含驳回原因）
 
 **响应（200）：**
@@ -1735,13 +1747,24 @@ POST /api/node/sessions?node_id=<node_id>&node_secret=<secret>
 }
 ```
 
-**响应：**
+**说明：** 如果同一 `task_id` 已有活跃会话（`pending`/`running`），接口返回已有会话 ID 并附带 `status: "existing"`，避免重复创建。
+
+**响应（201）：**
 
 ```json
 {
   "session_id": "session-uuid",
   "status": "pending",
   "prompt": "Task: 标题\n\nDescription: 描述\n\nPlease work on this task."
+}
+```
+
+**响应（200 — 已有会话）：**
+
+```json
+{
+  "session_id": "existing-session-uuid",
+  "status": "existing"
 }
 ```
 
@@ -2209,9 +2232,258 @@ DELETE /api/notifications/:id
 
 ---
 
-## 12. 会话管理
+## 12. API Token 管理
 
-### 12.1 会话模型
+> API Token 用于第三方系统集成，支持 Bearer Token 认证方式。仅 `admin`/`owner` 角色可管理。
+
+### 12.1 Token 模型
+
+```json
+{
+  "id": "uuid",
+  "name": "Token 名称（用户自定义）",
+  "created_at": "datetime",
+  "expires_at": "datetime | null",
+  "last_used_at": "datetime | null"
+}
+```
+
+**说明：** 创建 Token 后只返回一次原始值（`coaether_` + 64位 hex），后续无法再次查看原始值。Token 支持 7 天、30 天、90 天、永久四种有效期。
+
+### 12.2 列出 Token
+
+```
+GET /api/tokens
+```
+
+**认证：** JWT（admin/owner）
+
+**响应：**
+
+```json
+{
+  "tokens": [
+    { "id": "uuid", "name": "CI/CD 集成", "created_at": "...", "expires_at": "...", "last_used_at": "..." }
+  ]
+}
+```
+
+---
+
+### 12.3 创建 Token
+
+```
+POST /api/tokens
+```
+
+**认证：** JWT（admin/owner）
+
+**请求体：**
+
+```json
+{
+  "name": "Token 名称（必填）",
+  "expiry": "7d | 30d | 90d | permanent"
+}
+```
+
+**说明：** `expiry` 不传或传 `permanent` 表示永不过期。
+
+**响应（201）：**
+
+```json
+{
+  "token": "coaether_<64-hex-chars>",
+  "id": "uuid",
+  "name": "CI/CD 集成",
+  "expires_at": "2026-07-12T00:00:00Z",
+  "created_at": "2026-06-12T00:00:00Z"
+}
+```
+
+---
+
+### 12.4 吊销 Token
+
+```
+DELETE /api/tokens/:id
+```
+
+**认证：** JWT（admin/owner）
+
+**响应：**
+
+```json
+{ "status": "revoked" }
+```
+
+---
+
+### 12.5 Bearer Token 认证方式
+
+API Token 可在 HTTP 请求头中使用：
+
+```
+Authorization: Bearer coaether_<64-hex-chars>
+```
+
+替代 JWT 认证，适用于 CI/CD、外部脚本等场景。
+
+---
+
+## 13. 日志管理
+
+> 日志管理提供 Agent 工具调用、访问日志、Token 用量、系统事件的查询。所有端点支持分页查询。
+
+### 13.1 Agent 工具调用日志
+
+```
+GET /api/logs/agent-tool?page=1&size=30
+```
+
+**认证：** JWT
+
+**响应：**
+
+```json
+{
+  "items": [
+    {
+      "id": "uuid",
+      "agent_id": "profile-uuid",
+      "agent_name": "需求拆分专家",
+      "workflow_id": "uuid | null",
+      "task_id": "task-uuid",
+      "tool_name": "create_sub_task",
+      "parameters": "{\"title\": \"子任务\"}",
+      "status": "success | denied",
+      "deny_reason": "permission_denied（拒绝时）",
+      "created_at": "datetime"
+    }
+  ],
+  "total": 100,
+  "page": 1,
+  "size": 30
+}
+```
+
+---
+
+### 13.2 访问日志
+
+```
+GET /api/logs/access?page=1&size=30&path=/api/tasks
+```
+
+**认证：** JWT
+
+**查询参数：**
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `page` | int | 否 | 页码，默认 1 |
+| `size` | int | 否 | 每页条数，默认 30 |
+| `path` | string | 否 | 按路径前缀过滤（ILIKE 模糊匹配） |
+
+**响应：**
+
+```json
+{
+  "items": [
+    {
+      "id": "uuid",
+      "user_id": "user-uuid",
+      "username": "用户名",
+      "method": "GET",
+      "path": "/api/tasks",
+      "status": 200,
+      "latency_ms": 45,
+      "client_ip": "192.168.1.1",
+      "created_at": "datetime"
+    }
+  ],
+  "total": 500,
+  "page": 1,
+  "size": 30
+}
+```
+
+---
+
+### 13.3 Token 用量日志
+
+```
+GET /api/logs/token-usage?page=1&size=30
+```
+
+**认证：** JWT
+
+**响应：**
+
+```json
+{
+  "items": [
+    {
+      "id": "uuid",
+      "workflow_id": "uuid | null",
+      "task_id": "uuid | null",
+      "agent_profile_id": "profile-uuid",
+      "agent_name": "前端程序员",
+      "session_id": "session-uuid | null",
+      "prompt_tokens": 1000,
+      "completion_tokens": 500,
+      "total_tokens": 1500,
+      "stage": "work",
+      "created_at": "datetime"
+    }
+  ],
+  "total": 200,
+  "page": 1,
+  "size": 30
+}
+```
+
+**说明：** `stage` 可选值：`work`、`review`、`evaluate`。
+
+---
+
+### 13.4 系统事件日志
+
+```
+GET /api/logs/system-events?page=1&size=30
+```
+
+**认证：** JWT
+
+**响应：**
+
+```json
+{
+  "items": [
+    {
+      "id": "uuid",
+      "event_type": "escalation",
+      "source": "workflow",
+      "title": "工作流熔断 L3",
+      "detail": "审核轮次超限 → stuck",
+      "created_at": "datetime"
+    }
+  ],
+  "total": 50,
+  "page": 1,
+  "size": 30
+}
+```
+
+**说明：** 系统事件聚合了工作流熔断记录、任务审核记录和应用事件三类数据源。
+
+---
+
+## 14. 会话管理
+
+> 会话由 MessageBus 管理内存生命周期，由 SessionService 同步 DB 状态。Runtime 加入时自动标记 `running`，结束时标记 `completed`，断连时标记 `failed`。超时空壳会话由 GC 定期清理（内存每10分钟，DB每30分钟）。
+
+### 14.1 会话模型
 
 ```json
 {
@@ -2220,13 +2492,20 @@ DELETE /api/notifications/:id
   "user_id": "uuid",
   "agent_id": "claude",
   "task_id": "uuid | null",
+  "queue_id": "uuid | null",
+  "agent_profile_id": "uuid | null",
   "status": "pending | running | completed | failed",
+  "output_log": "会话输出内容",
+  "error_log": "错误信息（失败时）",
   "created_at": "datetime",
-  "updated_at": "datetime"
+  "updated_at": "datetime",
+  "completed_at": "datetime | null"
 }
 ```
 
-### 12.2 创建会话
+**说明：** `task_id`、`queue_id`、`agent_profile_id` 为关联字段，便于按任务或智能体查询会话记录。
+
+### 14.2 创建会话
 
 ```
 POST /api/sessions
@@ -2255,7 +2534,7 @@ POST /api/sessions
 
 ---
 
-### 12.3 列出会话
+### 14.3 列出会话
 
 ```
 GET /api/sessions
@@ -2269,7 +2548,7 @@ GET /api/sessions
 
 ---
 
-### 12.4 获取会话
+### 14.4 获取会话
 
 ```
 GET /api/sessions/:id
@@ -2279,7 +2558,7 @@ GET /api/sessions/:id
 
 ---
 
-### 12.5 获取会话消息
+### 14.5 获取会话消息
 
 ```
 GET /api/sessions/:id/messages
@@ -2303,9 +2582,9 @@ GET /api/sessions/:id/messages
 
 ---
 
-## 13. 插件管理
+## 15. 插件管理
 
-### 13.1 插件模型
+### 15.1 插件模型
 
 ```json
 {
@@ -2327,7 +2606,7 @@ GET /api/sessions/:id/messages
 }
 ```
 
-### 13.2 列出插件
+### 15.2 列出插件
 
 ```
 GET /api/plugins
@@ -2343,7 +2622,7 @@ GET /api/plugins
 
 ---
 
-### 13.3 获取插件详情
+### 15.3 获取插件详情
 
 ```
 GET /api/plugins/:name
@@ -2359,7 +2638,7 @@ GET /api/plugins/:name
 
 ---
 
-### 13.4 启动插件
+### 15.4 启动插件
 
 ```
 POST /api/plugins/:name/start
@@ -2375,7 +2654,7 @@ POST /api/plugins/:name/start
 
 ---
 
-### 13.5 停止插件
+### 15.5 停止插件
 
 ```
 POST /api/plugins/:name/stop
@@ -2391,7 +2670,7 @@ POST /api/plugins/:name/stop
 
 ---
 
-### 13.6 移除插件
+### 15.6 移除插件
 
 ```
 POST /api/plugins/:name/remove
@@ -2409,7 +2688,7 @@ POST /api/plugins/:name/remove
 
 ---
 
-### 13.7 重新加载插件
+### 15.7 重新加载插件
 
 ```
 POST /api/plugins/:name/reload
@@ -2427,7 +2706,7 @@ POST /api/plugins/:name/reload
 
 ---
 
-### 13.8 插件健康检查
+### 15.8 插件健康检查
 
 ```
 GET /api/plugins/:name/health
@@ -2443,7 +2722,7 @@ GET /api/plugins/:name/health
 
 ---
 
-### 13.9 上传安装插件
+### 15.9 上传安装插件
 
 ```
 POST /api/plugins/install/upload
@@ -2463,7 +2742,7 @@ POST /api/plugins/install/upload
 
 ---
 
-### 13.10 从 Git 安装插件
+### 15.10 从 Git 安装插件
 
 ```
 POST /api/plugins/install/git
@@ -2488,7 +2767,7 @@ POST /api/plugins/install/git
 
 ---
 
-### 13.11 插件宿主内部 API（供插件内部使用）
+### 15.11 插件宿主内部 API（供插件内部使用）
 
 > 这些接口仅供插件运行时内部调用，端点位于 `/api/__plugin_host/*`。
 
@@ -2508,9 +2787,9 @@ POST /api/plugins/install/git
 
 ---
 
-## 14. 工作流管理
+## 16. 工作流管理
 
-### 14.1 工作流模型
+### 16.1 工作流模型
 
 ```json
 {
@@ -2527,7 +2806,7 @@ POST /api/plugins/install/git
 }
 ```
 
-### 14.2 列出工作流
+### 16.2 列出工作流
 
 ```
 GET /api/workflows?workspace_id=<workspace_id>
@@ -2551,7 +2830,7 @@ GET /api/workflows?workspace_id=<workspace_id>
 
 ---
 
-### 14.3 创建工作流
+### 16.3 创建工作流
 
 ```
 POST /api/workflows?workspace_id=<workspace_id>
@@ -2575,7 +2854,7 @@ POST /api/workflows?workspace_id=<workspace_id>
 
 ---
 
-### 14.4 获取工作流详情
+### 16.4 获取工作流详情
 
 ```
 GET /api/workflows/:id
@@ -2595,7 +2874,7 @@ GET /api/workflows/:id
 
 ---
 
-### 14.5 更新工作流状态
+### 16.5 更新工作流状态
 
 ```
 PATCH /api/workflows/:id/status
@@ -2617,7 +2896,7 @@ PATCH /api/workflows/:id/status
 
 ---
 
-### 14.6 列出工作流任务
+### 16.6 列出工作流任务
 
 ```
 GET /api/workflows/:id/tasks
@@ -2648,7 +2927,7 @@ GET /api/workflows/:id/tasks
 
 ---
 
-### 14.7 将任务附加到工作流
+### 16.7 将任务附加到工作流
 
 ```
 POST /api/workflows/attach
@@ -2675,7 +2954,7 @@ POST /api/workflows/attach
 
 ---
 
-### 14.8 DAG 自动推进
+### 16.8 DAG 自动推进
 
 DAGEngine 在工作流执行过程中自动管理任务依赖：
 
@@ -2695,11 +2974,11 @@ DAGEngine 在工作流执行过程中自动管理任务依赖：
 
 ---
 
-## 15. Harness 智能体工具调用
+## 17. Harness 智能体工具调用
 
 > Harness 是智能体在工作流中调用系统功能的权限安全层。智能体通过在回复中嵌入 JSON 格式的 `tool_call` 来调用以下工具。
 
-### 15.1 工具列表
+### 17.1 工具列表
 
 | 工具 | 描述 | 所需权限 | 所需能力 |
 |------|------|---------|---------|
@@ -2713,7 +2992,7 @@ DAGEngine 在工作流执行过程中自动管理任务依赖：
 | `update_task_status` | 更新任务状态（仅工作流内有效） | `task.write` | `update_task_status` |
 | `search_agent_profiles` | 运行时查询可用的智能体及其 ID，支持按名称、标签、能力过滤 | `agent.read` | `search_agent_profiles` |
 
-### 15.2 Tool Call 格式
+### 17.2 Tool Call 格式
 
 智能体在回复中输出以下 JSON 块：
 
@@ -2721,7 +3000,7 @@ DAGEngine 在工作流执行过程中自动管理任务依赖：
 {"type": "tool_call", "tool": "create_sub_task", "params": {"title": "编写API文档"}, "id": "optional-call-id"}
 ```
 
-### 15.3 工具调用流程
+### 17.3 工具调用流程
 
 ```
 智能体回复 → 运行时提取 tool_call JSON → Harness.HandleToolCall()
@@ -2735,7 +3014,7 @@ DAGEngine 在工作流执行过程中自动管理任务依赖：
   └─ 3. Auditor 审计日志记录
 ```
 
-### 15.4 各工具参数
+### 17.4 各工具参数
 
 **create_sub_task:**
 
@@ -2882,7 +3161,7 @@ DAGEngine 在工作流执行过程中自动管理任务依赖：
 }
 ```
 
-### 15.5 错误码
+### 17.5 错误码
 
 | 错误码 | 说明 |
 |--------|------|
@@ -2896,11 +3175,11 @@ DAGEngine 在工作流执行过程中自动管理任务依赖：
 
 ---
 
-## 16. 工具集管理
+## 18. 工具集管理
 
 > 工具集页面展示所有 Harness 工具，支持全局启用/禁用控制。
 
-### 16.1 列出所有工具
+### 18.1 列出所有工具
 
 ```
 GET /api/tools
@@ -2931,7 +3210,7 @@ GET /api/tools
 
 ---
 
-### 16.2 切换工具全局开关
+### 18.2 切换工具全局开关
 
 ```
 POST /api/tools/:toolName/toggle
@@ -2960,9 +3239,9 @@ POST /api/tools/:toolName/toggle
 
 ---
 
-## 17. 辅助接口
+## 19. 辅助接口
 
-### 17.1 健康检查
+### 19.1 健康检查
 
 ```
 GET /api/health
@@ -2978,7 +3257,7 @@ GET /api/health
 
 ---
 
-### 17.2 WebSocket 仪表盘
+### 19.2 WebSocket 仪表盘
 
 ```
 GET /ws/dashboard
@@ -2990,7 +3269,7 @@ GET /ws/dashboard
 
 ---
 
-### 17.3 WebSocket 消息总线
+### 19.3 WebSocket 消息总线
 
 ```
 GET /ws/bus
@@ -3002,7 +3281,7 @@ GET /ws/bus
 
 ---
 
-### 17.4 下载节点安装脚本（Linux）
+### 19.4 下载节点安装脚本（Linux）
 
 ```
 GET /api/nodes/install.sh
@@ -3014,7 +3293,7 @@ GET /api/nodes/install.sh
 
 ---
 
-### 17.5 下载节点安装脚本（Windows）
+### 19.5 下载节点安装脚本（Windows）
 
 ```
 GET /api/nodes/install.ps1
@@ -3026,7 +3305,7 @@ GET /api/nodes/install.ps1
 
 ---
 
-### 17.6 下载节点二进制
+### 19.6 下载节点二进制
 
 ```
 GET /api/nodes/bin/:os/:arch
@@ -3038,7 +3317,7 @@ GET /api/nodes/bin/:os/:arch
 
 ---
 
-## 18. 接口一览表
+## 20. 接口一览表
 
 | # | 操作 | 方法 | 路径 | 认证 |
 |---|------|------|------|------|
@@ -3137,31 +3416,38 @@ GET /api/nodes/bin/:os/:arch
 | 11.4 | 标记已读 | `PATCH` | `/api/notifications/:id/read` | JWT |
 | 11.5 | 全部标记已读 | `PATCH` | `/api/notifications/read-all` | JWT |
 | 11.6 | 删除通知 | `DELETE` | `/api/notifications/:id` | JWT |
-| 12.2 | 创建会话 | `POST` | `/api/sessions` | JWT |
-| 12.3 | 列出会话 | `GET` | `/api/sessions` | JWT |
-| 12.4 | 获取会话 | `GET` | `/api/sessions/:id` | JWT |
-| 12.5 | 获取会话消息 | `GET` | `/api/sessions/:id/messages` | JWT |
-| 13.2 | 列出插件 | `GET` | `/api/plugins` | JWT |
-| 13.3 | 获取插件详情 | `GET` | `/api/plugins/:name` | JWT |
-| 13.4 | 启动插件 | `POST` | `/api/plugins/:name/start` | JWT |
-| 13.5 | 停止插件 | `POST` | `/api/plugins/:name/stop` | JWT |
-| 13.6 | 移除插件 | `POST` | `/api/plugins/:name/remove` | JWT |
-| 13.7 | 重新加载插件 | `POST` | `/api/plugins/:name/reload` | JWT |
-| 13.8 | 插件健康检查 | `GET` | `/api/plugins/:name/health` | JWT |
-| 13.9 | 上传安装插件 | `POST` | `/api/plugins/install/upload` | JWT |
-| 13.10 | 从 Git 安装插件 | `POST` | `/api/plugins/install/git` | JWT |
-| 13.11 | 插件宿主 API 列表 | `GET/POST/PUT/DELETE` | `/api/__plugin_host/*` | 内部使用 |
-| 14.1 | 列出工作流 | `GET` | `/api/workflows` | JWT |
-| 14.2 | 创建工作流 | `POST` | `/api/workflows` | JWT |
-| 14.3 | 获取工作流 | `GET` | `/api/workflows/:id` | JWT |
-| 14.4 | 更新工作流状态 | `PATCH` | `/api/workflows/:id/status` | JWT |
-| 14.5 | 列出工作流任务 | `GET` | `/api/workflows/:id/tasks` | JWT |
-| 14.6 | 附加任务到工作流 | `POST` | `/api/workflows/attach` | JWT |
-| 16.1 | 列出所有工具 | `GET` | `/api/tools` | JWT |
-| 16.2 | 切换工具开关 | `POST` | `/api/tools/:toolName/toggle` | JWT |
-| 17.1 | 健康检查 | `GET` | `/api/health` | 公开 |
-| 17.2 | WebSocket 仪表盘 | `GET` | `/ws/dashboard` | 公开 |
-| 17.3 | WebSocket 消息总线 | `GET` | `/ws/bus` | 公开 |
-| 17.4 | 安装脚本（Linux） | `GET` | `/api/nodes/install.sh` | 公开 |
-| 17.5 | 安装脚本（Windows） | `GET` | `/api/nodes/install.ps1` | 公开 |
-| 17.6 | 下载节点二进制 | `GET` | `/api/nodes/bin/:os/:arch` | 公开 |
+| 12.2 | 列出 Token | `GET` | `/api/tokens` | JWT（admin/owner） |
+| 12.3 | 创建 Token | `POST` | `/api/tokens` | JWT（admin/owner） |
+| 12.4 | 吊销 Token | `DELETE` | `/api/tokens/:id` | JWT（admin/owner） |
+| 13.1 | Agent 工具调用日志 | `GET` | `/api/logs/agent-tool` | JWT |
+| 13.2 | 访问日志 | `GET` | `/api/logs/access` | JWT |
+| 13.3 | Token 用量日志 | `GET` | `/api/logs/token-usage` | JWT |
+| 13.4 | 系统事件日志 | `GET` | `/api/logs/system-events` | JWT |
+| 14.2 | 创建会话 | `POST` | `/api/sessions` | JWT |
+| 14.3 | 列出会话 | `GET` | `/api/sessions` | JWT |
+| 14.4 | 获取会话 | `GET` | `/api/sessions/:id` | JWT |
+| 14.5 | 获取会话消息 | `GET` | `/api/sessions/:id/messages` | JWT |
+| 15.2 | 列出插件 | `GET` | `/api/plugins` | JWT |
+| 15.3 | 获取插件详情 | `GET` | `/api/plugins/:name` | JWT |
+| 15.4 | 启动插件 | `POST` | `/api/plugins/:name/start` | JWT |
+| 15.5 | 停止插件 | `POST` | `/api/plugins/:name/stop` | JWT |
+| 15.6 | 移除插件 | `POST` | `/api/plugins/:name/remove` | JWT |
+| 15.7 | 重新加载插件 | `POST` | `/api/plugins/:name/reload` | JWT |
+| 15.8 | 插件健康检查 | `GET` | `/api/plugins/:name/health` | JWT |
+| 15.9 | 上传安装插件 | `POST` | `/api/plugins/install/upload` | JWT |
+| 15.10 | 从 Git 安装插件 | `POST` | `/api/plugins/install/git` | JWT |
+| 15.11 | 插件宿主 API 列表 | `GET/POST/PUT/DELETE` | `/api/__plugin_host/*` | 内部使用 |
+| 16.1 | 列出工作流 | `GET` | `/api/workflows` | JWT |
+| 16.2 | 创建工作流 | `POST` | `/api/workflows` | JWT |
+| 16.3 | 获取工作流 | `GET` | `/api/workflows/:id` | JWT |
+| 16.4 | 更新工作流状态 | `PATCH` | `/api/workflows/:id/status` | JWT |
+| 16.5 | 列出工作流任务 | `GET` | `/api/workflows/:id/tasks` | JWT |
+| 16.6 | 附加任务到工作流 | `POST` | `/api/workflows/attach` | JWT |
+| 18.1 | 列出所有工具 | `GET` | `/api/tools` | JWT |
+| 18.2 | 切换工具开关 | `POST` | `/api/tools/:toolName/toggle` | JWT |
+| 19.1 | 健康检查 | `GET` | `/api/health` | 公开 |
+| 19.2 | WebSocket 仪表盘 | `GET` | `/ws/dashboard` | 公开 |
+| 19.3 | WebSocket 消息总线 | `GET` | `/ws/bus` | 公开 |
+| 19.4 | 安装脚本（Linux） | `GET` | `/api/nodes/install.sh` | 公开 |
+| 19.5 | 安装脚本（Windows） | `GET` | `/api/nodes/install.ps1` | 公开 |
+| 19.6 | 下载节点二进制 | `GET` | `/api/nodes/bin/:os/:arch` | 公开 |
