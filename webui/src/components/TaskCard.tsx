@@ -61,6 +61,7 @@ export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap, 
   const menuRef = useRef<HTMLDivElement>(null);
   const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pressStart = useRef<{ x: number; y: number } | null>(null);
+  const dragReady = useRef(false);
   const cardRef = useRef<HTMLDivElement>(null);
 
   const isOverdue = task.due_at && new Date(task.due_at) < new Date() && task.status !== 'done';
@@ -68,6 +69,7 @@ export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap, 
   const clearPress = () => {
     if (pressTimer.current) { clearTimeout(pressTimer.current); pressTimer.current = null; }
     pressStart.current = null;
+    dragReady.current = false;
   };
 
   useEffect(() => {
@@ -102,14 +104,24 @@ export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap, 
         const el = e.currentTarget as HTMLElement;
         pressTimer.current = setTimeout(() => {
           pressTimer.current = null;
-          onDragMouseDown?.(el, task.id, cx, cy);
-        }, 60);
+          dragReady.current = true;
+        }, 50);
       }}
       onMouseMove={(e) => {
         if (!pressStart.current) return;
         const dx = Math.abs(e.clientX - pressStart.current.x);
         const dy = Math.abs(e.clientY - pressStart.current.y);
-        if (dx > 5 || dy > 5) clearPress();
+        if (dx > 5 || dy > 5) {
+          if (dragReady.current) {
+            // Long press + actual movement = start drag
+            dragReady.current = false;
+            pressStart.current = null;
+            const el = e.currentTarget as HTMLElement;
+            onDragMouseDown?.(el, task.id, e.clientX, e.clientY);
+          } else {
+            clearPress();
+          }
+        }
       }}
       onMouseUp={clearPress}
       onMouseLeave={(e) => {
@@ -129,8 +141,7 @@ export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap, 
         display: 'flex',
         flexDirection: 'column',
         gap: '6px',
-        cursor: 'grab',
-        userSelect: 'none',
+        cursor: 'pointer',
         position: 'relative',
         zIndex: menuOpen ? 1 : undefined,
         visibility: isDragging ? 'hidden' : 'visible',

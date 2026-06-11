@@ -162,7 +162,9 @@ export function TaskBoard({ initialTaskId, onTaskOpened }: { initialTaskId?: str
   useEffect(() => {
     if (!hasDrag) return;
     const prevUserSelect = document.body.style.userSelect;
+    const prevCursor = document.body.style.cursor;
     document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'grabbing';
     const handleMove = (e: MouseEvent) => {
       e.preventDefault();
       const cur = dragRef.current;
@@ -188,6 +190,7 @@ export function TaskBoard({ initialTaskId, onTaskOpened }: { initialTaskId?: str
     document.addEventListener('mouseup', handleUp);
     return () => {
       document.body.style.userSelect = prevUserSelect;
+      document.body.style.cursor = prevCursor;
       document.removeEventListener('mousemove', handleMove);
       document.removeEventListener('mouseup', handleUp);
     };
