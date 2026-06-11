@@ -240,7 +240,7 @@ var addCommentSchema = json.RawMessage(`{
 	"required": ["task_id", "content"],
 	"properties": {
 		"task_id": {"type": "string"},
-		"content": {"type": "string", "maxLength": 10000}
+		"content": {"type": "string", "maxLength": 50000}
 	}
 }`)
 
@@ -313,8 +313,8 @@ func ValidateParams(toolDef ToolDefinition, params json.RawMessage) error {
 	}
 	content, hasContent := paramsMap["content"]
 	if hasContent {
-		if s, ok := content.(string); ok && len(s) > 10000 {
-			return fmt.Errorf("content exceeds max length of 10000")
+		if s, ok := content.(string); ok && len(s) > 50000 {
+			return fmt.Errorf("content exceeds max length of 50000")
 		}
 	}
 

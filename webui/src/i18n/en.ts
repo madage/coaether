@@ -215,6 +215,7 @@ export const en = {
   taskDetailSubtasks: 'Subtasks',
   taskDetailComments: 'Comments',
   taskDetailAgentBadge: 'Agent',
+  taskDetailAgentReport: 'Agent Report',
   taskDetailOverdue: 'This task is past due',
   taskDetailPriority: 'Priority',
   priorityUrgent: 'Urgent',

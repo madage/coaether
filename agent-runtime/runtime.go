@@ -1083,7 +1083,8 @@ Respond with exactly one of these two formats:
 		if reply == "" {
 			reply = "Acknowledged."
 		}
-		r.postAgentComment(taskID, agentProfileID, queueID, reply)
+		// updateQueueStatus passes result_summary → MarkCompleted → handleInProgressToCompleted
+		// which posts the comment. Do NOT also call postAgentComment — that causes duplicates.
 		r.updateQueueStatus(queueID, "completed", reply)
 
 	case strings.HasPrefix(evalResult, "WORK:"):
@@ -1120,7 +1121,8 @@ Respond with exactly one of these two formats:
 		if len([]rune(reply)) > 2000 {
 			reply = string([]rune(reply)[:2000]) + "\n\n...（过长已截断）"
 		}
-		r.postAgentComment(taskID, agentProfileID, queueID, reply)
+		// updateQueueStatus passes result_summary → MarkCompleted → handleInProgressToCompleted
+		// which posts the comment. Do NOT also call postAgentComment — that causes duplicates.
 		r.updateQueueStatus(queueID, "completed", reply)
 	}
 }

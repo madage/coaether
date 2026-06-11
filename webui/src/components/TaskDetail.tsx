@@ -1120,6 +1120,31 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
               </div>
             )}
 
+            {/* Agent Report — full result_summary from completed queue items */}
+            {taskQueueItems.filter(q => q.status === 'completed' && q.result_summary).length > 0 && (
+              <div style={{ marginBottom: '24px' }}>
+                <h4 style={{ margin: '0 0 8px 0', fontSize: '0.85em', color: '#999', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  🤖 {t('taskDetailAgentReport') || 'Agent Report'}
+                </h4>
+                {taskQueueItems.filter(q => q.status === 'completed' && q.result_summary).map(item => (
+                  <div key={item.id} style={{
+                    padding: '12px 16px', background: '#f8fdf5', border: '1px solid #d4edda',
+                    borderRadius: '8px', marginBottom: '8px',
+                  }}>
+                    <div style={{ fontSize: '0.75em', color: '#888', marginBottom: '6px' }}>
+                      {new Date(item.completed_at || '').toLocaleString()}
+                    </div>
+                    <div style={{
+                      fontSize: '0.9em', lineHeight: 1.7, color: '#333',
+                      whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                    }}>
+                      {item.result_summary}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {/* Comments */}
             <div style={{ marginBottom: '24px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>

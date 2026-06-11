@@ -80,9 +80,9 @@ func (h *NodeAgentHandler) ListQueue(c *gin.Context) {
 		FROM task_agent_queue q
 		JOIN agent_profiles ap ON ap.id = q.agent_profile_id AND ap.enabled = true
 		JOIN workspace_members wm ON wm.workspace_id = ap.workspace_id
-		WHERE wm.user_id = $1 AND q.status = 'queued'
+		WHERE wm.user_id = $1 AND q.status = 'queued' AND ap.node_id = $2
 		ORDER BY q.created_at ASC
-		LIMIT 10`, auth.UserID)
+		LIMIT 10`, auth.UserID, auth.NodeID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query queue"})
 		return
@@ -142,6 +142,22 @@ func (h *NodeAgentHandler) ClaimQueueItem(c *gin.Context) {
 	}
 	if currentStatus != "queued" {
 		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("cannot claim item with status %s", currentStatus)})
+		return
+	}
+
+	// Verify this node is the assigned node for the agent profile
+	var agentNodeID string
+	err = h.DB.QueryRow(
+		`SELECT ap.node_id FROM task_agent_queue q
+		 JOIN agent_profiles ap ON ap.id = q.agent_profile_id
+		 WHERE q.id = $1`, queueID,
+	).Scan(&agentNodeID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify node assignment"})
+		return
+	}
+	if agentNodeID != auth.NodeID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "this agent is assigned to a different node"})
 		return
 	}
 

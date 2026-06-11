@@ -215,6 +215,7 @@ export const zh = {
   taskDetailSubtasks: '子任务',
   taskDetailComments: '评论',
   taskDetailAgentBadge: '智能体',
+  taskDetailAgentReport: '智能体报告',
   taskDetailOverdue: '该任务已逾期',
   taskDetailPriority: '优先级',
   priorityUrgent: '紧急',

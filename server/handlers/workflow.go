@@ -1056,9 +1056,9 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 				return nil, fmt.Errorf("task_id and status are required")
 			}
 
-			validStatuses := map[string]bool{"todo": true, "in_progress": true, "completed": true, "blocked": true, "done": true}
+			validStatuses := map[string]bool{"todo": true, "in_progress": true, "completed": true, "blocked": true, "done": true, "review": true}
 			if !validStatuses[p.Status] {
-				return nil, fmt.Errorf("invalid status: %s (must be todo, in_progress, completed, or blocked)", p.Status)
+				return nil, fmt.Errorf("invalid status: %s (must be todo, in_progress, completed, blocked, done, or review)", p.Status)
 			}
 
 			opts := TransitionOpts{
@@ -1076,13 +1076,15 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 				err = h.TaskService.MarkInProgress(p.TaskID, opts)
 			case "blocked":
 				err = h.TaskService.MarkBlocked(p.TaskID, opts)
+			case "review":
+				err = h.TaskService.MarkReview(p.TaskID, opts)
 			}
 			if err != nil {
 				return nil, fmt.Errorf("failed to update status: %w", err)
 			}
 
 			// Release agent load for terminal statuses (tool-call path doesn't go through UpdateQueueStatus)
-			if p.Status == "completed" || p.Status == "done" || p.Status == "blocked" {
+			if p.Status == "completed" || p.Status == "done" || p.Status == "blocked" || p.Status == "review" {
 				h.DB.Exec(`UPDATE agent_profiles SET current_load = GREATEST(0, current_load - 1) WHERE id = $1`, ctx.AgentProfileID)
 			}
 

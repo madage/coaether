@@ -26,7 +26,7 @@ function authHeaders(): Record<string, string> {
 
 // List of path prefixes that should NOT get workspace_id appended
 
-const unscopedPrefixes = ['/workspaces', '/auth/', '/nodes', '/agents/runtimes', '/invitations/', '/users', '/invitations/pending', '/tokens', '/logs'];
+const unscopedPrefixes = ['/workspaces', '/auth/', '/agents/runtimes', '/invitations/', '/users', '/invitations/pending', '/tokens', '/logs'];
 
 
 
