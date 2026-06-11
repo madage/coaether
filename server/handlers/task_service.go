@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"math/rand"
@@ -68,53 +69,62 @@ func NewTaskService(db *sql.DB, hub *DashboardHub, dag *DAGEngine, reviewer *Rev
 
 // TransitionStatus is the SINGLE place where task status is written to the DB.
 // It validates the transition, executes the UPDATE, and fires all appropriate side effects.
+// Uses optimistic locking with up to 3 retries on concurrent modification.
 func (s *TaskService) TransitionStatus(taskID string, newStatus string, opts TransitionOpts) error {
-	snap, err := s.readTaskSnapshot(taskID)
-	if err != nil {
-		return fmt.Errorf("task %s: %w", safe8(taskID), err)
-	}
+	const maxRetries = 3
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		snap, err := s.readTaskSnapshot(taskID)
+		if err != nil {
+			return fmt.Errorf("task %s: %w", safe8(taskID), err)
+		}
 
-	// Idempotency: already in target state
-	if snap.Status == newStatus {
+		// Idempotency: already in target state
+		if snap.Status == newStatus {
+			return nil
+		}
+
+		// Validate the transition
+		if !s.transitionValid(snap.Status, newStatus) {
+			return fmt.Errorf("invalid transition: %s -> %s", snap.Status, newStatus)
+		}
+
+		now := time.Now()
+
+		// Handle completion_behavior routing: if going to 'completed', determine real target
+		actualStatus := newStatus
+		if newStatus == string(models.TaskCompleted) {
+			// Guard: pending decomposition plan — override to review
+			var hasPending bool
+			s.DB.QueryRow(
+				`SELECT EXISTS(SELECT 1 FROM decomposition_plans WHERE task_id = $1 AND status = 'pending')`,
+				taskID,
+			).Scan(&hasPending)
+			if hasPending {
+				actualStatus = string(models.TaskReview)
+				log.Printf("[TaskService] Task %s has pending decomposition plan → review", safe8(taskID))
+			}
+		}
+
+		// Write the status — the only UPDATE tasks SET status in the system
+		if err := s.writeStatus(taskID, actualStatus, now, snap); err != nil {
+			if errors.Is(err, ErrConcurrentMod) && attempt < maxRetries-1 {
+				time.Sleep(time.Millisecond * time.Duration(10<<attempt)) // backoff: 10ms, 20ms, 40ms
+				continue
+			}
+			return fmt.Errorf("write status: %w", err)
+		}
+
+		// Hub signal
+		if s.Hub != nil {
+			s.Hub.SignalChange("tasks")
+		}
+
+		// Dispatch transition-specific side effects
+		s.dispatchSideEffects(taskID, snap.Status, actualStatus, snap, opts, now)
+
 		return nil
 	}
-
-	// Validate the transition
-	if !s.transitionValid(snap.Status, newStatus) {
-		return fmt.Errorf("invalid transition: %s -> %s", snap.Status, newStatus)
-	}
-
-	now := time.Now()
-
-	// Handle completion_behavior routing: if going to 'completed', determine real target
-	actualStatus := newStatus
-	if newStatus == string(models.TaskCompleted) {
-		// Guard: pending decomposition plan — override to review
-		var hasPending bool
-		s.DB.QueryRow(
-			`SELECT EXISTS(SELECT 1 FROM decomposition_plans WHERE task_id = $1 AND status = 'pending')`,
-			taskID,
-		).Scan(&hasPending)
-		if hasPending {
-			actualStatus = string(models.TaskReview)
-			log.Printf("[TaskService] Task %s has pending decomposition plan → review", safe8(taskID))
-		}
-	}
-
-	// Write the status — the only UPDATE tasks SET status in the system
-	if err := s.writeStatus(taskID, actualStatus, now, snap); err != nil {
-		return fmt.Errorf("write status: %w", err)
-	}
-
-	// Hub signal
-	if s.Hub != nil {
-		s.Hub.SignalChange("tasks")
-	}
-
-	// Dispatch transition-specific side effects
-	s.dispatchSideEffects(taskID, snap.Status, actualStatus, snap, opts, now)
-
-	return nil
+	return fmt.Errorf("unreachable")
 }
 
 // readTaskSnapshot reads all relevant fields for transition decision-making in one query.
@@ -158,27 +168,41 @@ func (s *TaskService) readTaskSnapshot(taskID string) (taskSnapshot, error) {
 }
 
 // writeStatus executes the raw UPDATE. Kept private to enforce the single-write-point contract.
+// Uses optimistic locking: checks old status in WHERE clause. Returns ErrConcurrentMod
+// if RowsAffected == 0, meaning another goroutine changed the status first.
+var ErrConcurrentMod = fmt.Errorf("concurrent modification detected")
+
 func (s *TaskService) writeStatus(taskID string, newStatus string, now time.Time, snap taskSnapshot) error {
+	var result sql.Result
 	var err error
 	if newStatus == string(models.TaskDone) || newStatus == string(models.TaskCompleted) {
-		_, err = s.DB.Exec(
-			`UPDATE tasks SET status = $1, completed_at = $2, updated_at = $2 WHERE id = $3 AND deleted_at IS NULL`,
-			newStatus, now, taskID,
+		result, err = s.DB.Exec(
+			`UPDATE tasks SET status = $1, completed_at = $2, updated_at = $2
+			 WHERE id = $3 AND status = $4 AND deleted_at IS NULL`,
+			newStatus, now, taskID, snap.Status,
 		)
 	} else {
-		_, err = s.DB.Exec(
-			`UPDATE tasks SET status = $1, updated_at = $2 WHERE id = $3 AND deleted_at IS NULL`,
-			newStatus, now, taskID,
+		result, err = s.DB.Exec(
+			`UPDATE tasks SET status = $1, updated_at = $2
+			 WHERE id = $3 AND status = $4 AND deleted_at IS NULL`,
+			newStatus, now, taskID, snap.Status,
 		)
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	if n, _ := result.RowsAffected(); n == 0 {
+		return fmt.Errorf("%w: task %s status changed from %s by another process",
+			ErrConcurrentMod, safe8(taskID), snap.Status)
+	}
+	return nil
 }
 
 // transitionValid checks if the transition is allowed by the state machine.
 func (s *TaskService) transitionValid(from, to string) bool {
 	valid := map[string]map[string]bool{
 		"todo":        {"in_progress": true, "blocked": true},
-		"in_progress": {"completed": true, "blocked": true, "review": true, "stuck": true},
+		"in_progress": {"completed": true, "blocked": true, "review": true, "stuck": true, "done": true},
 		"blocked":     {"todo": true, "stuck": true},
 		"completed":   {"done": true, "review": true, "completed": true},
 		"review":      {"done": true, "in_progress": true, "stuck": true, "blocked": true},
@@ -243,7 +267,14 @@ func (s *TaskService) dispatchSideEffects(taskID, from, to string, snap taskSnap
 			s.Reviewer.notifyStuck(taskID, snap.WorkflowID, snap.AgentLoopCount, snap.MaxAgentLoops)
 		}
 
-	// ---- done -> todo / in_progress (re-open) ----
+	// ---- in_progress -> done (DAG auto-close parent without plan) ----
+		case from == string(models.TaskInProgress) && to == string(models.TaskDone):
+			s.DAGEngine.OnTaskCompleted(taskID)
+			if s.RuleEngine != nil {
+				s.RuleEngine.Evaluate("on_status_change", taskID, ExtractTaskContext(taskID, snap.Title, snap.AssigneeID, snap.AssigneeType))
+			}
+
+		// ---- done -> todo / in_progress (re-open) ----
 	case from == string(models.TaskDone) && (to == string(models.TaskTodo) || to == string(models.TaskInProgress)):
 		// Re-open: just signal, no other side effects needed
 
@@ -358,16 +389,14 @@ func (s *TaskService) handleReviewToInProgress(taskID string, snap taskSnapshot,
 	s.DB.Exec(`UPDATE tasks SET agent_loop_count = $1 WHERE id = $2`, newLoopCount, taskID)
 
 	if newLoopCount >= snap.MaxAgentLoops {
-		// Meltdown! Override to stuck
-		s.DB.Exec(`UPDATE tasks SET status = 'stuck', agent_loop_count = $1, updated_at = $2 WHERE id = $3 AND deleted_at IS NULL`,
-			newLoopCount, now, taskID)
-		log.Printf("[TaskService] Task %s STUCK after %d loops (max %d)", safe8(taskID), newLoopCount, snap.MaxAgentLoops)
-
-		if s.Reviewer != nil {
-			s.Reviewer.notifyStuck(taskID, snap.WorkflowID, newLoopCount, snap.MaxAgentLoops)
-		}
-		s.auditReview(taskID, opts.ReviewerAgentID, "meltdown",
-			fmt.Sprintf("打回 %d 次（上限 %d 次），已熔断", newLoopCount, snap.MaxAgentLoops))
+		// Meltdown — use MarkStuck for unified side effects (signal, notify, rules, audit)
+		log.Printf("[TaskService] Task %s meltdown after %d loops (max %d)", safe8(taskID), newLoopCount, snap.MaxAgentLoops)
+		s.MarkStuck(taskID, TransitionOpts{
+			ActorID:        opts.ActorID,
+			Comment:        fmt.Sprintf("已打回 %d 次（上限 %d 次），已熔断", newLoopCount, snap.MaxAgentLoops),
+			ReviewerID:     opts.ReviewerID,
+			ReviewerAgentID: opts.ReviewerAgentID,
+		})
 	} else {
 		// Re-queue agent if applicable
 		if snap.AssigneeType == "agent_profile" && snap.AssigneeID != "" && s.Reviewer != nil {
@@ -425,6 +454,8 @@ func (s *TaskService) routeCompletion(taskID string, snap taskSnapshot, opts Tra
 		s.TransitionStatus(taskID, string(models.TaskReview), opts)
 
 	default:
+		log.Printf("[TaskService] WARNING: unknown completion_behavior '%s' for task %s, defaulting to review",
+			snap.CompletionBehavior, safe8(taskID))
 		s.TransitionStatus(taskID, string(models.TaskReview), opts)
 	}
 }

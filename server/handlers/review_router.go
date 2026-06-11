@@ -5,14 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"math/rand"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/coaether/server/harness"
-	"github.com/coaether/server/models"
 )
 
 // ReviewRouter routes completed tasks to the correct reviewer
@@ -26,11 +24,11 @@ type ReviewRouter struct {
 	TaskService  *TaskService
 }
 
-// NewReviewRouter creates a new review router.
-func NewReviewRouter(db *sql.DB) *ReviewRouter {
+// NewReviewRouter creates a new review router using the provided DAGEngine.
+func NewReviewRouter(db *sql.DB, dag *DAGEngine) *ReviewRouter {
 	return &ReviewRouter{
 		DB:        db,
-		DAGEngine: NewDAGEngine(db),
+		DAGEngine: dag,
 		Auditor:   harness.NewAuditor(db),
 	}
 }
@@ -42,67 +40,6 @@ const (
 	ReviewApproved ReviewAction = "approved"
 	ReviewRejected ReviewAction = "rejected"
 )
-
-// RouteTask determines the path for a completed task based on completion_behavior.
-// Called when a task transitions to "completed".
-func (r *ReviewRouter) RouteTask(taskID string) {
-	// Delegate to TaskService for unified completion routing.
-	// Completion routing is now handled automatically by
-	// TaskService.TransitionStatus when tasks reach "completed".
-	if r.TaskService == nil {
-		log.Printf("[ReviewRouter] TaskService not available for RouteTask")
-		return
-	}
-
-	var status, behavior, assigneeType, assigneeID, workflowID string
-	err := r.DB.QueryRow(
-		`SELECT status, COALESCE(completion_behavior, 'auto_done'),
-		        COALESCE(assignee_type, ''), COALESCE(assignee_id, ''),
-		        COALESCE(workflow_id, '')
-		 FROM tasks WHERE id = $1 AND deleted_at IS NULL`,
-		taskID,
-	).Scan(&status, &behavior, &assigneeType, &assigneeID, &workflowID)
-	if err != nil {
-		log.Printf("[ReviewRouter] Task %s not found: %v", safe8(taskID), err)
-		return
-	}
-
-	if status != "completed" {
-		return
-	}
-
-	opts := TransitionOpts{}
-
-	switch behavior {
-	case models.CompletionAutoDone:
-		r.TaskService.MarkDone(taskID, opts)
-	case models.CompletionAutoReview:
-		// createReviewQueue is still needed for agent-to-agent review dispatch
-		if assigneeType == "agent_profile" && assigneeID != "" {
-			r.createReviewQueue(taskID, assigneeID, workflowID)
-		} else {
-			r.TaskService.MarkReview(taskID, opts)
-		}
-	case models.CompletionSampleReview:
-		sampleRate := 0.2
-		if workflowID != "" {
-			r.DB.QueryRow(
-				`SELECT COALESCE(ap.review_sample_rate, 0.2) FROM agent_profiles ap
-				 JOIN tasks t ON t.assignee_id = ap.id
-				 WHERE t.id = $1`, taskID,
-			).Scan(&sampleRate)
-		}
-		if rand.Float64() < sampleRate {
-			r.TaskService.MarkReview(taskID, opts)
-		} else {
-			r.TaskService.MarkDone(taskID, opts)
-		}
-	case models.CompletionNeedsReview:
-		r.TaskService.MarkReview(taskID, opts)
-	default:
-		r.TaskService.MarkReview(taskID, opts)
-	}
-}
 
 // HandleReview processes a review action (approved/rejected).
 func (r *ReviewRouter) HandleReview(taskID string, reviewerID *string, reviewerAgentID *string,
@@ -144,6 +81,15 @@ func (r *ReviewRouter) processPendingActions(taskID string) {
 		return
 	}
 
+	// Wrap in a transaction: either all queue entries + pending clear succeed, or none do.
+	// This prevents duplicate queue entries on crash recovery.
+	tx, err := r.DB.Begin()
+	if err != nil {
+		log.Printf("[ReviewRouter] Failed to start transaction for pending actions: %v", err)
+		return
+	}
+	defer tx.Rollback()
+
 	now := time.Now()
 	for _, a := range actions {
 		switch a.Type {
@@ -152,12 +98,12 @@ func (r *ReviewRouter) processPendingActions(taskID string) {
 				continue
 			}
 			queueID := uuid.New().String()
-			r.DB.Exec(
+			tx.Exec(
 				`INSERT INTO task_agent_queue (id, task_id, agent_profile_id, status, trigger_type, assigned_at, created_at)
 				 VALUES ($1, $2, $3, 'queued', 'sub_task', $4, $4)`,
 				queueID, a.SubTaskID, a.TargetAgentID, now,
 			)
-			r.DB.Exec(`UPDATE agent_profiles SET current_load = current_load + 1 WHERE id = $1`, a.TargetAgentID)
+			tx.Exec(`UPDATE agent_profiles SET current_load = current_load + 1 WHERE id = $1`, a.TargetAgentID)
 			log.Printf("[ReviewRouter] Approved: queued subtask %s for agent %s", a.SubTaskID[:8], a.TargetAgentID[:8])
 
 		case "assign_task":
@@ -165,18 +111,18 @@ func (r *ReviewRouter) processPendingActions(taskID string) {
 				continue
 			}
 			queueID := uuid.New().String()
-			r.DB.Exec(
+			tx.Exec(
 				`INSERT INTO task_agent_queue (id, task_id, agent_profile_id, status, trigger_type, assigned_at, created_at)
 				 VALUES ($1, $2, $3, 'queued', 'assigned', $4, $4)`,
 				queueID, taskID, a.TargetAgentID, now,
 			)
-			r.DB.Exec(`UPDATE agent_profiles SET current_load = current_load + 1 WHERE id = $1`, a.TargetAgentID)
+			tx.Exec(`UPDATE agent_profiles SET current_load = current_load + 1 WHERE id = $1`, a.TargetAgentID)
 			log.Printf("[ReviewRouter] Approved: queued task %s for assigned agent %s", taskID[:8], a.TargetAgentID[:8])
 		}
 	}
 
-	// Clear pending actions
-	r.DB.Exec(`UPDATE tasks SET pending_review_actions = '[]'::jsonb WHERE id = $1`, taskID)
+	// Clear pending actions (inside transaction — no orphan state on crash)
+	tx.Exec(`UPDATE tasks SET pending_review_actions = '[]'::jsonb WHERE id = $1`, taskID)
 
 	// Clear source agent's assignee on this task — review approved,
 	// the originating agent is no longer responsible.
@@ -186,12 +132,17 @@ func (r *ReviewRouter) processPendingActions(taskID string) {
 		taskID,
 	).Scan(&curAssigneeID, &curAssigneeType)
 	if curAssigneeType == "agent_profile" {
-		r.DB.Exec(`UPDATE tasks SET assignee_id = NULL, assignee_type = NULL, updated_at = $1 WHERE id = $2`, now, taskID)
+		tx.Exec(`UPDATE tasks SET assignee_id = NULL, assignee_type = NULL, updated_at = $1 WHERE id = $2`, now, taskID)
 	}
 
 	// Cancel any remaining active queue entries for this task
-	r.DB.Exec(`UPDATE task_agent_queue SET status = 'failed', completed_at = $1
+	tx.Exec(`UPDATE task_agent_queue SET status = 'failed', completed_at = $1
 		WHERE task_id = $2 AND status IN ('queued', 'claimed', 'processing')`, now, taskID)
+
+	if err := tx.Commit(); err != nil {
+		log.Printf("[ReviewRouter] Failed to commit pending actions for task %s: %v", taskID[:8], err)
+		return
+	}
 
 	if r.Hub != nil {
 		r.Hub.SignalChange("task_agent_queue")
@@ -236,6 +187,17 @@ func (r *ReviewRouter) createReviewQueue(taskID, agentProfileID, workflowID stri
 	var enabled bool
 	r.DB.QueryRow(`SELECT enabled FROM agent_profiles WHERE id = $1`, agentProfileID).Scan(&enabled)
 	if !enabled {
+		return
+	}
+
+	// Check agent capacity — don't overload an agent beyond max_concurrency
+	var canProcess bool
+	r.DB.QueryRow(
+		`SELECT COALESCE(current_load, 0) < COALESCE(max_concurrency, 1) FROM agent_profiles WHERE id = $1`,
+		agentProfileID,
+	).Scan(&canProcess)
+	if !canProcess {
+		log.Printf("[ReviewRouter] Agent %s at capacity, skipping review queue for task %s", agentProfileID[:8], taskID[:8])
 		return
 	}
 

@@ -13,10 +13,11 @@ import (
 // It tracks which tasks depend on which, and advances blocked tasks
 // when their dependencies complete.
 type DAGEngine struct {
-	DB  *sql.DB
-	mu  sync.Mutex
-	Hub *DashboardHub // optional, for real-time updates
+	DB          *sql.DB
+	mu          sync.Mutex
+	Hub         *DashboardHub // optional, for real-time updates
 	TaskService *TaskService // unified status transition (set after creation)
+	processing  sync.Map     // re-entrancy guard: tracks tasks currently being advanced
 }
 
 // NewDAGEngine creates a new DAG engine.
@@ -109,13 +110,56 @@ func (e *DAGEngine) WouldCreateCycle(workflowID, taskID, dependsOnID string) (bo
 // auto-dispatches unblocked agent tasks to the queue,
 // and auto-closes the parent task when all sub-tasks are done.
 func (e *DAGEngine) OnTaskCompleted(taskID string) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.onTaskCompletedLocked(taskID)
+	// Re-entrancy guard: if a task is already being processed (cycle or deep recursion),
+	// skip it to prevent infinite loops.
+	if _, loaded := e.processing.LoadOrStore(taskID, struct{}{}); loaded {
+		log.Printf("[DAGEngine] Task %s is already being processed — possible cycle, skipping", taskID[:8])
+		return
+	}
+	defer e.processing.Delete(taskID)
+
+	toUnblock, parentID, parentHasPlan := e.gatherDAGTransitions(taskID)
+
+	// Apply transitions outside the lock via TaskService to avoid deadlock
+	// from recursive DAG advancement callbacks.
+	for _, tid := range toUnblock {
+		if e.TaskService != nil {
+			if err := e.TaskService.MarkTodo(tid, TransitionOpts{
+				ActorID: "",
+				Comment: "所有前置依赖已完成，自动解除阻塞",
+			}); err != nil {
+				log.Printf("[DAGEngine] Failed to unblock task %s: %v", tid[:8], err)
+			} else {
+				log.Printf("[DAGEngine] Task %s unblocked via TaskService", tid[:8])
+			}
+		} else {
+			// Fallback: direct DB write (should not happen in production)
+			now := time.Now()
+			e.DB.Exec(`UPDATE tasks SET status = 'todo', updated_at = $1 WHERE id = $2 AND deleted_at IS NULL`, now, tid)
+		}
+	}
+
+	if parentID != "" && e.TaskService != nil {
+		if parentHasPlan {
+			e.TaskService.MarkReview(parentID, TransitionOpts{
+				ActorID: "",
+				Comment: "所有子任务已完成，等待人工审核父任务",
+			})
+		} else {
+			e.TaskService.MarkDone(parentID, TransitionOpts{
+				ActorID: "",
+				Comment: "所有子任务已完成，自动关闭",
+			})
+		}
+	}
 }
 
-// onTaskCompletedLocked is the internal implementation (caller must hold mu.Lock).
-func (e *DAGEngine) onTaskCompletedLocked(taskID string) {
+// gatherDAGTransitions collects the IDs that need to transition based on the DAG state.
+// Must NOT call any TaskService methods — only reads DB and returns lists.
+func (e *DAGEngine) gatherDAGTransitions(taskID string) (toUnblock []string, parentID string, parentHasPlan bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
 	now := time.Now()
 
 	// Find all tasks that depend on this task
@@ -151,22 +195,51 @@ func (e *DAGEngine) onTaskCompletedLocked(taskID string) {
 		).Scan(&allDone)
 
 		if allDone {
-			_, err := e.DB.Exec(
-				`UPDATE tasks SET status = 'todo', updated_at = $1 WHERE id = $2 AND deleted_at IS NULL`,
-				now, dependentID,
-			)
-			if err != nil {
-				log.Printf("[DAGEngine] Failed to unblock task %s: %v", dependentID, err)
-			} else {
-				log.Printf("[DAGEngine] Task %s unblocked (all dependencies met in workflow %s)", dependentID[:8], wfID[:8])
-				// Auto-dispatch: if unblocked task has agent_profile assignee, create queue entry
-				e.tryAutoDispatchLocked(dependentID, now)
-			}
+			toUnblock = append(toUnblock, dependentID)
+			_ = wfID // used for logging in caller
 		}
 	}
 
-	// Auto-close parent if all siblings are done
-	e.tryAutoCloseParentLocked(taskID, now)
+	// Check if parent can be auto-closed
+	parentID, parentHasPlan = e.checkParentAutoCloseLocked(taskID, now)
+	return
+}
+
+// checkParentAutoCloseLocked determines if the parent task can be auto-closed.
+func (e *DAGEngine) checkParentAutoCloseLocked(taskID string, now time.Time) (string, bool) {
+	var parentID string
+	err := e.DB.QueryRow(`SELECT COALESCE(parent_id,'') FROM tasks WHERE id = $1 AND deleted_at IS NULL`, taskID).Scan(&parentID)
+	if err != nil || parentID == "" {
+		return "", false
+	}
+
+	// Check if all siblings are done (or in review, meaning work is complete awaiting sign-off)
+	var allDone bool
+	e.DB.QueryRow(
+		`SELECT COUNT(*) = 0 FROM tasks WHERE parent_id = $1 AND deleted_at IS NULL AND status NOT IN ('done', 'review')`,
+		parentID,
+	).Scan(&allDone)
+
+	if !allDone {
+		return "", false
+	}
+
+	// Only close if parent is not already done or in review
+	var parentStatus string
+	e.DB.QueryRow(`SELECT status FROM tasks WHERE id = $1 AND deleted_at IS NULL`, parentID).Scan(&parentStatus)
+	if parentStatus == "done" || parentStatus == "review" {
+		return "", false
+	}
+
+	// Check if parent has an approved decomposition plan
+	var hasPlan bool
+	e.DB.QueryRow(
+		`SELECT COUNT(*) > 0 FROM decomposition_plans
+		 WHERE task_id = $1 AND status = 'approved'`,
+		parentID,
+	).Scan(&hasPlan)
+
+	return parentID, hasPlan
 }
 
 // tryAutoDispatchLocked creates a queue entry for an unblocked task with an agent_profile assignee.
@@ -218,63 +291,6 @@ func (e *DAGEngine) tryAutoDispatchLocked(taskID string, now time.Time) {
 	log.Printf("[DAGEngine] Auto-dispatched task %s to agent %s (queue=%s)", taskID[:8], assigneeID[:8], queueID[:8])
 }
 
-// tryAutoCloseParentLocked checks if the parent task can be auto-closed (all sub-tasks done).
-// If so, it sets the parent to done and recursively advances the DAG.
-func (e *DAGEngine) tryAutoCloseParentLocked(taskID string, now time.Time) {
-	var parentID string
-	err := e.DB.QueryRow(`SELECT COALESCE(parent_id,'') FROM tasks WHERE id = $1 AND deleted_at IS NULL`, taskID).Scan(&parentID)
-	if err != nil || parentID == "" {
-		return
-	}
-
-	// Check if all siblings are done (or in review, meaning work is complete awaiting sign-off)
-	var allDone bool
-	e.DB.QueryRow(
-		`SELECT COUNT(*) = 0 FROM tasks WHERE parent_id = $1 AND deleted_at IS NULL AND status NOT IN ('done', 'review')`,
-		parentID,
-	).Scan(&allDone)
-
-	if allDone {
-		// Only close if parent is not already done or in review
-		var parentStatus string
-		e.DB.QueryRow(`SELECT status FROM tasks WHERE id = $1 AND deleted_at IS NULL`, parentID).Scan(&parentStatus)
-		if parentStatus == "done" || parentStatus == "review" {
-			return
-		}
-
-		// Check if parent has an approved decomposition plan
-		var hasPlan bool
-		e.DB.QueryRow(
-			`SELECT COUNT(*) > 0 FROM decomposition_plans
-			 WHERE task_id = $1 AND status = 'approved'`,
-			parentID,
-		).Scan(&hasPlan)
-
-		if hasPlan {
-			// Set to "review" instead of "done" — human needs to sign off
-			e.DB.Exec(`UPDATE tasks SET status = 'review', updated_at = $1 WHERE id = $2 AND deleted_at IS NULL`,
-				now, parentID)
-			log.Printf("[DAGEngine] Parent task %s set to review (had decomposition plan)", parentID[:8])
-			// Post a comment notifying humans
-			commentID := uuid.New().String()
-			e.DB.Exec(
-				`INSERT INTO task_comments (id, task_id, user_id, agent_profile_id, content, is_agent_comment, created_at, updated_at)
-				 VALUES ($1, $2, '', NULL, '所有子任务已完成，等待人工审核父任务。', true, $3, $3)`,
-				commentID, parentID, now,
-			)
-			if e.Hub != nil {
-				e.Hub.SignalChange("tasks")
-			}
-		} else {
-			// Original auto-done logic
-			e.DB.Exec(`UPDATE tasks SET status = 'done', completed_at = $1, updated_at = $1 WHERE id = $2 AND deleted_at IS NULL`,
-				now, parentID)
-			log.Printf("[DAGEngine] Parent task %s auto-closed (all sub-tasks done)", parentID[:8])
-			// Recursively advance the DAG for the parent
-			e.onTaskCompletedLocked(parentID)
-		}
-	}
-}
 
 // SetTaskBlocked marks a task as blocked if it has unmet dependencies.
 func (e *DAGEngine) SetTaskBlocked(taskID string) {

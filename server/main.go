@@ -187,7 +187,7 @@ func main() {
 	nodeAgentH.Harness = workflowH.Harness
 
 	// Review Router
-	reviewRouter := handlers.NewReviewRouter(database.DB)
+	reviewRouter := handlers.NewReviewRouter(database.DB, workflowH.DAGEngine)
 	reviewRouter.Hub = dashHub
 	reviewRouter.Notifier = notifH
 	taskH.ReviewRouter = reviewRouter
@@ -228,6 +228,12 @@ func main() {
 
 	// Safety Guard (anti-runaway monitor)
 	safetyGuard := harness.NewSafetyGuard(database.DB)
+	safetyGuard.StuckMarker = func(taskID, reason string) {
+		taskService.MarkStuck(taskID, handlers.TransitionOpts{
+			ActorID: "",
+			Comment: reason,
+		})
+	}
 	safetyGuard.StartPeriodicCheck(5 * time.Minute)
 
 	// Router

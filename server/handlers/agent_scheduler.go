@@ -38,7 +38,7 @@ func (h *AgentScheduler) List(c *gin.Context) {
 	argIdx := 1
 	where := []string{}
 
-	if workspaceID != "" && isMember.(bool) {
+	if member, _ := isMember.(bool); workspaceID != "" && member {
 		where = append(where, fmt.Sprintf("ap.workspace_id = $%d", argIdx))
 		args = append(args, workspaceID)
 		argIdx++
@@ -113,45 +113,65 @@ func (h *AgentScheduler) AutoAssign(c *gin.Context) {
 		return
 	}
 
-	// Find best available agent: enabled, not at max capacity, in the same workspace
-	// Ordered by lowest load first, then most recently active
-	rows, err := h.DB.Query(`
+	// Use a transaction with FOR UPDATE SKIP LOCKED for atomic agent selection + assignment.
+	// This prevents concurrent AutoAssign calls from over-allocating the same agent.
+	tx, err := h.DB.Begin()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start transaction"})
+		return
+	}
+	defer tx.Rollback()
+
+	// Find best available agent with row-level lock.
+	// SKIP LOCKED: if another transaction has locked a row, skip it and try the next one.
+	var agentID, agentName string
+	var maxConc, currLoad int
+	err = tx.QueryRow(`
 		SELECT id, name, COALESCE(max_concurrency, 1), COALESCE(current_load, 0)
 		FROM agent_profiles
 		WHERE workspace_id = $1 AND enabled = true
 			AND COALESCE(current_load, 0) < COALESCE(max_concurrency, 1)
 		ORDER BY current_load ASC, last_active_at DESC NULLS LAST
-		LIMIT 1`, workspaceID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to find available agents"})
-		return
-	}
-	defer rows.Close()
-
-	if !rows.Next() {
+		LIMIT 1
+		FOR UPDATE SKIP LOCKED`, workspaceID,
+	).Scan(&agentID, &agentName, &maxConc, &currLoad)
+	if err == sql.ErrNoRows {
+		tx.Rollback()
 		c.JSON(http.StatusNotFound, gin.H{"error": "no available agent"})
 		return
 	}
+	if err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to find available agents"})
+		return
+	}
 
-	var agentID, agentName string
-	var maxConc, currLoad int
-	rows.Scan(&agentID, &agentName, &maxConc, &currLoad)
-
-	// Create queue entry
+	// Create queue entry (inside transaction)
 	queueID := uuid.New().String()
 	now := time.Now()
-	_, err = h.DB.Exec(
+	_, err = tx.Exec(
 		`INSERT INTO task_agent_queue (id, task_id, agent_profile_id, status, assigned_at, created_at)
 		 VALUES ($1, $2, $3, 'queued', $4, $4)`,
 		queueID, taskID, agentID, now,
 	)
 	if err != nil {
+		tx.Rollback()
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create queue entry"})
 		return
 	}
 
-	// Increment current_load on the agent profile
-	h.DB.Exec(`UPDATE agent_profiles SET current_load = current_load + 1, last_active_at = $1 WHERE id = $2`, now, agentID)
+	// Increment current_load (inside transaction, row still locked)
+	_, err = tx.Exec(`UPDATE agent_profiles SET current_load = current_load + 1, last_active_at = $1 WHERE id = $2`, now, agentID)
+	if err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update agent load"})
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to commit assignment"})
+		return
+	}
 
 	c.JSON(http.StatusCreated, gin.H{
 		"id":               queueID,
@@ -249,6 +269,16 @@ func (h *AgentScheduler) UpdateStatus(c *gin.Context) {
 		return
 	}
 
+	// Validate state transition — prevent invalid transitions like completed → claimed
+	if req.Status != currentStatus {
+		if !h.isValidQueueTransition(currentStatus, req.Status) {
+			c.JSON(http.StatusConflict, gin.H{
+				"error": fmt.Sprintf("cannot transition from %s to %s", currentStatus, req.Status),
+			})
+			return
+		}
+	}
+
 	// Build dynamic SET for status update
 	setClauses := []string{}
 	args := []interface{}{}
@@ -306,6 +336,22 @@ func (h *AgentScheduler) UpdateStatus(c *gin.Context) {
 	}
 }
 
+// isValidQueueTransition validates queue status transitions.
+// queued → claimed → processing → completed | failed
+// claimed → failed (cancelled before processing)
+func (h *AgentScheduler) isValidQueueTransition(from, to string) bool {
+	valid := map[string]map[string]bool{
+		"queued":     {"claimed": true},
+		"claimed":    {"processing": true, "failed": true},
+		"processing": {"completed": true, "failed": true},
+	}
+	toMap, ok := valid[from]
+	if !ok {
+		return false
+	}
+	return toMap[to]
+}
+
 // ListAgentsWithLoad returns agents with their current load info for assignment UI.
 func (h *AgentScheduler) ListAgentsWithLoad(c *gin.Context) {
 	workspaceID := c.Query("workspace_id")
@@ -316,7 +362,7 @@ func (h *AgentScheduler) ListAgentsWithLoad(c *gin.Context) {
 	args := []interface{}{}
 	argIdx := 1
 
-	if workspaceID != "" && isMember.(bool) {
+	if member, _ := isMember.(bool); workspaceID != "" && member {
 		query += fmt.Sprintf(" AND workspace_id = $%d", argIdx)
 		args = append(args, workspaceID)
 		argIdx++

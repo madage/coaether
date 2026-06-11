@@ -2,7 +2,10 @@ package harness
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
+	"os"
+	"strconv"
 	"time"
 )
 
@@ -11,7 +14,8 @@ import (
 // - Tasks stuck in in_progress beyond the timeout
 // - Workflows exceeding their token budget
 type SafetyGuard struct {
-	DB *sql.DB
+	DB          *sql.DB
+	StuckMarker func(taskID string, reason string) // callback to mark tasks stuck via TaskService
 }
 
 // NewSafetyGuard creates a new SafetyGuard.
@@ -39,10 +43,15 @@ func (sg *SafetyGuard) runChecks() {
 // checkStuckTasks marks tasks as stuck if they've been in_progress for too long.
 func (sg *SafetyGuard) checkStuckTasks() {
 	timeout := 30 * time.Minute
+	if v := os.Getenv("STUCK_TASK_TIMEOUT_MINUTES"); v != "" {
+		if mins, err := strconv.Atoi(v); err == nil && mins > 0 {
+			timeout = time.Duration(mins) * time.Minute
+		}
+	}
 	cutoff := time.Now().Add(-timeout)
 
 	rows, err := sg.DB.Query(
-		`SELECT id, agent_loop_count, max_agent_loops FROM tasks
+		`SELECT id FROM tasks
 		 WHERE status = 'in_progress' AND updated_at < $1 AND deleted_at IS NULL`,
 		cutoff,
 	)
@@ -54,14 +63,22 @@ func (sg *SafetyGuard) checkStuckTasks() {
 	now := time.Now()
 	for rows.Next() {
 		var id string
-		var loopCount, maxLoops int
-		if err := rows.Scan(&id, &loopCount, &maxLoops); err != nil {
+		if err := rows.Scan(&id); err != nil {
 			continue
 		}
-		sg.DB.Exec(
-			`UPDATE tasks SET status = 'stuck', updated_at = $1 WHERE id = $2 AND status = 'in_progress'`,
-			now, id,
-		)
+
+		reason := fmt.Sprintf("任务执行超时（超过 %v），自动标记为 stuck", timeout)
+
+		// Prefer TaskService callback for proper side effects (notifications, signals, rules)
+		if sg.StuckMarker != nil {
+			sg.StuckMarker(id, reason)
+		} else {
+			// Fallback: direct DB write (legacy, no side effects)
+			sg.DB.Exec(
+				`UPDATE tasks SET status = 'stuck', updated_at = $1 WHERE id = $2 AND status = 'in_progress'`,
+				now, id,
+			)
+		}
 		log.Printf("[SafetyGuard] Task %s marked stuck (in_progress > %v)", id[:8], timeout)
 	}
 }
