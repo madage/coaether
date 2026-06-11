@@ -9,6 +9,15 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+var cstZone = time.FixedZone("CST", 8*3600)
+
+func formatTime(t time.Time) string {
+	// DB stores timestamp without time zone in CST; Go reads it as UTC.
+	// Reinterpret the same wall-clock time with CST zone for RFC3339 output.
+	cst := time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), cstZone)
+	return cst.Format(time.RFC3339)
+}
+
 type LogHandler struct {
 	DB *sql.DB
 }
@@ -79,7 +88,7 @@ func (h *LogHandler) AgentToolLogs(c *gin.Context) {
 			&it.ToolName, &it.Parameters, &it.Status, &it.DenyReason, &t); err != nil {
 			continue
 		}
-		it.CreatedAt = t.Format(time.RFC3339)
+		it.CreatedAt = formatTime(t)
 		items = append(items, it)
 	}
 	c.JSON(http.StatusOK, paginatedResp{Items: items, Total: total, Page: page, Size: size})
@@ -135,7 +144,7 @@ func (h *LogHandler) AccessLogs(c *gin.Context) {
 		if err := rows.Scan(&it.ID, &it.UserID, &it.Username, &it.Method, &it.Path, &it.Status, &it.LatencyMs, &it.ClientIP, &t); err != nil {
 			continue
 		}
-		it.CreatedAt = t.Format(time.RFC3339)
+		it.CreatedAt = formatTime(t)
 		items = append(items, it)
 	}
 	c.JSON(http.StatusOK, paginatedResp{Items: items, Total: total, Page: page, Size: size})
@@ -184,7 +193,7 @@ func (h *LogHandler) TokenUsage(c *gin.Context) {
 			&it.SessionID, &it.PromptTokens, &it.CompletionTokens, &it.TotalTokens, &it.Stage, &t); err != nil {
 			continue
 		}
-		it.CreatedAt = t.Format(time.RFC3339)
+		it.CreatedAt = formatTime(t)
 		items = append(items, it)
 	}
 	c.JSON(http.StatusOK, paginatedResp{Items: items, Total: total, Page: page, Size: size})
@@ -236,7 +245,7 @@ func (h *LogHandler) SystemEvents(c *gin.Context) {
 				ID: id, EventType: "escalation", Source: "workflow",
 				Title:     "工作流熔断 L" + strconv.Itoa(level),
 				Detail:    reason + " → " + action,
-				CreatedAt: t.Format(time.RFC3339),
+				CreatedAt: formatTime(t),
 			})
 		}
 	}
@@ -265,7 +274,7 @@ func (h *LogHandler) SystemEvents(c *gin.Context) {
 				ID: id, EventType: "review", Source: "review",
 				Title:     "任务" + action,
 				Detail:    comment + " | 审核人:" + reviewer,
-				CreatedAt: t.Format(time.RFC3339),
+				CreatedAt: formatTime(t),
 			})
 		}
 	}
@@ -292,7 +301,7 @@ func (h *LogHandler) SystemEvents(c *gin.Context) {
 				ID: id, EventType: evtType, Source: source,
 				Title:     title,
 				Detail:    detail,
-				CreatedAt: t.Format(time.RFC3339),
+				CreatedAt: formatTime(t),
 			})
 		}
 	}
