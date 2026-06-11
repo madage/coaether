@@ -6,6 +6,7 @@ interface AgentCardProps {
   nodeName?: string;
   onClick: () => void;
   onToggle?: (id: string, enabled: boolean) => void;
+  onRemoveFromFolder?: (id: string) => void;
 }
 
 const cardStyle: React.CSSProperties = {
@@ -17,7 +18,7 @@ const cardStyle: React.CSSProperties = {
   overflow: 'hidden',
 };
 
-export function AgentCard({ profile, runtimeName, nodeName, onClick, onToggle }: AgentCardProps) {
+export function AgentCard({ profile, runtimeName, nodeName, onClick, onToggle, onRemoveFromFolder }: AgentCardProps) {
   const disabled = !profile.enabled;
 
   return (
@@ -38,6 +39,41 @@ export function AgentCard({ profile, runtimeName, nodeName, onClick, onToggle }:
         e.currentTarget.style.boxShadow = '';
       }}
     >
+      {/* Remove from folder button */}
+      {onRemoveFromFolder && (
+        <div
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemoveFromFolder(profile.id);
+          }}
+          style={{
+            position: 'absolute',
+            top: '8px',
+            left: '10px',
+            width: '22px',
+            height: '22px',
+            borderRadius: '50%',
+            background: 'rgba(0,0,0,0.06)',
+            cursor: 'pointer',
+            zIndex: 1,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: '0.8em',
+            color: '#999',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = '#ff4444';
+            e.currentTarget.style.color = '#fff';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = 'rgba(0,0,0,0.06)';
+            e.currentTarget.style.color = '#999';
+          }}
+          title="从文件夹中移除"
+        >✕</div>
+      )}
+
       {/* Top-right toggle */}
       <div
         onClick={(e) => {

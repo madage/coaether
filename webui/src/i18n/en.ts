@@ -692,6 +692,22 @@ export const en = {
 
   // Agent Harness fields
   reviewSampleRate: 'Review Sample Rate',
+  // Agent Folders
+  agentFolders: 'Agent Folders',
+  folderCreate: 'New Folder',
+  folderName: 'Folder Name',
+  folderNamePlaceholder: 'Enter folder name...',
+  folderColor: 'Color',
+  folderRename: 'Rename',
+  folderDelete: 'Delete Folder',
+  folderDeleteConfirm: 'Delete this folder? Agents inside will not be deleted.',
+  folderUncategorized: 'Uncategorized',
+  folderAll: 'All Agents',
+  folderAddAgent: 'Add to Folder',
+  folderRemoveAgent: 'Remove from Folder',
+  folderEmpty: 'No folders yet. Click + to create one.',
+  folderAgentCount: '{count} agents',
+
   reviewSampleRateHint: '0.0 = never review, 1.0 = always review',
   reviewTimeout: 'Review Timeout (min)',
   maxReviewLoops: 'Max Review Loops',

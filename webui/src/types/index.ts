@@ -61,6 +61,26 @@ export interface AgentProfile {
   review_timeout: number;
 }
 
+// Agent Folder Types
+
+export interface AgentFolder {
+  id: string;
+  name: string;
+  color: string;
+  sort_order: number;
+  agent_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FolderItem {
+  agent_profile_id: string;
+  agent_name: string;
+  avatar: string;
+  description: string;
+  enabled: boolean;
+}
+
 export interface RuntimeEntity {
   id: string;
   name: string;

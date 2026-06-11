@@ -1,4 +1,4 @@
-import type { Node, Session, CreateSessionReq, Agent, AgentProfile, RuntimeEntity, Task, CreateTaskReq, UpdateTaskReq, TaskStatus, TaskAssignee, AddAssigneeReq, Priority, Project, CreateProjectReq, UpdateProjectReq, ProjectStatus, Workspace, CreateWorkspaceReq, UpdateWorkspaceReq, WorkspaceMember, AddMemberReq, UpdateMemberRoleReq, PendingInvitation, InviteMemberReq, UserSummary, Comment, CreateCommentReq, PluginInfo, AppNotification, TaskRule, TaskRuleLog, CreateRuleReq, UpdateRuleReq, Skill, CreateSkillReq, ExtractSkillReq, AgentQueueItem, AgentLoadInfo, ReviewTaskReq, Workflow, CreateWorkflowReq, AttachToWorkflowReq, DecompositionPlan, DecompositionPlanItem, ApprovePlanReq, SystemTool, ApiToken, CreateTokenReq, CreateTokenRes, AgentToolLogItem, AccessLogItem, TokenUsageItem, SystemEventItem, PaginatedResp } from '../types';
+import type { Node, Session, CreateSessionReq, Agent, AgentProfile, AgentFolder, FolderItem, RuntimeEntity, Task, CreateTaskReq, UpdateTaskReq, TaskStatus, TaskAssignee, AddAssigneeReq, Priority, Project, CreateProjectReq, UpdateProjectReq, ProjectStatus, Workspace, CreateWorkspaceReq, UpdateWorkspaceReq, WorkspaceMember, AddMemberReq, UpdateMemberRoleReq, PendingInvitation, InviteMemberReq, UserSummary, Comment, CreateCommentReq, PluginInfo, AppNotification, TaskRule, TaskRuleLog, CreateRuleReq, UpdateRuleReq, Skill, CreateSkillReq, ExtractSkillReq, AgentQueueItem, AgentLoadInfo, ReviewTaskReq, Workflow, CreateWorkflowReq, AttachToWorkflowReq, DecompositionPlan, DecompositionPlanItem, ApprovePlanReq, SystemTool, ApiToken, CreateTokenReq, CreateTokenRes, AgentToolLogItem, AccessLogItem, TokenUsageItem, SystemEventItem, PaginatedResp } from '../types';
 
 
 
@@ -260,7 +260,34 @@ export const agentProfiles = {
 
 };
 
+// Agent Folders
 
+export const agentFolders = {
+  list: () => request<{ folders: AgentFolder[] }>('/agent-folders'),
+
+  create: (data: { name: string; color?: string; sort_order?: number }) =>
+    request<{ id: string; status: string }>('/agent-folders', { method: 'POST', body: JSON.stringify(data) }),
+
+  update: (id: string, data: { name?: string; color?: string; sort_order?: number }) =>
+    request<{ status: string }>(`/agent-folders/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(data) }),
+
+  delete: (id: string) =>
+    request<{ status: string }>(`/agent-folders/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
+  addItem: (folderId: string, agentProfileId: string) =>
+    request<{ id: string; status: string }>(`/agent-folders/${encodeURIComponent(folderId)}/items`, {
+      method: 'POST', body: JSON.stringify({ agent_profile_id: agentProfileId }),
+    }),
+
+  removeItem: (folderId: string, agentProfileId: string) =>
+    request<{ status: string }>(`/agent-folders/${encodeURIComponent(folderId)}/items/${encodeURIComponent(agentProfileId)}`, { method: 'DELETE' }),
+
+  listItems: (folderId: string) =>
+    request<{ items: FolderItem[] }>(`/agent-folders/${encodeURIComponent(folderId)}/items`),
+
+  getAgentFolders: (agentId: string) =>
+    request<{ folders: { id: string; name: string; color: string }[] }>(`/agent-folders/agent/${encodeURIComponent(agentId)}`),
+};
 
 // Sessions
 

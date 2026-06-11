@@ -692,6 +692,22 @@ export const zh = {
 
   // Agent Harness fields
   reviewSampleRate: '审核采样率',
+  // Agent Folders
+  agentFolders: '智能体文件夹',
+  folderCreate: '新建文件夹',
+  folderName: '文件夹名称',
+  folderNamePlaceholder: '输入文件夹名称...',
+  folderColor: '颜色',
+  folderRename: '重命名',
+  folderDelete: '删除文件夹',
+  folderDeleteConfirm: '确定删除该文件夹？文件夹内的智能体不会被删除。',
+  folderUncategorized: '未分类',
+  folderAll: '全部智能体',
+  folderAddAgent: '添加智能体到文件夹',
+  folderRemoveAgent: '从文件夹移除',
+  folderEmpty: '还没有文件夹，点击 + 创建一个。',
+  folderAgentCount: '{count} 个智能体',
+
   reviewSampleRateHint: '0.0 = 从不审核, 1.0 = 始终审核',
   reviewTimeout: '审核超时（分钟）',
   maxReviewLoops: '最大审核轮次',

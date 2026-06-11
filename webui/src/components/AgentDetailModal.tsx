@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import type { AgentProfile, Node, Agent } from '../types';
-import { agentProfiles, nodes, agents, tools } from '../api/client';
+import type { AgentProfile, Node, Agent, AgentFolder } from '../types';
+import { agentProfiles, nodes, agents, tools, agentFolders } from '../api/client';
 import { useLang } from '../i18n/context';
 import type { SystemTool } from '../types';
 
@@ -79,6 +79,8 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
   const [agentList, setAgentList] = useState<Agent[]>([]);
   const [loadingAgents, setLoadingAgents] = useState(false);
   const [disabledTools, setDisabledTools] = useState<Set<string>>(new Set());
+  const [allFolders, setAllFolders] = useState<AgentFolder[]>([]);
+  const [assignedFolderIds, setAssignedFolderIds] = useState<Set<string>>(new Set());
 
   // Fetch global tool disabled state
   useEffect(() => {
@@ -93,6 +95,18 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
       setNodeList(res.nodes);
     }).catch(() => {});
   }, []);
+
+  // Fetch folder memberships
+  useEffect(() => {
+    agentFolders.list().then(res => {
+      setAllFolders(res.folders);
+    }).catch(() => {});
+  }, []);
+  useEffect(() => {
+    agentFolders.getAgentFolders(profile.id).then(res => {
+      setAssignedFolderIds(new Set(res.folders.map(f => f.id)));
+    }).catch(() => {});
+  }, [profile.id]);
 
   // Fetch agents when node changes in edit mode
   useEffect(() => {
@@ -505,6 +519,63 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
                 <p style={{ margin: 0, color: '#555', fontSize: '0.95em', lineHeight: 1.6, background: '#fef7e0', padding: '10px', borderRadius: '6px', whiteSpace: 'pre-wrap' }}>
                   {profile.instructions}
                 </p>
+              </div>
+            )}
+
+            {/* Folder Membership */}
+            {allFolders.length > 0 && (
+              <div style={{ marginBottom: '16px' }}>
+                <div style={{ fontWeight: 600, color: '#333', fontSize: '0.9em', marginBottom: '8px' }}>
+                  {t('agentFolders') || 'Folders'}
+                </div>
+                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
+                  {allFolders.filter(f => assignedFolderIds.has(f.id)).map(f => (
+                    <span key={f.id} style={{
+                      background: f.color + '20', color: f.color, padding: '2px 10px',
+                      borderRadius: '10px', fontSize: '0.8em', fontWeight: 500,
+                      border: '1px solid ' + f.color + '40',
+                      display: 'flex', alignItems: 'center', gap: '4px',
+                    }}>
+                      <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: f.color }} />
+                      {f.name}
+                      <button
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          await agentFolders.removeItem(f.id, profile.id);
+                          setAssignedFolderIds(prev => { const next = new Set(prev); next.delete(f.id); return next; });
+                        }}
+                        title={t('folderRemoveAgent') || 'Remove'}
+                        style={{
+                          width: '14px', height: '14px', border: 'none', background: 'transparent',
+                          cursor: 'pointer', color: '#999', fontSize: '0.7em', padding: 0,
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        }}
+                      >✕</button>
+                    </span>
+                  ))}
+                  {/* Add to folder button */}
+                  {allFolders.filter(f => !assignedFolderIds.has(f.id)).length > 0 && (
+                    <select
+                      value=""
+                      onChange={async (e) => {
+                        const fid = e.target.value;
+                        if (!fid) return;
+                        await agentFolders.addItem(fid, profile.id);
+                        setAssignedFolderIds(prev => new Set([...prev, fid]));
+                      }}
+                      style={{
+                        padding: '2px 8px', borderRadius: '10px', fontSize: '0.8em',
+                        border: '1px dashed #ccc', background: '#fff', color: '#888',
+                        cursor: 'pointer', maxWidth: '140px',
+                      }}
+                    >
+                      <option value="">+ {t('folderAddAgent') || 'Add'}</option>
+                      {allFolders.filter(f => !assignedFolderIds.has(f.id)).map(f => (
+                        <option key={f.id} value={f.id}>{f.name}</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
               </div>
             )}
 

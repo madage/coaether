@@ -3,6 +3,7 @@ import { useMessageBus, type Envelope, type ContentBlock } from './hooks/useMess
 import { NodeList } from './components/NodeList';
 import { AddNodeDialog } from './components/AddNodeDialog';
 import { AgentList } from './components/AgentList';
+import { AgentFolderPanel } from './components/AgentFolderPanel';
 import { TaskBoard } from './components/TaskBoard';
 import { ProjectList } from './components/ProjectList';
 import { TrashView } from './components/TrashView';
@@ -795,9 +796,11 @@ function App() {
         </div>
 
         {/* Agents page */}
-        <div style={{ display: page === 'agents' ? 'block' : 'none', height: '100%', overflow: 'auto' }}>
-          <h2 style={{ padding: '24px 24px 0' }}>{t('agents')}</h2>
-          <AgentList key={workspaceKey} />
+        <div style={{ display: page === 'agents' ? 'flex' : 'none', height: '100%', flexDirection: 'column', overflow: 'hidden' }}>
+          <h2 style={{ padding: '24px 24px 12px', flexShrink: 0 }}>{t('agents')}</h2>
+          <div style={{ flex: 1, overflow: 'hidden' }}>
+            <AgentFolderPanel key={workspaceKey} />
+          </div>
         </div>
 
         {/* Tasks page */}

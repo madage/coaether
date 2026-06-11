@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useLang } from '../i18n/context';
-import { agentProfiles, nodes, agents } from '../api/client';
+import { agentProfiles, nodes, agents, agentFolders } from '../api/client';
 import { AgentCard } from './AgentCard';
 import { AgentCreateCard } from './AgentCreateCard';
 import { AgentForm } from './AgentForm';
@@ -10,12 +10,13 @@ import { useResourceSync } from '../hooks/useResourceSync';
 import type { AgentProfile, Node } from '../types';
 import { useWorkspace } from '../hooks/WorkspaceContext';
 
-export function AgentList() {
+export function AgentList({ folderId }: { folderId?: string | null }) {
   const { t, lang } = useLang();
   const { role } = useWorkspace();
   const isObserver = role === 'observer';
   const canWrite = role === 'admin' || role === 'owner' || role === 'worker';
   const [profiles, setProfiles] = useState<AgentProfile[]>([]);
+  const [folderAgentIds, setFolderAgentIds] = useState<Set<string> | null>(null);
   const [agentsMap, setAgentsMap] = useState<Record<string, string>>({});
   const [nodesMap, setNodesMap] = useState<Record<string, string>>({});
   const [selectedProfile, setSelectedProfile] = useState<AgentProfile | null>(null);
@@ -23,6 +24,7 @@ export function AgentList() {
   const [loading, setLoading] = useState(true);
   const [deleteProfileId, setDeleteProfileId] = useState<string | null>(null);
   const [showHelp, setShowHelp] = useState(false);
+  const [showAddToFolder, setShowAddToFolder] = useState(false);
 
   const fetchProfiles = useCallback(async () => {
     try {
@@ -59,6 +61,17 @@ export function AgentList() {
   useEffect(() => {
     fetchProfiles();
   }, [fetchProfiles]);
+
+  // Fetch folder membership when folderId changes
+  useEffect(() => {
+    if (!folderId) {
+      setFolderAgentIds(null);
+      return;
+    }
+    agentFolders.listItems(folderId).then(res => {
+      setFolderAgentIds(new Set(res.items.map(i => i.agent_profile_id)));
+    }).catch(() => setFolderAgentIds(null));
+  }, [folderId]);
 
   useResourceSync('agent_profiles', fetchProfiles);
 
@@ -100,6 +113,30 @@ export function AgentList() {
     }
   }, [deleteProfileId]);
 
+  const handleRemoveFromFolder = useCallback(async (profileId: string) => {
+    if (!folderId) return;
+    setFolderAgentIds((prev) => {
+      if (!prev) return null;
+      const next = new Set(prev);
+      next.delete(profileId);
+      return next;
+    });
+    try {
+      await agentFolders.removeItem(folderId, profileId);
+    } catch {
+      // revert on failure
+      setFolderAgentIds((prev) => {
+        if (!prev) return new Set([profileId]);
+        return new Set([...prev, profileId]);
+      });
+    }
+  }, [folderId]);
+
+  // Filter profiles by folder membership
+  const filteredProfiles = folderAgentIds
+    ? profiles.filter(p => folderAgentIds.has(p.id))
+    : profiles;
+
   if (loading) {
     return (
       <div style={{ padding: '24px', color: '#999', textAlign: 'center' }}>
@@ -113,14 +150,72 @@ export function AgentList() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
         <h3 style={{ margin: 0, fontSize: '1.15em', color: '#1a1a2e' }}>
           {t('agentProfiles')}
-          {profiles.length > 0 && (
+          {filteredProfiles.length > 0 && (
             <span style={{ color: '#999', fontSize: '0.8em', fontWeight: 400, marginLeft: '8px' }}>
-              ({profiles.length})
+              ({filteredProfiles.length}{folderId && profiles.length !== filteredProfiles.length ? ` / ${profiles.length}` : ''})
             </span>
           )}
         </h3>
-        <button
-          onClick={() => setShowHelp(true)}
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          {/* Add agents to folder button */}
+          {folderId && folderAgentIds && (
+            <div style={{ position: 'relative' }}>
+              <button
+                onClick={() => setShowAddToFolder(!showAddToFolder)}
+                style={{
+                  padding: '4px 12px', border: '1px dashed #ccc', borderRadius: '6px',
+                  background: '#fff', cursor: 'pointer', fontSize: '0.8em', color: '#666',
+                }}
+              >+ {t('folderAddAgent') || 'Add Agents'}</button>
+              {showAddToFolder && (
+                <>
+                  <div
+                    onClick={() => setShowAddToFolder(false)}
+                    style={{ position: 'fixed', inset: 0, zIndex: 1050 }}
+                  />
+                  <div style={{
+                    position: 'absolute', top: '100%', right: 0, zIndex: 1060,
+                    background: '#fff', border: '1px solid #eee', borderRadius: '8px',
+                    boxShadow: '0 4px 16px rgba(0,0,0,0.12)', minWidth: '220px',
+                    maxHeight: '300px', overflowY: 'auto', marginTop: '4px',
+                  }}>
+                    {profiles.filter(p => !folderAgentIds.has(p.id)).length === 0 ? (
+                      <div style={{ padding: '12px 16px', color: '#aaa', fontSize: '0.8em', textAlign: 'center' }}>
+                        {lang === 'zh' ? '所有智能体已添加' : 'All agents added'}
+                      </div>
+                    ) : (
+                      profiles.filter(p => !folderAgentIds.has(p.id)).map(p => (
+                        <button
+                          key={p.id}
+                          onClick={async () => {
+                            try {
+                              await agentFolders.addItem(folderId!, p.id);
+                              setFolderAgentIds(prev => prev ? new Set([...prev, p.id]) : new Set([p.id]));
+                            } catch {}
+                          }}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: '8px',
+                            width: '100%', padding: '8px 16px', border: 'none',
+                            background: 'transparent', cursor: 'pointer',
+                            fontSize: '0.82em', color: '#444', textAlign: 'left',
+                          }}
+                          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = '#f5f7fa'; }}
+                          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
+                        >
+                          <span>{p.avatar || '🤖'}</span>
+                          <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {p.name}
+                          </span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+          <button
+            onClick={() => setShowHelp(true)}
           title={lang === 'zh' ? '创建规范' : 'Creation guide'}
           style={{
             width: '32px', height: '32px', borderRadius: '50%',
@@ -129,6 +224,7 @@ export function AgentList() {
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}
         >?</button>
+      </div>
       </div>
 
       {/* Help modal */}
@@ -250,7 +346,7 @@ Review Sample Rate: 1.0`}
         gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
         gap: '20px',
       }}>
-        {profiles.map((profile) => (
+        {filteredProfiles.map((profile) => (
           <AgentCard
             key={profile.id}
             profile={profile}
@@ -258,12 +354,13 @@ Review Sample Rate: 1.0`}
             nodeName={(profile.node_id && nodesMap[profile.node_id]) || ''}
             onClick={() => setSelectedProfile(profile)}
             onToggle={handleToggle}
+            onRemoveFromFolder={folderId ? handleRemoveFromFolder : undefined}
           />
         ))}
         {!isObserver && <AgentCreateCard onClick={() => setShowCreate(true)} />}
       </div>
 
-      {profiles.length === 0 && (
+      {filteredProfiles.length === 0 && (
         <div style={{ textAlign: 'center', color: '#999', marginTop: '48px', fontSize: '0.95em' }}>
           {t('noProfiles')}
         </div>

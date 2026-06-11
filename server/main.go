@@ -120,6 +120,9 @@ func main() {
 	profileH := handlers.NewAgentProfileHandler(database.DB)
 	profileH.Hub = dashHub
 
+	folderH := handlers.NewAgentFolderHandler(database.DB)
+	folderH.Hub = dashHub
+
 	skillH := handlers.NewSkillHandler(database.DB)
 	skillH.Hub = dashHub
 
@@ -344,6 +347,16 @@ func main() {
 		api.DELETE("/agents/profiles/:id", profileH.Delete)
 
 		api.GET("/agents/runtimes", profileH.ListRuntimes)
+
+		// Agent folders
+		api.GET("/agent-folders", folderH.List)
+		api.POST("/agent-folders", folderH.Create)
+		api.PUT("/agent-folders/:id", folderH.Update)
+		api.DELETE("/agent-folders/:id", folderH.Delete)
+		api.POST("/agent-folders/:id/items", folderH.AddItem)
+		api.DELETE("/agent-folders/:id/items/:agentId", folderH.RemoveItem)
+		api.GET("/agent-folders/:id/items", folderH.ListFolderItems)
+		api.GET("/agent-folders/agent/:agentId", folderH.GetAgentFolders)
 
 		// Tasks
 

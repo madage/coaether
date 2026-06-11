@@ -743,6 +743,27 @@ func Migrate() error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_app_events_time ON app_events(created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_app_events_task ON app_events(task_id)`,
+		`CREATE TABLE IF NOT EXISTS agent_folders (
+			id          VARCHAR(36) PRIMARY KEY,
+			workspace_id VARCHAR(36) NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+			user_id     VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			name        VARCHAR(128) NOT NULL,
+			color       VARCHAR(16) NOT NULL DEFAULT '#6366f1',
+			sort_order  INT NOT NULL DEFAULT 0,
+			created_at  TIMESTAMP NOT NULL DEFAULT NOW(),
+			updated_at  TIMESTAMP NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_agent_folders_ws ON agent_folders(workspace_id)`,
+		`CREATE TABLE IF NOT EXISTS agent_folder_items (
+			id              VARCHAR(36) PRIMARY KEY,
+			folder_id       VARCHAR(36) NOT NULL REFERENCES agent_folders(id) ON DELETE CASCADE,
+			agent_profile_id VARCHAR(36) NOT NULL REFERENCES agent_profiles(id) ON DELETE CASCADE,
+			sort_order      INT NOT NULL DEFAULT 0,
+			created_at      TIMESTAMP NOT NULL DEFAULT NOW(),
+			UNIQUE(folder_id, agent_profile_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_agent_folder_items_folder ON agent_folder_items(folder_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_agent_folder_items_agent ON agent_folder_items(agent_profile_id)`,
 	}
 	for _, t := range harnessTables {
 		if _, err := DB.Exec(t); err != nil {
