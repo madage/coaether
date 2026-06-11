@@ -265,7 +265,7 @@ var updateStatusSchema = json.RawMessage(`{
 	"required": ["task_id", "status"],
 	"properties": {
 		"task_id": {"type": "string"},
-		"status": {"type": "string", "enum": ["todo", "in_progress", "completed", "blocked"]}
+		"status": {"type": "string", "enum": ["todo", "in_progress", "completed", "blocked", "done"]}
 	}
 }`)
 

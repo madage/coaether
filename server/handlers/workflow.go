@@ -1056,7 +1056,7 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 				return nil, fmt.Errorf("task_id and status are required")
 			}
 
-			validStatuses := map[string]bool{"todo": true, "in_progress": true, "completed": true, "blocked": true}
+			validStatuses := map[string]bool{"todo": true, "in_progress": true, "completed": true, "blocked": true, "done": true}
 			if !validStatuses[p.Status] {
 				return nil, fmt.Errorf("invalid status: %s (must be todo, in_progress, completed, or blocked)", p.Status)
 			}
@@ -1068,7 +1068,7 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 
 			var err error
 			switch p.Status {
-			case "completed":
+			case "completed", "done":
 				err = h.TaskService.MarkCompleted(p.TaskID, opts)
 			case "todo":
 				err = h.TaskService.MarkTodo(p.TaskID, opts)
@@ -1082,7 +1082,7 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 			}
 
 			// Release agent load for terminal statuses (tool-call path doesn't go through UpdateQueueStatus)
-			if p.Status == "completed" || p.Status == "blocked" {
+			if p.Status == "completed" || p.Status == "done" || p.Status == "blocked" {
 				h.DB.Exec(`UPDATE agent_profiles SET current_load = GREATEST(0, current_load - 1) WHERE id = $1`, ctx.AgentProfileID)
 			}
 
