@@ -22,7 +22,8 @@ type WorkflowHandler struct {
 	Hub        *DashboardHub
 	DAGEngine  *DAGEngine
 	Harness    *harness.Harness
-	Notifier   *NotificationHandler
+	Notifier    *NotificationHandler
+	TaskService *TaskService
 }
 
 // NewWorkflowHandler creates a new workflow handler.
@@ -412,7 +413,7 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 		}
 
 		log.Printf("[Harness] Agent %s proposed decomposition plan %s for task %s (%d items)",
-			ctx.AgentName[:8], planID[:8], (*ctx.TaskID)[:8], len(p.Items))
+			safe8(ctx.AgentName), planID[:8], (*ctx.TaskID)[:8], len(p.Items))
 
 		return map[string]interface{}{
 			"plan_id": planID,
@@ -532,7 +533,10 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 						if errorCount >= 3 {
 							// Circuit breaker: mark plan as failed, block parent task, notify user
 							h.DB.Exec(`UPDATE decomposition_plans SET status = 'failed', updated_at = $1 WHERE id = $2`, now, planID)
-							h.DB.Exec(`UPDATE tasks SET status = 'blocked', updated_at = $1 WHERE id = $2 AND deleted_at IS NULL`, now, *ctx.TaskID)
+							opts := TransitionOpts{ActorID: ctx.AgentProfileID}
+							if err := h.TaskService.MarkBlocked(*ctx.TaskID, opts); err != nil {
+								log.Printf("[Harness] Failed to block task %s: %v", (*ctx.TaskID)[:8], err)
+							}
 							
 							// Post critical notification comment
 							commentID := uuid.New().String()
@@ -588,7 +592,7 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 					h.Hub.SignalChange("tasks")
 				}
 
-				log.Printf("[Harness] Agent %s create_sub_task → plan item %s (plan=%s)", ctx.AgentName[:8], itemID[:8], planID[:8])
+				log.Printf("[Harness] Agent %s create_sub_task → plan item %s (plan=%s)", safe8(ctx.AgentName), itemID[:8], planID[:8])
 				return map[string]interface{}{
 					"status":       "plan_item_created",
 					"plan_item_id": itemID,
@@ -671,10 +675,15 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 			action["target_agent_name"] = targetAgentName
 			actionJSON, _ := json.Marshal([]interface{}{action})
 
+			// Set pending_review_actions, then delegate status change to TaskService
 			h.DB.Exec(
-				`UPDATE tasks SET status = 'review', pending_review_actions = $1, updated_at = $2 WHERE id = $3 AND deleted_at IS NULL`,
+				`UPDATE tasks SET pending_review_actions = $1, updated_at = $2 WHERE id = $3 AND deleted_at IS NULL`,
 				actionJSON, now, *ctx.TaskID,
 			)
+			opts := TransitionOpts{ActorID: ctx.AgentProfileID}
+			if err := h.TaskService.MarkReview(*ctx.TaskID, opts); err != nil {
+				log.Printf("[Harness] Failed to set task %s to review: %v", (*ctx.TaskID)[:8], err)
+			}
 
 			// Build @mention comment for human users
 			var creatorName string
@@ -734,7 +743,7 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 				h.Hub.SignalChange("tasks")
 			}
 
-			log.Printf("[Harness] Agent %s created subtask %s → parent %s set to review (pending human approval)", ctx.AgentName[:8], taskID[:8], (*ctx.TaskID)[:8])
+			log.Printf("[Harness] Agent %s created subtask %s → parent %s set to review (pending human approval)", safe8(ctx.AgentName), taskID[:8], (*ctx.TaskID)[:8])
 			return map[string]interface{}{
 				"task_id": taskID,
 				"title":   p.Title,
@@ -768,7 +777,7 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 			h.Hub.SignalChange("tasks")
 		}
 
-		log.Printf("[Harness] Agent %s created subtask %s: %s", ctx.AgentName[:8], taskID[:8], p.Title)
+		log.Printf("[Harness] Agent %s created subtask %s: %s", safe8(ctx.AgentName), taskID[:8], p.Title)
 		return map[string]interface{}{
 			"task_id": taskID,
 			"title":   p.Title,
@@ -960,7 +969,7 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 				h.Hub.SignalChange("tasks")
 			}
 
-			log.Printf("[Harness] Agent %s assigned task %s to agent %s → review (pending human approval)", ctx.AgentName[:8], p.TaskID[:8], p.AssigneeID[:8])
+			log.Printf("[Harness] Agent %s assigned task %s to agent %s → review (pending human approval)", safe8(ctx.AgentName), p.TaskID[:8], p.AssigneeID[:8])
 			return map[string]interface{}{
 				"status":   "pending_review",
 				"task_id":  p.TaskID,
@@ -982,106 +991,92 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 			h.Hub.SignalChange("tasks")
 		}
 
-		log.Printf("[Harness] Agent %s assigned task %s to %s (%s)", ctx.AgentName[:8], p.TaskID[:8], p.AssigneeID[:8], p.AssigneeType)
+		log.Printf("[Harness] Agent %s assigned task %s to %s (%s)", safe8(ctx.AgentName), p.TaskID[:8], p.AssigneeID[:8], p.AssigneeType)
 		return map[string]interface{}{
 			"status":  "assigned",
 			"task_id": p.TaskID,
 		}, nil
 	})
 
-	harness.RegisterExecutor(harness.ToolReviewTask, func(ctx *harness.AgentContext, params json.RawMessage) (interface{}, error) {
-		var p struct {
-			TaskID  string `json:"task_id"`
-			Action  string `json:"action"`
-			Comment string `json:"comment,omitempty"`
-		}
-		if err := json.Unmarshal(params, &p); err != nil {
-			return nil, fmt.Errorf("invalid params: %w", err)
-		}
-		if p.TaskID == "" || p.Action == "" {
-			return nil, fmt.Errorf("task_id and action are required")
-		}
+		harness.RegisterExecutor(harness.ToolReviewTask, func(ctx *harness.AgentContext, params json.RawMessage) (interface{}, error) {
+			var p struct {
+				TaskID  string `json:"task_id"`
+				Action  string `json:"action"`
+				Comment string `json:"comment,omitempty"`
+			}
+			if err := json.Unmarshal(params, &p); err != nil {
+				return nil, fmt.Errorf("invalid params: %w", err)
+			}
+			if p.TaskID == "" || p.Action == "" {
+				return nil, fmt.Errorf("task_id and action are required")
+			}
 
-		// Agents cannot review tasks with pending dispatch actions — requires human approval
-		var pendingActions []byte
-		h.DB.QueryRow(`SELECT pending_review_actions FROM tasks WHERE id = $1 AND deleted_at IS NULL`, p.TaskID).Scan(&pendingActions)
-		if len(pendingActions) > 5 { // more than "[]" (2 bytes) means there are pending actions
-			return nil, fmt.Errorf("该任务有待人工审核的操作，智能体不能审核，请联系管理员")
-		}
+			// Agents cannot review tasks with pending dispatch actions — requires human approval
+			var pendingActions []byte
+			h.DB.QueryRow(`SELECT pending_review_actions FROM tasks WHERE id = $1 AND deleted_at IS NULL`, p.TaskID).Scan(&pendingActions)
+			if len(pendingActions) > 5 {
+				return nil, fmt.Errorf("该任务有待人工审核的操作，智能体不能审核，请联系管理员")
+			}
 
-		var newStatus string
-		switch p.Action {
-		case "approved":
-			newStatus = "done"
-		case "rejected":
-			newStatus = "in_progress"
-		default:
-			return nil, fmt.Errorf("invalid action: %s (must be approved or rejected)", p.Action)
-		}
+			if p.Action != "approved" && p.Action != "rejected" {
+				return nil, fmt.Errorf("invalid action: %s (must be approved or rejected)", p.Action)
+			}
 
-		_, err := h.DB.Exec(
-			`UPDATE tasks SET status = $1, updated_at = $2 WHERE id = $3 AND deleted_at IS NULL`,
-			newStatus, time.Now(), p.TaskID,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to review task: %w", err)
-		}
+			err := h.TaskService.HandleReview(p.TaskID, nil, &ctx.AgentProfileID, p.Action, p.Comment)
+			if err != nil {
+				return nil, fmt.Errorf("failed to review task: %w", err)
+			}
 
-		if p.Comment != "" {
-			commentID := uuid.New().String()
-			h.DB.Exec(
-				`INSERT INTO task_comments (id, task_id, user_id, agent_profile_id, content, is_agent_comment, created_at, updated_at)
-				 VALUES ($1, $2, $3, $4, $5, true, $6, $6)`,
-				commentID, p.TaskID, ctx.UserID, ctx.AgentProfileID, p.Comment, time.Now(),
-			)
-		}
+			log.Printf("[Harness] Agent %s reviewed task %s: %s", safe8(ctx.AgentName), p.TaskID[:8], p.Action)
+			return map[string]interface{}{
+				"status":  p.Action,
+				"task_id": p.TaskID,
+			}, nil
+		})
 
-		if h.Hub != nil {
-			h.Hub.SignalChange("tasks")
-		}
+		harness.RegisterExecutor(harness.ToolUpdateStatus, func(ctx *harness.AgentContext, params json.RawMessage) (interface{}, error) {
+			var p struct {
+				TaskID string `json:"task_id"`
+				Status string `json:"status"`
+			}
+			if err := json.Unmarshal(params, &p); err != nil {
+				return nil, fmt.Errorf("invalid params: %w", err)
+			}
+			if p.TaskID == "" || p.Status == "" {
+				return nil, fmt.Errorf("task_id and status are required")
+			}
 
-		log.Printf("[Harness] Agent %s reviewed task %s: %s", ctx.AgentName[:8], p.TaskID[:8], p.Action)
-		return map[string]interface{}{
-			"status":  newStatus,
-			"task_id": p.TaskID,
-		}, nil
-	})
+			validStatuses := map[string]bool{"todo": true, "in_progress": true, "completed": true, "blocked": true}
+			if !validStatuses[p.Status] {
+				return nil, fmt.Errorf("invalid status: %s (must be todo, in_progress, completed, or blocked)", p.Status)
+			}
 
-	harness.RegisterExecutor(harness.ToolUpdateStatus, func(ctx *harness.AgentContext, params json.RawMessage) (interface{}, error) {
-		var p struct {
-			TaskID string `json:"task_id"`
-			Status string `json:"status"`
-		}
-		if err := json.Unmarshal(params, &p); err != nil {
-			return nil, fmt.Errorf("invalid params: %w", err)
-		}
-		if p.TaskID == "" || p.Status == "" {
-			return nil, fmt.Errorf("task_id and status are required")
-		}
+			opts := TransitionOpts{
+				AgentProfileID: ctx.AgentProfileID,
+				ActorID:        ctx.AgentProfileID,
+			}
 
-		validStatuses := map[string]bool{"todo": true, "in_progress": true, "completed": true, "blocked": true}
-		if !validStatuses[p.Status] {
-			return nil, fmt.Errorf("invalid status: %s (must be todo, in_progress, completed, or blocked)", p.Status)
-		}
+			var err error
+			switch p.Status {
+			case "completed":
+				err = h.TaskService.MarkCompleted(p.TaskID, opts)
+			case "todo":
+				err = h.TaskService.MarkTodo(p.TaskID, opts)
+			case "in_progress":
+				err = h.TaskService.MarkInProgress(p.TaskID, opts)
+			case "blocked":
+				err = h.TaskService.MarkBlocked(p.TaskID, opts)
+			}
+			if err != nil {
+				return nil, fmt.Errorf("failed to update status: %w", err)
+			}
 
-		_, err := h.DB.Exec(
-			`UPDATE tasks SET status = $1, updated_at = $2 WHERE id = $3 AND deleted_at IS NULL`,
-			p.Status, time.Now(), p.TaskID,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to update status: %w", err)
-		}
-
-		if h.Hub != nil {
-			h.Hub.SignalChange("tasks")
-		}
-
-		log.Printf("[Harness] Agent %s updated task %s status → %s", ctx.AgentName[:8], p.TaskID[:8], p.Status)
-		return map[string]interface{}{
-			"status":  p.Status,
-			"task_id": p.TaskID,
-		}, nil
-	})
+			log.Printf("[Harness] Agent %s updated task %s status → %s", safe8(ctx.AgentName), p.TaskID[:8], p.Status)
+			return map[string]interface{}{
+				"status":  p.Status,
+				"task_id": p.TaskID,
+			}, nil
+		})
 
 	harness.RegisterExecutor(harness.ToolSearchAgentProfiles, func(ctx *harness.AgentContext, params json.RawMessage) (interface{}, error) {
 		var p struct {
@@ -1176,7 +1171,7 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 		}
 
 		log.Printf("[Harness] Agent %s searched agent profiles (name=%q tags=%v capability=%s) → %d results",
-			ctx.AgentName[:8], p.Name, p.Tags, p.Capability, len(agents))
+			safe8(ctx.AgentName), p.Name, p.Tags, p.Capability, len(agents))
 
 		return map[string]interface{}{
 			"agents": agents,
@@ -1212,3 +1207,14 @@ func isCircularDelegation(db *sql.DB, taskID string, targetAgentID string) bool 
 	}
 	return false
 }
+
+func safe8(s string) string {
+	if len(s) >= 8 {
+		return s[:8]
+	}
+	if s == "" {
+		return "unknown"
+	}
+	return s
+}
+

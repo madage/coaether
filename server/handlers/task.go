@@ -25,6 +25,7 @@ type TaskHandler struct {
 	AgentScheduler *AgentScheduler
 	MessageBus     *protocol.MessageBus
 	ReviewRouter   *ReviewRouter
+	TaskService    *TaskService
 }
 
 func NewTaskHandler(db *sql.DB) *TaskHandler {
@@ -607,21 +608,10 @@ func (h *TaskHandler) Update(c *gin.Context) {
 		args = append(args, *req.Description)
 		argIdx++
 	}
+	var newStatus string
 	if req.Status != nil {
-		sets = append(sets, fmt.Sprintf("status = $%d", argIdx))
-		args = append(args, *req.Status)
-		argIdx++
-		// Auto-set completed_at when status changes to/from done
-		if *req.Status == string(models.TaskDone) {
-			now := time.Now()
-			sets = append(sets, fmt.Sprintf("completed_at = $%d", argIdx))
-			args = append(args, now)
-			argIdx++
-		} else {
-			sets = append(sets, fmt.Sprintf("completed_at = $%d", argIdx))
-			args = append(args, nil)
-			argIdx++
-		}
+		newStatus = *req.Status
+		// Status changes are handled by TaskService after transaction commit
 	}
 	if _, exists := fields["project_id"]; exists {
 		if req.ProjectID != nil {
@@ -683,7 +673,7 @@ func (h *TaskHandler) Update(c *gin.Context) {
 		argIdx++
 	}
 
-	if len(sets) == 0 && req.Tags == nil {
+	if len(sets) == 0 && req.Tags == nil && req.Status == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "no fields to update"})
 		return
 	}
@@ -731,6 +721,19 @@ func (h *TaskHandler) Update(c *gin.Context) {
 	if err := tx.Commit(); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to commit update"})
 		return
+	}
+
+	// Handle status change via TaskService (unified orchestration)
+	if req.Status != nil {
+		actorID, _ := c.Get("user_id")
+		actorStr, _ := actorID.(string)
+		opts := TransitionOpts{
+			ActorID: actorStr,
+		}
+		if err := h.TaskService.TransitionStatus(taskID, newStatus, opts); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 	}
 
 	var t models.Task
@@ -787,22 +790,6 @@ func (h *TaskHandler) Update(c *gin.Context) {
 					&t.ID)
 			}
 		}
-	}
-
-	// Evaluate automation rules on status change
-	if h.RuleEngine != nil {
-		h.RuleEngine.Evaluate("on_status_change", taskID, ExtractStatusContext(taskID, string(t.Status)))
-	}
-
-	// RouteTask: if status changed to completed, route based on completion_behavior
-	if req.Status != nil && *req.Status == "completed" && h.ReviewRouter != nil {
-		h.ReviewRouter.RouteTask(taskID)
-	}
-
-	// DAGEngine: if status changed to done, advance blocked children
-	if req.Status != nil && *req.Status == string(models.TaskDone) {
-		dag := NewDAGEngine(h.DB)
-		dag.OnTaskCompleted(taskID)
 	}
 
 	c.JSON(http.StatusOK, t)
@@ -970,7 +957,7 @@ func (h *TaskHandler) Restore(c *gin.Context) {
 }
 
 func (h *TaskHandler) SetStatus(c *gin.Context) {
-	workspaceID := c.Query("workspace_id")
+	_ = c.Query("workspace_id") // kept for API compatibility
 	taskID := c.Param("id")
 
 	var creatorID string
@@ -996,33 +983,18 @@ func (h *TaskHandler) SetStatus(c *gin.Context) {
 		return
 	}
 
-	// Auto-set completed_at
-	var completedAt interface{}
-	if req.Status == string(models.TaskDone) {
-		completedAt = time.Now()
-	} else {
-		completedAt = nil
+	// Use TaskService for unified status transition
+	actorID, _ := c.Get("user_id")
+	actorStr, _ := actorID.(string)
+	opts := TransitionOpts{
+		ActorID: actorStr,
 	}
-
-	query := `UPDATE tasks SET status = $1, completed_at = $2, updated_at = NOW() WHERE id = $3`
-	args := []any{req.Status, completedAt, taskID}
-	isMember, _ := c.Get("is_workspace_member")
-	if workspaceID != "" && isMember.(bool) {
-		query += ` AND workspace_id = $4`
-		args = append(args, workspaceID)
-	}
-
-	result, err := h.DB.Exec(query, args...)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update status"})
+	if err := h.TaskService.TransitionStatus(taskID, req.Status, opts); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	if n, _ := result.RowsAffected(); n == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
-		return
-	}
-
+	// Re-fetch updated task for response
 	var t models.Task
 	h.DB.QueryRow(
 		fmt.Sprintf(`SELECT %s FROM tasks t LEFT JOIN users u ON u.id = t.user_id WHERE t.id = $1`, taskSelectCols), taskID,
@@ -1033,58 +1005,6 @@ func (h *TaskHandler) SetStatus(c *gin.Context) {
 	)
 	t.Tags = h.fetchTags(t.ID)
 	t.Assignees = h.fetchAssignees(t.ID)
-
-	if h.Hub != nil {
-		h.Hub.SignalChange("tasks")
-	}
-
-	// Auto-process: if status changed to in_progress and assigned to an agent
-	if req.Status == "in_progress" && t.AssigneeType != nil && *t.AssigneeType == "agent_profile" && t.AssigneeID != nil {
-		agentProfileID := *t.AssigneeID
-		var canProcess bool
-		h.DB.QueryRow(
-			`SELECT COALESCE(current_load, 0) < COALESCE(max_concurrency, 1) FROM agent_profiles WHERE id = $1 AND enabled = true`,
-			agentProfileID,
-		).Scan(&canProcess)
-
-		if canProcess {
-			queueID := uuid.New().String()
-			now := time.Now()
-
-			h.DB.Exec(
-				`INSERT INTO task_agent_queue (id, task_id, agent_profile_id, status, trigger_type, assigned_at, created_at)
-				 VALUES ($1, $2, $3, 'processing', 'status_change', $4, $4)`,
-				queueID, taskID, agentProfileID, now,
-			)
-			h.DB.Exec(`UPDATE agent_profiles SET current_load = current_load + 1, last_active_at = $1 WHERE id = $2`,
-				now, agentProfileID)
-
-			if h.Hub != nil {
-				h.Hub.SignalChange("task_agent_queue")
-			}
-
-			// Auto-process via MessageBus if runtime is connected
-			if h.MessageBus != nil {
-				autoProcessTask(h.DB, h.MessageBus, taskID, agentProfileID, queueID)
-			}
-		}
-	}
-
-	// DAGEngine: when task goes to done, advance blocked children
-	if req.Status == string(models.TaskDone) && t.WorkflowID != nil {
-		dag := NewDAGEngine(h.DB)
-		dag.OnTaskCompleted(taskID)
-	}
-
-	// Process pending review actions when approved (status changes to done from review)
-	if req.Status == string(models.TaskDone) && h.ReviewRouter != nil {
-		h.ReviewRouter.processPendingActions(taskID)
-	}
-
-	// RouteTask: when completed, route based on completion_behavior
-	if req.Status == "completed" && h.ReviewRouter != nil {
-		h.ReviewRouter.RouteTask(taskID)
-	}
 
 	// Notify assignees about status change
 	if h.Notifier != nil {

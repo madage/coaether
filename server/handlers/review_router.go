@@ -22,7 +22,8 @@ type ReviewRouter struct {
 	Hub         *DashboardHub
 	DAGEngine   *DAGEngine
 	Notifier    *NotificationHandler
-	Auditor     *harness.Auditor
+	Auditor      *harness.Auditor
+	TaskService  *TaskService
 }
 
 // NewReviewRouter creates a new review router.
@@ -45,6 +46,14 @@ const (
 // RouteTask determines the path for a completed task based on completion_behavior.
 // Called when a task transitions to "completed".
 func (r *ReviewRouter) RouteTask(taskID string) {
+	// Delegate to TaskService for unified completion routing.
+	// Completion routing is now handled automatically by
+	// TaskService.TransitionStatus when tasks reach "completed".
+	if r.TaskService == nil {
+		log.Printf("[ReviewRouter] TaskService not available for RouteTask")
+		return
+	}
+
 	var status, behavior, assigneeType, assigneeID, workflowID string
 	err := r.DB.QueryRow(
 		`SELECT status, COALESCE(completion_behavior, 'auto_done'),
@@ -54,43 +63,28 @@ func (r *ReviewRouter) RouteTask(taskID string) {
 		taskID,
 	).Scan(&status, &behavior, &assigneeType, &assigneeID, &workflowID)
 	if err != nil {
-		log.Printf("[ReviewRouter] Task %s not found: %v", taskID[:8], err)
+		log.Printf("[ReviewRouter] Task %s not found: %v", safe8(taskID), err)
 		return
 	}
 
-	// Only route tasks in "completed" status
 	if status != "completed" {
 		return
 	}
 
-	now := time.Now()
+	opts := TransitionOpts{}
 
 	switch behavior {
 	case models.CompletionAutoDone:
-		// Skip review, go straight to done
-		r.DB.Exec(`UPDATE tasks SET status = 'done', completed_at = $1, updated_at = $1 WHERE id = $2 AND deleted_at IS NULL`,
-			now, taskID)
-		log.Printf("[ReviewRouter] Auto-done task %s", taskID[:8])
-
-		// Trigger DAG advancement
-		if workflowID != "" {
-			r.DAGEngine.OnTaskCompleted(taskID)
-		}
-
+		r.TaskService.MarkDone(taskID, opts)
 	case models.CompletionAutoReview:
-		// Route to the task's assignee if it's an agent_profile
+		// createReviewQueue is still needed for agent-to-agent review dispatch
 		if assigneeType == "agent_profile" && assigneeID != "" {
 			r.createReviewQueue(taskID, assigneeID, workflowID)
 		} else {
-			// Fallback: needs human review
-			r.DB.Exec(`UPDATE tasks SET status = 'review', updated_at = $1 WHERE id = $2 AND deleted_at IS NULL`,
-				now, taskID)
-			r.notifyWorkspace(taskID, "task_needs_review", "任务等待审核")
+			r.TaskService.MarkReview(taskID, opts)
 		}
-
 	case models.CompletionSampleReview:
-		// Random sampling
-		sampleRate := 0.2 // default 20%
+		sampleRate := 0.2
 		if workflowID != "" {
 			r.DB.QueryRow(
 				`SELECT COALESCE(ap.review_sample_rate, 0.2) FROM agent_profiles ap
@@ -99,29 +93,14 @@ func (r *ReviewRouter) RouteTask(taskID string) {
 			).Scan(&sampleRate)
 		}
 		if rand.Float64() < sampleRate {
-			// Selected for review
-			r.DB.Exec(`UPDATE tasks SET status = 'review', updated_at = $1 WHERE id = $2`,
-				now, taskID)
-			r.notifyWorkspace(taskID, "task_needs_review", "任务被抽检，等待审核")
+			r.TaskService.MarkReview(taskID, opts)
 		} else {
-			// Skip review
-			r.DB.Exec(`UPDATE tasks SET status = 'done', completed_at = $1, updated_at = $1 WHERE id = $2`,
-				now, taskID)
-			if workflowID != "" {
-				r.DAGEngine.OnTaskCompleted(taskID)
-			}
+			r.TaskService.MarkDone(taskID, opts)
 		}
-
 	case models.CompletionNeedsReview:
-		// Always require human review
-		r.DB.Exec(`UPDATE tasks SET status = 'review', updated_at = $1 WHERE id = $2 AND deleted_at IS NULL`,
-			now, taskID)
-		r.notifyWorkspace(taskID, "task_needs_review", "任务完成，等待审核")
-
+		r.TaskService.MarkReview(taskID, opts)
 	default:
-		// Unknown behavior, default to needs_review
-		r.DB.Exec(`UPDATE tasks SET status = 'review', updated_at = $1 WHERE id = $2 AND deleted_at IS NULL`,
-			now, taskID)
+		r.TaskService.MarkReview(taskID, opts)
 	}
 }
 
@@ -129,89 +108,16 @@ func (r *ReviewRouter) RouteTask(taskID string) {
 func (r *ReviewRouter) HandleReview(taskID string, reviewerID *string, reviewerAgentID *string,
 	action ReviewAction, comment string) error {
 
-	// Get current task state
-	var currentStatus, behavior, workflowID string
-	var loopCount, maxLoops int
-	err := r.DB.QueryRow(
-		`SELECT status, COALESCE(completion_behavior, 'auto_done'),
-		        COALESCE(workflow_id, ''), agent_loop_count, max_agent_loops
-		 FROM tasks WHERE id = $1 AND deleted_at IS NULL`,
-		taskID,
-	).Scan(&currentStatus, &behavior, &workflowID, &loopCount, &maxLoops)
-	if err != nil {
-		return fmt.Errorf("task not found: %w", err)
+	// Validate action before delegating
+	if action != ReviewApproved && action != ReviewRejected {
+		return fmt.Errorf("invalid action: %s", action)
 	}
 
-	if currentStatus != "review" {
-		return fmt.Errorf("task is not in review status (current: %s)", currentStatus)
+	if r.TaskService == nil {
+		return fmt.Errorf("TaskService not available")
 	}
 
-	// Record the review
-	reviewID := uuid.New().String()
-	now := time.Now()
-	r.DB.Exec(
-		`INSERT INTO task_reviews (id, task_id, reviewer_id, reviewer_agent_id, action, comment, loop_count, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		reviewID, taskID, reviewerID, reviewerAgentID, string(action), comment, loopCount+1, now,
-	)
-
-	switch action {
-	case ReviewApproved:
-		// Mark as done
-		r.DB.Exec(`UPDATE tasks SET status = 'done', completed_at = $1, updated_at = $1 WHERE id = $2 AND deleted_at IS NULL`,
-			now, taskID)
-		log.Printf("[ReviewRouter] Task %s approved", taskID[:8])
-
-		// Process any pending dispatch actions (create_sub_task, assign_task)
-		r.processPendingActions(taskID)
-
-		// Record in audit log
-		r.auditReview(taskID, reviewerAgentID, "approved", comment)
-
-		// Trigger DAG advancement (always, even for sub-tasks without workflow_id)
-			r.DAGEngine.OnTaskCompleted(taskID)
-
-	case ReviewRejected:
-		newLoopCount := loopCount + 1
-
-		if newLoopCount >= maxLoops {
-			// Meltdown! Loop count exceeded
-			r.DB.Exec(`UPDATE tasks SET status = 'stuck', agent_loop_count = $1, updated_at = $2 WHERE id = $3 AND deleted_at IS NULL`,
-				newLoopCount, now, taskID)
-			log.Printf("[ReviewRouter] Task %s STUCK after %d loops (max %d)", taskID[:8], newLoopCount, maxLoops)
-
-			// Notify workspace admins
-			r.notifyStuck(taskID, workflowID, newLoopCount, maxLoops)
-
-			// Record in audit log
-			r.auditReview(taskID, reviewerAgentID, "meltdown",
-				fmt.Sprintf("打回 %d 次（上限 %d 次），已熔断", newLoopCount, maxLoops))
-		} else {
-			// Send back for rework
-			r.DB.Exec(`UPDATE tasks SET status = 'in_progress', agent_loop_count = $1, updated_at = $2 WHERE id = $3 AND deleted_at IS NULL`,
-				newLoopCount, now, taskID)
-			log.Printf("[ReviewRouter] Task %s rejected, rework loop %d/%d", taskID[:8], newLoopCount, maxLoops)
-
-			// Record in audit log
-			r.auditReview(taskID, reviewerAgentID, "rejected", comment)
-
-			// If assigned to an agent, re-create the queue entry
-			var assigneeID, assigneeType string
-			r.DB.QueryRow(
-				`SELECT COALESCE(assignee_id,''), COALESCE(assignee_type,'') FROM tasks WHERE id = $1`,
-				taskID,
-			).Scan(&assigneeID, &assigneeType)
-			if assigneeType == "agent_profile" && assigneeID != "" {
-				r.createReviewQueue(taskID, assigneeID, workflowID)
-			}
-		}
-	}
-
-	if r.Hub != nil {
-		r.Hub.SignalChange("tasks")
-	}
-
-	return nil
+	return r.TaskService.HandleReview(taskID, reviewerID, reviewerAgentID, string(action), comment)
 }
 
 // processPendingActions processes pending_review_actions when a task is approved.

@@ -20,6 +20,7 @@ type DecompositionHandler struct {
 	Hub          *DashboardHub
 	ReviewRouter *ReviewRouter
 	DAGEngine    *DAGEngine
+	TaskService  *TaskService // unified status transition (set after creation)
 }
 
 // NewDecompositionHandler creates a new DecompositionHandler.
@@ -249,7 +250,10 @@ func (h *DecompositionHandler) ApprovePlan(c *gin.Context) {
 	if len(badDeps) > 0 {
 		// Circuit breaker: mark plan as failed, block parent task, notify user
 		h.DB.Exec(`UPDATE decomposition_plans SET status = 'failed', updated_at = $1 WHERE id = $2`, now, planID)
-		h.DB.Exec(`UPDATE tasks SET status = 'blocked', updated_at = $1 WHERE id = $2 AND deleted_at IS NULL`, now, taskID)
+		opts := TransitionOpts{ActorID: userIDStr}
+		if err := h.TaskService.MarkBlocked(taskID, opts); err != nil {
+			log.Printf("[Decomposition] Failed to block task %s: %v", taskID[:8], err)
+		}
 		commentContent := fmt.Sprintf("【严重错误】分解计划中存在无效的依赖关系：\n%s\n任务已被阻塞，请驳回计划后重新尝试。", strings.Join(badDeps, "\n"))
 		commentID := uuid.New().String()
 		h.DB.Exec(
@@ -261,6 +265,8 @@ func (h *DecompositionHandler) ApprovePlan(c *gin.Context) {
 			h.Hub.SignalChange("tasks")
 		}
 		log.Printf("[Decomposition] APPROVE REJECTED: plan %s has invalid depends_on: %v", planID[:8], badDeps)
+			InsertAppEvent(h.DB, "error", "decomposition", "分解计划审批失败: 无效依赖",
+				fmt.Sprintf("Plan %s: %v", planID[:8], badDeps), taskID, "")
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":   fmt.Sprintf("分解计划包含无效的依赖关系，审批已被拒绝。%s", strings.Join(badDeps, "; ")),
 			"blocked": true,
@@ -296,17 +302,41 @@ func (h *DecompositionHandler) ApprovePlan(c *gin.Context) {
 		if cb == "" {
 			cb = "needs_review"
 		}
-
-		// Resolve truncated assignee_id (agent may only see first 8 chars in prompt)
+		// Resolve assignee_id — may be truncated UUID, agent name, or keyword
 		assigneeID := item.AssigneeID
 		if assigneeID != "" && len(assigneeID) < 36 && item.AssigneeType == "agent_profile" {
 			var fullID string
+			// 1) UUID prefix match
 			if err := h.DB.QueryRow(
 				`SELECT id FROM agent_profiles WHERE id LIKE $1 || '%' AND enabled = true LIMIT 1`,
 				assigneeID,
 			).Scan(&fullID); err == nil {
 				log.Printf("[Decomposition] Resolved assignee %s → %s", assigneeID, fullID[:8])
 				assigneeID = fullID
+			} else if err2 := h.DB.QueryRow(
+				// 2) Exact name match
+				`SELECT id FROM agent_profiles WHERE name = $1 AND enabled = true LIMIT 1`,
+				assigneeID,
+			).Scan(&fullID); err2 == nil {
+				log.Printf("[Decomposition] Resolved assignee by name %s → %s", assigneeID, fullID[:8])
+				assigneeID = fullID
+			} else {
+				// 3) Keyword search (e.g. "search-agent" → match "搜索师")
+				for _, kw := range extractKeywords(assigneeID) {
+					if err3 := h.DB.QueryRow(
+						`SELECT id FROM agent_profiles
+						 WHERE enabled = true
+						   AND (name ILIKE '%' || $1 || '%'
+						     OR description ILIKE '%' || $1 || '%'
+						     OR tags::text ILIKE '%' || $1 || '%')
+						 LIMIT 1`,
+						kw,
+					).Scan(&fullID); err3 == nil {
+						log.Printf("[Decomposition] Resolved assignee by keyword '%s': %s → %s", kw, assigneeID, fullID[:8])
+						assigneeID = fullID
+						break
+					}
+				}
 			}
 		}
 
@@ -324,6 +354,8 @@ func (h *DecompositionHandler) ApprovePlan(c *gin.Context) {
 		)
 		if err != nil {
 			log.Printf("[Decomposition] Failed to create task for item %s: %v", item.ID[:8], err)
+			InsertAppEvent(h.DB, "error", "decomposition", "创建子任务失败",
+				fmt.Sprintf("Item %s: %v", item.ID[:8], err), taskID, "")
 			continue
 		}
 
@@ -370,6 +402,8 @@ func (h *DecompositionHandler) ApprovePlan(c *gin.Context) {
 					log.Printf("[Decomposition] Auto-queued task %s to agent %s", ct.TaskID[:8], ct.AssigneeID[:8])
 				} else if err != nil {
 					log.Printf("[Decomposition] Auto-queue failed: agent %s not found for task %s", ct.AssigneeID, ct.TaskID[:8])
+					InsertAppEvent(h.DB, "error", "decomposition", "自动派发失败: Agent未找到",
+						fmt.Sprintf("Agent '%s' not found for task %s", ct.AssigneeID, ct.TaskID[:8]), ct.TaskID, ct.AssigneeID)
 				}
 			}
 		}
@@ -385,7 +419,10 @@ func (h *DecompositionHandler) ApprovePlan(c *gin.Context) {
 	h.DB.Exec(`UPDATE decomposition_plans SET status = 'approved', updated_at = $1 WHERE id = $2`, now, planID)
 
 	// Set parent task to "in_progress" since it now has sub-tasks being worked on
-	h.DB.Exec(`UPDATE tasks SET status = 'in_progress', updated_at = $1 WHERE id = $2 AND deleted_at IS NULL`, now, taskID)
+	opts := TransitionOpts{ActorID: userIDStr}
+	if err := h.TaskService.MarkInProgress(taskID, opts); err != nil {
+		log.Printf("[Decomposition] Failed to set task %s in_progress: %v", taskID[:8], err)
+	}
 
 	// Post approval comment
 	commentContent := fmt.Sprintf("分解计划已审核通过，共创建 %d 个子任务。", len(createdTasks))
@@ -448,7 +485,10 @@ func (h *DecompositionHandler) RejectPlan(c *gin.Context) {
 	h.DB.Exec(`UPDATE decomposition_plan_items SET is_approved = false WHERE plan_id = $1 AND is_approved IS NULL`, planID)
 
 	// Parent stays in_progress — agent can retry
-	h.DB.Exec(`UPDATE tasks SET status = 'in_progress', updated_at = $1 WHERE id = $2 AND deleted_at IS NULL`, now, taskID)
+	opts := TransitionOpts{ActorID: userIDStr}
+	if err := h.TaskService.MarkInProgress(taskID, opts); err != nil {
+		log.Printf("[Decomposition] Failed to set task %s in_progress: %v", taskID[:8], err)
+	}
 
 	// Post rejection comment
 	commentText := "分解计划已被驳回"
@@ -468,4 +508,21 @@ func (h *DecompositionHandler) RejectPlan(c *gin.Context) {
 
 	log.Printf("[Decomposition] Plan %s rejected for task %s (re-opened for agent)", planID[:8], taskID[:8])
 	c.JSON(http.StatusOK, gin.H{"status": "rejected"})
+}
+
+// extractKeywords splits a hyphenated/underscored name into searchable words.
+// Generic words like "agent", "profile", "assignee" are filtered out.
+func extractKeywords(raw string) []string {
+	parts := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == '-' || r == '_' || r == ' '
+	})
+	var out []string
+	skip := map[string]bool{"agent": true, "profile": true, "assignee": true, "user": true, "the": true, "for": true, "and": true, "or": true}
+	for _, p := range parts {
+		p = strings.TrimSpace(strings.ToLower(p))
+		if len(p) > 2 && !skip[p] {
+			out = append(out, p)
+		}
+	}
+	return out
 }

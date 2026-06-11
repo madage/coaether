@@ -22,7 +22,8 @@ type NodeAgentHandler struct {
 	DB      *sql.DB
 	Hub     *DashboardHub
 	Bus     *protocol.MessageBus
-	Harness *harness.Harness
+	Harness     *harness.Harness
+	TaskService *TaskService
 }
 
 func NewNodeAgentHandler(db *sql.DB, bus *protocol.MessageBus) *NodeAgentHandler {
@@ -168,6 +169,7 @@ func (h *NodeAgentHandler) ClaimQueueItem(c *gin.Context) {
 }
 
 // UpdateQueueStatus updates a queue item's status.
+// UpdateQueueStatus updates a queue item's status.
 func (h *NodeAgentHandler) UpdateQueueStatus(c *gin.Context) {
 	auth, ok := h.authenticate(c)
 	if !ok {
@@ -193,158 +195,75 @@ func (h *NodeAgentHandler) UpdateQueueStatus(c *gin.Context) {
 
 	now := time.Now()
 	if req.Status == "processing" {
-		h.DB.Exec(`UPDATE task_agent_queue SET status = $1, claimed_at = COALESCE(claimed_at, $2) WHERE id = $3`,
+		h.DB.Exec("UPDATE task_agent_queue SET status = $1, claimed_at = COALESCE(claimed_at, $2) WHERE id = $3",
 			req.Status, now, queueID)
-		// Auto-set task to in_progress when agent starts processing
-		h.DB.Exec(`UPDATE tasks SET status = 'in_progress', updated_at = $1
-			WHERE id = (SELECT task_id FROM task_agent_queue WHERE id = $2)
-			AND deleted_at IS NULL AND status != 'in_progress'`, now, queueID)
+		// Auto-set task to in_progress via TaskService
+		var taskID string
+		h.DB.QueryRow("SELECT task_id FROM task_agent_queue WHERE id = $1", queueID).Scan(&taskID)
+		if taskID != "" {
+			opts := TransitionOpts{ActorID: auth.UserID}
+			h.TaskService.MarkInProgress(taskID, opts)
+		}
 	} else if req.Status == "completed" || req.Status == "failed" {
-		h.DB.Exec(`UPDATE task_agent_queue SET status = $1, completed_at = $2, result_summary = $3 WHERE id = $4`,
+		h.DB.Exec("UPDATE task_agent_queue SET status = $1, completed_at = $2, result_summary = $3 WHERE id = $4",
 			req.Status, now, req.ResultSummary, queueID)
 		// Decrement current_load
-		h.DB.Exec(`UPDATE agent_profiles SET current_load = GREATEST(0, current_load - 1)
-			WHERE id = (SELECT agent_profile_id FROM task_agent_queue WHERE id = $1)`, queueID)
-		// Update task status when agent completes successfully
+		h.DB.Exec("UPDATE agent_profiles SET current_load = GREATEST(0, current_load - 1) WHERE id = (SELECT agent_profile_id FROM task_agent_queue WHERE id = $1)", queueID)
+
 		if req.Status == "completed" {
-			// If task has pending_review_actions, don't change status — waiting for human approval
-			var taskID string
-			h.DB.QueryRow(`SELECT task_id FROM task_agent_queue WHERE id = $1`, queueID).Scan(&taskID)
+			var taskID, agentProfileID string
+			h.DB.QueryRow("SELECT task_id, agent_profile_id FROM task_agent_queue WHERE id = $1", queueID).Scan(&taskID, &agentProfileID)
 			if taskID != "" {
+				// Guard: pending_review_actions — waiting for human approval, skip status change
 				var pendingActions []byte
-				h.DB.QueryRow(`SELECT pending_review_actions FROM tasks WHERE id = $1 AND deleted_at IS NULL`, taskID).Scan(&pendingActions)
+				h.DB.QueryRow("SELECT pending_review_actions FROM tasks WHERE id = $1 AND deleted_at IS NULL", taskID).Scan(&pendingActions)
 				if len(pendingActions) > 5 {
 					log.Printf("[NodeAgent] Task %s has pending_review_actions, skipping status update", taskID[:8])
 					goto afterStatusUpdate
 				}
-			}
 
-						// If task has a pending decomposition plan, switch to review (waiting for human approval)
-				if taskID != "" {
-					var hasPending bool
-					h.DB.QueryRow(
-						`SELECT EXISTS(SELECT 1 FROM decomposition_plans WHERE task_id = $1 AND status = 'pending')`,
-						taskID,
-					).Scan(&hasPending)
-					if hasPending {
-						log.Printf("[NodeAgent] Task %s has pending decomposition plan → review", taskID[:8])
-						h.DB.Exec(`UPDATE tasks SET status = 'review', updated_at = $1 WHERE id = $2 AND deleted_at IS NULL`, now, taskID)
-						var taskCreatorID, taskTitle string
-						h.DB.QueryRow(`SELECT user_id, title FROM tasks WHERE id = $1`, taskID).Scan(&taskCreatorID, &taskTitle)
-						if taskCreatorID != "" {
-							commentID := uuid.New().String()
-							commentContent := fmt.Sprintf("@%s 任务「%s」的分解方案已准备好，请审核并批准子任务。", taskCreatorID, taskTitle)
-							h.DB.Exec(
-								`INSERT INTO task_comments (id, task_id, user_id, agent_profile_id, content, is_agent_comment, created_at, updated_at)
-								 VALUES ($1, $2, $3, NULL, $4, true, $5, $5)`,
-								commentID, taskID, taskCreatorID, commentContent, now,
-							)
-						}
-						goto afterStatusUpdate
-					}
+				// Delegate to TaskService for complete orchestration
+				opts := TransitionOpts{
+					AgentProfileID: agentProfileID,
+					ActorID:        auth.UserID,
+					ResultSummary:  req.ResultSummary,
+					QueueID:        queueID,
+				}
+				if err := h.TaskService.MarkCompleted(taskID, opts); err != nil {
+					log.Printf("[NodeAgent] MarkCompleted failed: %v", err)
 				}
 
-			// Read completion_behavior from the task
-			var completionBehavior string
-			h.DB.QueryRow(
-				`SELECT COALESCE(completion_behavior, 'auto_done') FROM tasks WHERE id = (SELECT task_id FROM task_agent_queue WHERE id = $1) AND deleted_at IS NULL`,
-				queueID,
-			).Scan(&completionBehavior)
-
-			targetStatus := "review"
-			switch completionBehavior {
-			case "auto_done":
-				// If agent produced output (result_summary), go to review regardless
-				// so the user can see the agent's response (e.g. clarifying questions)
-				if req.ResultSummary != "" {
-					targetStatus = "review"
-				} else {
-					targetStatus = "done"
-				}
-			default:
-				targetStatus = "review"
-			}
-			h.DB.Exec(`UPDATE tasks SET status = $1, updated_at = $2
-				WHERE id = (SELECT task_id FROM task_agent_queue WHERE id = $3)
-				AND deleted_at IS NULL`, targetStatus, now, queueID)
-
-			// Post agent comment with result summary when completed
-			if req.ResultSummary != "" {
-				var taskID, agentProfileID string
-				h.DB.QueryRow(`SELECT task_id, agent_profile_id FROM task_agent_queue WHERE id = $1`,
-					queueID).Scan(&taskID, &agentProfileID)
-				if taskID != "" && agentProfileID != "" {
-					commentID := uuid.New().String()
-					summary := req.ResultSummary
-					if len([]rune(summary)) > 5000 {
-						summary = string([]rune(summary)[:5000]) + "\n\n...\uff08\u7ed3\u679c\u8fc7\u957f\u5df2\u622a\u65ad\uff09"
-					}
-					h.DB.Exec(
-						`INSERT INTO task_comments (id, task_id, user_id, agent_profile_id, content, is_agent_comment, created_at, updated_at)
-						 VALUES ($1, $2, $3, $4, $5, true, $6, $6)`,
-						commentID, taskID, auth.UserID, agentProfileID, summary, now)
-				}
-			}
-
-			// If went to review and assignee is a different agent_profile, trigger them to review
-			if targetStatus == "review" {
-				var taskID string
-				h.DB.QueryRow(`SELECT task_id FROM task_agent_queue WHERE id = $1`, queueID).Scan(&taskID)
-				if taskID != "" {
-					var assigneeType, assigneeID string
-					h.DB.QueryRow(`SELECT COALESCE(assignee_type,''), COALESCE(assignee_id,'') FROM tasks WHERE id = $1 AND deleted_at IS NULL`,
-						taskID).Scan(&assigneeType, &assigneeID)
-					if assigneeType == "agent_profile" && assigneeID != "" {
-						var completingAgentID string
-						h.DB.QueryRow(`SELECT agent_profile_id FROM task_agent_queue WHERE id = $1`, queueID).Scan(&completingAgentID)
-
-						if completingAgentID != assigneeID {
-							// Dedup: skip if already queued for this task+agent
-							var existingID string
-							err := h.DB.QueryRow(
-								`SELECT id FROM task_agent_queue WHERE task_id = $1 AND agent_profile_id = $2 AND status IN ('queued', 'claimed', 'processing') LIMIT 1`,
-								taskID, assigneeID,
-							).Scan(&existingID)
-							if err == nil {
-								log.Printf("[NodeAgent] Review queue for task %s agent %s already exists (queue=%s), skipping", taskID[:8], assigneeID[:8], existingID[:8])
-							} else {
-								reviewQueueID := uuid.New().String()
-								reviewNow := time.Now()
-								h.DB.Exec(
-									`INSERT INTO task_agent_queue (id, task_id, agent_profile_id, status, trigger_type, assigned_at, created_at)
-										 VALUES ($1, $2, $3, 'queued', 'review', $4, $4)`,
-									reviewQueueID, taskID, assigneeID, reviewNow,
-								)
-								h.DB.Exec(`UPDATE agent_profiles SET current_load = current_load + 1 WHERE id = $1`,
-									assigneeID)
-
-								if h.Bus != nil {
-									autoProcessReview(h.DB, h.Bus, taskID, assigneeID, reviewQueueID, req.ResultSummary)
-								}
-							}
+				// If task was routed to review and has a different assignee agent, trigger review queue
+				var currentStatus, assigneeType, assigneeID string
+				h.DB.QueryRow("SELECT status, COALESCE(assignee_type,''), COALESCE(assignee_id,'') FROM tasks WHERE id = $1 AND deleted_at IS NULL", taskID).
+					Scan(&currentStatus, &assigneeType, &assigneeID)
+				if currentStatus == "review" && assigneeType == "agent_profile" && assigneeID != "" && assigneeID != agentProfileID {
+					var existingID string
+					err := h.DB.QueryRow(
+						"SELECT id FROM task_agent_queue WHERE task_id = $1 AND agent_profile_id = $2 AND status IN ('queued', 'claimed', 'processing') LIMIT 1",
+						taskID, assigneeID,
+					).Scan(&existingID)
+					if err != nil {
+						reviewQueueID := uuid.New().String()
+						reviewNow := time.Now()
+						h.DB.Exec(
+							"INSERT INTO task_agent_queue (id, task_id, agent_profile_id, status, trigger_type, assigned_at, created_at) VALUES ($1, $2, $3, 'queued', 'review', $4, $4)",
+							reviewQueueID, taskID, assigneeID, reviewNow,
+						)
+						h.DB.Exec("UPDATE agent_profiles SET current_load = current_load + 1 WHERE id = $1", assigneeID)
+						if h.Bus != nil {
+							autoProcessReview(h.DB, h.Bus, taskID, assigneeID, reviewQueueID, req.ResultSummary)
 						}
 					}
-				}
-			}
-
-			// Trigger DAG advancement when task goes to review or done.
-			// Review status means the task's work product is ready, so downstream
-			// tasks that depend on it should be unblocked even if human sign-off is pending.
-			if targetStatus == "done" || targetStatus == "review" {
-				var taskID string
-				h.DB.QueryRow(`SELECT task_id FROM task_agent_queue WHERE id = $1`, queueID).Scan(&taskID)
-				if taskID != "" {
-					dag := NewDAGEngine(h.DB)
-					dag.OnTaskCompleted(taskID)
 				}
 			}
 		}
 	afterStatusUpdate:
 	} else {
-		h.DB.Exec(`UPDATE task_agent_queue SET status = $1 WHERE id = $2`, req.Status, queueID)
+		h.DB.Exec("UPDATE task_agent_queue SET status = $1 WHERE id = $2", req.Status, queueID)
 	}
 
-	log.Printf("[NodeAgent] Queue item %s → %s", queueID, req.Status)
+	log.Printf("[NodeAgent] Queue item %s → %s", queueID[:8], req.Status)
 	c.JSON(http.StatusOK, gin.H{"status": "updated"})
 	if h.Hub != nil {
 		h.Hub.SignalChange("task_agent_queue")
@@ -354,7 +273,6 @@ func (h *NodeAgentHandler) UpdateQueueStatus(c *gin.Context) {
 	}
 }
 
-// GetTask returns task details (title + description) for a task.
 func (h *NodeAgentHandler) GetTask(c *gin.Context) {
 	_, ok := h.authenticate(c)
 	if !ok {

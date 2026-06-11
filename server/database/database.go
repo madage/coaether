@@ -727,6 +727,18 @@ func Migrate() error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_access_logs_user ON access_logs(user_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_access_logs_time ON access_logs(created_at DESC)`,
+		`CREATE TABLE IF NOT EXISTS app_events (
+			id          VARCHAR(36) PRIMARY KEY,
+			event_type  VARCHAR(32) NOT NULL DEFAULT 'error',
+			source      VARCHAR(64) NOT NULL DEFAULT '',
+			title       VARCHAR(256) NOT NULL DEFAULT '',
+			detail      TEXT NOT NULL DEFAULT '',
+			task_id     VARCHAR(36),
+			agent_id    VARCHAR(36),
+			created_at  TIMESTAMP NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_app_events_time ON app_events(created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_app_events_task ON app_events(task_id)`,
 	}
 	for _, t := range harnessTables {
 		if _, err := DB.Exec(t); err != nil {

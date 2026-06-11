@@ -315,6 +315,8 @@ PUT /api/tasks/:id?workspace_id=<workspace_id>
 }
 ```
 
+**说明：** 如果包含 `status` 字段，状态变更会通过统一 TaskService 编排，自动触发转换校验、DAG 推进、审核路由、通知、规则引擎等副作用。非状态字段在同一事务中更新，状态变更在事务提交后独立执行。不合法的状态转换返回 `400 Bad Request`。
+
 **响应：** 完整的 Task 对象
 
 ```json
@@ -399,14 +401,19 @@ PATCH /api/tasks/:id/status?workspace_id=<workspace_id>
 **合法值：** `todo`、`in_progress`、`blocked`、`completed`、`done`、`review`、`stuck`
 
 **说明：**
+- 所有状态变更通过统一 TaskService 编排，确保 DAG 解封、审核路由、智能体派发、通知、规则引擎等副作用一致触发。
+- **转换校验：** 不合法的状态转换（如 `done → blocked`）返回 `400 Bad Request`。
+- **幂等：** 相同状态重复设置不报错。
 - 如果新状态为 `in_progress` 且负责人是智能体（`assignee_type=agent_profile`），系统自动创建队列条目并通知运行时处理。
-- 如果新状态为 `completed`，系统根据任务的 `completion_behavior` 自动路由：`auto_done`→直接完成、`auto_review`→交给智能体审核、`sample_review`→抽检、`needs_review`→人工审核。
-- 如果新状态为 `done`，系统自动检查并执行 `pending_review_actions`（待审核的派发操作），创建对应的智能体队列条目。
+- 如果新状态为 `completed`，系统根据任务的 `completion_behavior` 自动路由：`auto_done`→直接完成、`auto_review`→交给智能体审核、`sample_review`→抽检、`needs_review`→人工审核。若有待审核的分解计划，强制路由到 `review`。
+- 如果新状态为 `done`，系统自动检查并执行 `pending_review_actions`（待审核的派发操作），创建对应的智能体队列条目，并推进 DAG 依赖链。
 
-**响应：**
+**响应（200）：** 完整的 Task 对象
+
+**错误响应（400）：**
 
 ```json
-{ "status": "updated" }
+{ "error": "invalid transition: done -> blocked" }
 ```
 
 ---
@@ -573,6 +580,7 @@ POST /api/tasks/:id/review
 ```
 
 **说明：**
+- 审核通过统一 TaskService 编排执行，确保 DAG 推进、待审核操作执行、审计日志、通知等副作用一致触发。
 - `approved` → 任务状态改为 `done`。如果任务有 `pending_review_actions`（待审核的智能体派发操作），系统自动执行：
   - `create_sub_task`：为子任务创建智能体队列条目，智能体开始处理
   - `assign_task`：为任务创建智能体队列条目，智能体开始处理
@@ -1678,7 +1686,7 @@ PUT /api/node/queue/:id/status?node_id=<node_id>&node_secret=<secret>
 }
 ```
 
-**说明：** 状态设为 `completed` 时，服务端会自动：
+**说明：** 状态设为 `completed` 时，服务端通过统一 TaskService 编排自动处理：
 - 在任务下发布 Agent 评论（附 `result_summary`）
 - 如果任务存在 `pending_review_actions`（有待人工审核的智能体派发操作），**跳过状态更新**，保留 `review` 状态，不覆盖审核门禁
 - 如果任务有待审核的分解计划（`decomposition_plans` 表中 status=pending），**跳过状态更新**，保持当前状态
@@ -1686,6 +1694,7 @@ PUT /api/node/queue/:id/status?node_id=<node_id>&node_secret=<secret>
   - `auto_done` → 设为 `done`，并触发 DAGEngine 推进依赖任务
   - 其他值（含 `auto_review`/`sample_review`/`needs_review`）→ 设为 `review`
 - 如果目标状态为 `review` 且负责人是其他智能体，自动创建 review 队列条目
+- 状态变更通过统一闸门执行，确保转换校验、DAG 解封、审核路由、通知、规则引擎等副作用一致触发
 
 ---
 

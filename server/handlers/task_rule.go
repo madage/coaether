@@ -19,6 +19,7 @@ type RuleEngine struct {
 	DB       *sql.DB
 	Hub      *DashboardHub
 	Notifier *NotificationHandler
+	TaskService *TaskService // unified status transition (set after creation)
 }
 
 func NewRuleEngine(db *sql.DB, hub *DashboardHub, notifier *NotificationHandler) *RuleEngine {
@@ -195,16 +196,9 @@ func (e *RuleEngine) executeAction(actType string, params map[string]interface{}
 		if status == "" {
 			return "skipped", "set_status: missing status"
 		}
-		var completedAt interface{}
-		if status == "done" {
-			completedAt = time.Now()
-		}
-		_, err := e.DB.Exec(`UPDATE tasks SET status = $1, completed_at = $2, updated_at = NOW() WHERE id = $3`, status, completedAt, taskID)
-		if err != nil {
+		opts := TransitionOpts{}
+		if err := e.TaskService.TransitionStatus(taskID, status, opts); err != nil {
 			return "failed", fmt.Sprintf("set_status: %v", err)
-		}
-		if e.Hub != nil {
-			e.Hub.SignalChange("tasks")
 		}
 		return "ok", fmt.Sprintf("set status to %s", status)
 

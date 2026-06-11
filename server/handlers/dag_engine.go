@@ -16,6 +16,7 @@ type DAGEngine struct {
 	DB  *sql.DB
 	mu  sync.Mutex
 	Hub *DashboardHub // optional, for real-time updates
+	TaskService *TaskService // unified status transition (set after creation)
 }
 
 // NewDAGEngine creates a new DAG engine.

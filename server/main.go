@@ -154,15 +154,28 @@ func main() {
 	reviewRouter.Notifier = notifH
 	taskH.ReviewRouter = reviewRouter
 
+	// TaskService — unified status transition orchestration
+	taskService := handlers.NewTaskService(database.DB, dashHub, workflowH.DAGEngine, reviewRouter, notifH)
+	taskService.RuleEngine = ruleEngine
+	taskService.Bus = messageBus
+	workflowH.TaskService = taskService
+	nodeAgentH.TaskService = taskService
+	taskH.TaskService = taskService
+	reviewRouter.TaskService = taskService
+	ruleEngine.TaskService = taskService
+
 	// Wire DAGEngine Hub for real-time updates
 	workflowH.DAGEngine.Hub = dashHub
 	reviewRouter.DAGEngine.Hub = dashHub
+	workflowH.DAGEngine.TaskService = taskService
+	reviewRouter.DAGEngine.TaskService = taskService
 
 	// Decomposition Handler (plan review flow)
 	decompH := handlers.NewDecompositionHandler(database.DB)
 	decompH.Hub = dashHub
 	decompH.ReviewRouter = reviewRouter
 	decompH.DAGEngine.Hub = dashHub
+	decompH.TaskService = taskService
 
 	// Tool Set Handler (global tool on/off management)
 	toolSetH := handlers.NewToolSetHandler(database.DB)
