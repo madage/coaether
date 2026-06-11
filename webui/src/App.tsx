@@ -19,8 +19,8 @@ import NotificationBell from './components/NotificationBell';
 import { useDashboardWSContext } from './hooks/DashboardWSContext';
 import { useResourceSync } from './hooks/useResourceSync';
 import { useLang } from './i18n/context';
-import { auth as authApi, workspaces as workspacesApi, workspaceMembers as workspaceMembersApi, invitations as invitationsApi, users as usersApi } from './api/client';
-import type { Node, Session, AuthState, Workspace, WorkspaceRole, WorkspaceMember, UserSummary } from './types';
+import { auth as authApi, workspaces as workspacesApi, workspaceMembers as workspaceMembersApi, invitations as invitationsApi, users as usersApi, tokens as tokensApi } from './api/client';
+import type { Node, Session, AuthState, Workspace, WorkspaceRole, WorkspaceMember, UserSummary, ApiToken } from './types';
 import WorkspaceContext from './hooks/WorkspaceContext';
 import { pluginClient } from './plugin/PluginClient';
 
@@ -116,7 +116,7 @@ function App() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [workspaceKey, setWorkspaceKey] = useState(0);
   const [showWorkspaceManager, setShowWorkspaceManager] = useState(false);
-  const [wsManagerTab, setWsManagerTab] = useState<'workspaces' | 'members' | 'users'>('workspaces');
+  const [wsManagerTab, setWsManagerTab] = useState<'workspaces' | 'members' | 'tokens'>('workspaces');
   const [newWsName, setNewWsName] = useState('');
   const [newWsDesc, setNewWsDesc] = useState('');
 
@@ -126,6 +126,13 @@ function App() {
     userId: string; email: string; a: number; b: number; op: '+' | '-'; answer: number;
   } | null>(null);
   const [userVerifyInput, setUserVerifyInput] = useState('');
+
+  // Token management state
+  const [tokenList, setTokenList] = useState<ApiToken[]>([]);
+  const [showCreateToken, setShowCreateToken] = useState(false);
+  const [newTokenName, setNewTokenName] = useState('');
+  const [newTokenExpiry, setNewTokenExpiry] = useState('7d');
+  const [revealedToken, setRevealedToken] = useState<string | null>(null);
 
   // Workspace delete verification
   const [wsDeleteVerify, setWsDeleteVerify] = useState<{
@@ -354,6 +361,46 @@ function App() {
       alert(err instanceof Error ? err.message : 'Failed to delete user');
     }
   }, [userDeleteVerify, userVerifyInput, fetchUsers, lang]);
+
+  // Token management
+  const fetchTokens = useCallback(async () => {
+    try {
+      const res = await tokensApi.list();
+      setTokenList(res.tokens);
+    } catch {
+      // silently fail
+    }
+  }, []);
+
+  const handleCreateToken = useCallback(async () => {
+    if (!newTokenName.trim()) return;
+    try {
+      const res = await tokensApi.create({ name: newTokenName.trim(), expiry: newTokenExpiry as '7d' | '30d' | '90d' | 'permanent' });
+      setRevealedToken(res.token);
+      setNewTokenName('');
+      setShowCreateToken(false);
+      fetchTokens();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to create token');
+    }
+  }, [newTokenName, newTokenExpiry, fetchTokens]);
+
+  const handleRevokeToken = useCallback(async (id: string) => {
+    try {
+      await tokensApi.delete(id);
+      fetchTokens();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to revoke token');
+    }
+  }, [fetchTokens]);
+
+  const copyToClipboard = useCallback(async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // fallback
+    }
+  }, []);
 
   // Login screen
   if (!auth.token) {
@@ -869,15 +916,15 @@ function App() {
             </button>
             {(auth.workspace_role === 'admin' || auth.workspace_role === 'owner') && (
               <button
-                onClick={() => { setWsManagerTab('users'); fetchUsers(); }}
+                onClick={() => { setWsManagerTab('tokens'); fetchTokens(); }}
                 style={{
                   padding: '8px 16px', border: 'none', background: 'none',
-                  cursor: 'pointer', fontSize: '0.9em', color: wsManagerTab === 'users' ? '#1976d2' : '#999',
-                  borderBottom: wsManagerTab === 'users' ? '2px solid #1976d2' : '2px solid transparent',
-                  fontWeight: wsManagerTab === 'users' ? 600 : 400,
+                  cursor: 'pointer', fontSize: '0.9em', color: wsManagerTab === 'tokens' ? '#1976d2' : '#999',
+                  borderBottom: wsManagerTab === 'tokens' ? '2px solid #1976d2' : '2px solid transparent',
+                  fontWeight: wsManagerTab === 'tokens' ? 600 : 400,
                 }}
               >
-                {lang === 'zh' ? '用户管理' : 'Users'}
+                {t('tokenManagement')}
               </button>
             )}
           </div>
@@ -951,38 +998,99 @@ function App() {
             <WorkspaceMembers workspaceId={localStorage.getItem('workspace_id') || ''} />
           ) : (
             <>
-            {/* User management tab */}
+            {/* Token management tab */}
             <div style={{ maxHeight: '350px', overflow: 'auto' }}>
-              {userList.length === 0 ? (
+              {tokenList.length === 0 ? (
                 <div style={{ textAlign: 'center', color: '#999', padding: '24px', fontSize: '0.9em' }}>
-                  {lang === 'zh' ? '暂无用户' : 'No users'}
+                  {t('tokenNoTokens')}
                 </div>
               ) : (
-                userList.map((u) => (
-                  <div key={u.id} style={{
+                tokenList.map((tok) => (
+                  <div key={tok.id} style={{
                     display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                     padding: '10px 12px', borderRadius: '8px', marginBottom: '6px',
                     background: '#f9f9f9',
                   }}>
                     <div>
-                      <div style={{ fontWeight: 500, fontSize: '0.95em' }}>{u.username}</div>
-                      <div style={{ fontSize: '0.8em', color: '#999' }}>
-                        {u.email} · {new Date(u.created_at).toLocaleDateString()}
+                      <div style={{ fontWeight: 500, fontSize: '0.95em' }}>{tok.name}</div>
+                      <div style={{ fontSize: '0.75em', color: '#999' }}>
+                        {t('tokenCreated')}: {new Date(tok.created_at).toLocaleDateString()}
+                        {tok.expires_at ? ` · ${t('tokenExpires')}: ${new Date(tok.expires_at).toLocaleDateString()}` : ` · ${t('tokenPermanent')}`}
+                        {tok.last_used_at ? ` · ${t('tokenLastUsed')}: ${new Date(tok.last_used_at).toLocaleDateString()}` : ` · ${t('tokenNeverUsed')}`}
                       </div>
                     </div>
-                    {u.id !== auth.user?.id && (
-                      <button
-                        onClick={() => handleUserDeleteClick(u.id, u.email)}
-                        style={{
-                          padding: '4px 12px', borderRadius: '4px', border: '1px solid #e0e0e0',
-                          background: '#fff', cursor: 'pointer', color: '#c62828', fontSize: '0.8em',
-                        }}
-                      >
-                        {t('taskDelete')}
-                      </button>
-                    )}
+                    <button
+                      onClick={() => handleRevokeToken(tok.id)}
+                      style={{
+                        padding: '4px 12px', borderRadius: '4px', border: '1px solid #e0e0e0',
+                        background: '#fff', cursor: 'pointer', color: '#c62828', fontSize: '0.8em',
+                      }}
+                    >
+                      {t('tokenRevoke')}
+                    </button>
                   </div>
                 ))
+              )}
+            </div>
+
+            {/* Create token form */}
+            <div style={{ borderTop: '1px solid #eee', paddingTop: '16px' }}>
+              {showCreateToken ? (
+                <>
+                  <input
+                    placeholder={t('tokenNamePlaceholder')}
+                    value={newTokenName}
+                    onChange={(e) => setNewTokenName(e.target.value)}
+                    style={{
+                      width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #ddd',
+                      fontSize: '0.9em', boxSizing: 'border-box', marginBottom: '8px',
+                    }}
+                  />
+                  <select
+                    value={newTokenExpiry}
+                    onChange={(e) => setNewTokenExpiry(e.target.value)}
+                    style={{
+                      width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #ddd',
+                      fontSize: '0.9em', boxSizing: 'border-box', marginBottom: '8px',
+                      background: '#fff',
+                    }}
+                  >
+                    <option value="7d">{t('tokenExpiry7d')}</option>
+                    <option value="30d">{t('tokenExpiry30d')}</option>
+                    <option value="90d">{t('tokenExpiry90d')}</option>
+                    <option value="permanent">{t('tokenExpiryPermanent')}</option>
+                  </select>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button
+                      onClick={handleCreateToken}
+                      style={{
+                        flex: 1, padding: '8px', borderRadius: '6px', border: 'none',
+                        background: '#1976d2', color: '#fff', cursor: 'pointer', fontSize: '0.9em',
+                      }}
+                    >
+                      {t('tokenGenerate')}
+                    </button>
+                    <button
+                      onClick={() => { setShowCreateToken(false); setNewTokenName(''); }}
+                      style={{
+                        padding: '8px 16px', borderRadius: '6px', border: '1px solid #ddd',
+                        background: '#fff', cursor: 'pointer', fontSize: '0.9em', color: '#666',
+                      }}
+                    >
+                      {t('cancel')}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <button
+                  onClick={() => setShowCreateToken(true)}
+                  style={{
+                    width: '100%', padding: '8px', borderRadius: '6px', border: 'none',
+                    background: '#1976d2', color: '#fff', cursor: 'pointer', fontSize: '0.9em',
+                  }}
+                >
+                  + {t('tokenCreate')}
+                </button>
               )}
             </div>
             </>
@@ -990,6 +1098,59 @@ function App() {
         </div>
       </div>
     )}
+    {/* Token reveal modal */}
+    {revealedToken && (
+      <div
+        onClick={() => setRevealedToken(null)}
+        style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
+          display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 2100,
+        }}
+      >
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            background: '#fff', borderRadius: '12px', padding: '28px',
+            width: '420px', maxWidth: '90vw',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.2)',
+          }}
+        >
+          <h3 style={{ margin: '0 0 8px', color: '#333' }}>{t('tokenReveal')}</h3>
+          <p style={{ color: '#c62828', fontSize: '0.85em', marginBottom: '16px' }}>
+            {t('tokenRevealWarning')}
+          </p>
+          <div style={{
+            background: '#f5f5f5', borderRadius: '8px', padding: '12px',
+            fontFamily: 'monospace', fontSize: '0.85em', wordBreak: 'break-all',
+            marginBottom: '16px', border: '1px solid #e0e0e0',
+            userSelect: 'all',
+          }}>
+            {revealedToken}
+          </div>
+          <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+            <button
+              onClick={async () => { await copyToClipboard(revealedToken); }}
+              style={{
+                padding: '8px 20px', borderRadius: '6px', border: 'none',
+                background: '#1976d2', color: '#fff', cursor: 'pointer', fontSize: '0.9em',
+              }}
+            >
+              {t('tokenCopyButton')}
+            </button>
+            <button
+              onClick={() => setRevealedToken(null)}
+              style={{
+                padding: '8px 20px', borderRadius: '6px', border: '1px solid #ddd',
+                background: '#fff', cursor: 'pointer', fontSize: '0.9em', color: '#666',
+              }}
+            >
+              {t('cancel')}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
     {/* Workspace delete verification modal */}
     {wsDeleteVerify && (
       <div

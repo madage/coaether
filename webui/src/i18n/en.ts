@@ -725,5 +725,30 @@ export const en = {
   decompPlanNoItems: 'No items in plan.',
   decompPlanSummary: 'Summary',
 
+  // Token Management
+  tokenManagement: 'Token Management',
+  tokenList: 'Tokens',
+  tokenCreate: 'Generate Token',
+  tokenName: 'Name',
+  tokenNamePlaceholder: 'Enter token name...',
+  tokenExpiry: 'Expiry',
+  tokenExpiry7d: '7 Days',
+  tokenExpiry30d: '30 Days',
+  tokenExpiry90d: '90 Days',
+  tokenExpiryPermanent: 'Permanent',
+  tokenCreated: 'Created',
+  tokenExpires: 'Expires',
+  tokenPermanent: 'Never',
+  tokenLastUsed: 'Last Used',
+  tokenNeverUsed: 'Never',
+  tokenReveal: 'Token Generated',
+  tokenRevealWarning: 'Copy and save this token now. It will not be shown again.',
+  tokenCopyButton: 'Copy',
+  tokenCopied: 'Copied!',
+  tokenRevoke: 'Revoke',
+  tokenRevokeConfirm: 'Revoke this token?',
+  tokenGenerate: 'Generate Token',
+  tokenNoTokens: 'No tokens yet',
+
 } as const;
 

@@ -24,8 +24,9 @@
 14. [插件管理](#13-插件管理)
 15. [工作流管理](#14-工作流管理)
 16. [Harness 智能体工具调用](#15-harness-智能体工具调用)
-17. [辅助接口](#16-辅助接口)
-18. [接口一览表](#17-接口一览表)
+17. [工具集管理](#16-工具集管理)
+18. [辅助接口](#17-辅助接口)
+19. [接口一览表](#18-接口一览表)
 
 ---
 
@@ -659,7 +660,7 @@ POST /api/tasks/:id/decomposition-plan/approve
 4. 有依赖的子任务设为 blocked，无依赖 + 智能体负责人 → 自动入队列
 5. 更新 plan_items 的 `real_task_id` 和 `is_approved=true`
 6. 计划状态改为 `approved`
-7. 父任务状态改为 `blocked`（等待子任务完成）
+7. 父任务状态改为 `in_progress`（等待子任务完成）
 8. 发布审核通过评论
 
 **响应（200）：**
@@ -2701,6 +2702,7 @@ DAGEngine 在工作流执行过程中自动管理任务依赖：
 | `get_task_detail` | 查看任务详情（含依赖关系） | `task.read` | `get_task_detail` |
 | `list_sub_tasks` | 列出任务的子任务列表 | `task.read` | `list_sub_tasks` |
 | `update_task_status` | 更新任务状态（仅工作流内有效） | `task.write` | `update_task_status` |
+| `search_agent_profiles` | 运行时查询可用的智能体及其 ID，支持按名称、标签、能力过滤 | `agent.read` | `search_agent_profiles` |
 
 ### 15.2 Tool Call 格式
 
@@ -2837,6 +2839,40 @@ DAGEngine 在工作流执行过程中自动管理任务依赖：
 }
 ```
 
+**search_agent_profiles:**
+
+```json
+{
+  "name": "搜索关键词（可选，按名称模糊匹配，支持 ILIKE）",
+  "tags": ["标签1", "标签2"],
+  "capability": "能力名称（可选，按 JSONB 包含匹配）",
+  "limit": 10
+}
+```
+
+**说明：** 在工作区范围内查询启用的智能体，自动排除调用者自身（`agent_profile_id`）。支持组合过滤：`name` 做 ILIKE 模糊匹配、`tags` 做 JSONB `?|` 匹配、`capability` 做 JSONB `@>` 匹配。返回匹配的智能体列表及其实时负载状态。
+
+**响应示例：**
+
+```json
+{
+  "agents": [
+    {
+      "id": "agent-uuid",
+      "name": "搜索师",
+      "description": "负责信息检索和资料搜集",
+      "tags": ["搜索", "资料"],
+      "capabilities": ["get_task_detail", "search_agent_profiles"],
+      "current_load": 1,
+      "enabled": true,
+      "last_active_at": "2026-06-11T10:00:00Z"
+    }
+  ],
+  "total": 1,
+  "query": "搜索"
+}
+```
+
 ### 15.5 错误码
 
 | 错误码 | 说明 |
@@ -2851,9 +2887,73 @@ DAGEngine 在工作流执行过程中自动管理任务依赖：
 
 ---
 
-## 16. 辅助接口
+## 16. 工具集管理
 
-### 16.1 健康检查
+> 工具集页面展示所有 Harness 工具，支持全局启用/禁用控制。
+
+### 16.1 列出所有工具
+
+```
+GET /api/tools
+```
+
+**认证：** JWT
+
+**响应：**
+
+```json
+{
+  "tools": [
+    {
+      "name": "create_sub_task",
+      "description": "在当前工作流下创建子任务",
+      "version": "1.0.0",
+      "required_perm": "task.write",
+      "enabled": true,
+      "status": "active",
+      "linked_agents": ["需求拆分专家", "任务快递员"],
+      "linked_agent_count": 2
+    }
+  ]
+}
+```
+
+**说明：** `enabled` 表示全局开关状态，`linked_agents` 为挂载了该工具的智能体名称列表。
+
+---
+
+### 16.2 切换工具全局开关
+
+```
+POST /api/tools/:toolName/toggle
+```
+
+**认证：** JWT
+
+**请求体：**
+
+```json
+{
+  "enabled": false
+}
+```
+
+**说明：** 关闭某个工具后，所有智能体调用该工具时会被 Policy Engine 拦截拒绝。
+
+**响应：**
+
+```json
+{
+  "status": "disabled",
+  "tool": "create_sub_task"
+}
+```
+
+---
+
+## 17. 辅助接口
+
+### 17.1 健康检查
 
 ```
 GET /api/health
@@ -2869,7 +2969,7 @@ GET /api/health
 
 ---
 
-### 16.2 WebSocket 仪表盘
+### 17.2 WebSocket 仪表盘
 
 ```
 GET /ws/dashboard
@@ -2881,7 +2981,7 @@ GET /ws/dashboard
 
 ---
 
-### 16.3 WebSocket 消息总线
+### 17.3 WebSocket 消息总线
 
 ```
 GET /ws/bus
@@ -2893,7 +2993,7 @@ GET /ws/bus
 
 ---
 
-### 16.4 下载节点安装脚本（Linux）
+### 17.4 下载节点安装脚本（Linux）
 
 ```
 GET /api/nodes/install.sh
@@ -2905,7 +3005,7 @@ GET /api/nodes/install.sh
 
 ---
 
-### 16.5 下载节点安装脚本（Windows）
+### 17.5 下载节点安装脚本（Windows）
 
 ```
 GET /api/nodes/install.ps1
@@ -2917,7 +3017,7 @@ GET /api/nodes/install.ps1
 
 ---
 
-### 16.6 下载节点二进制
+### 17.6 下载节点二进制
 
 ```
 GET /api/nodes/bin/:os/:arch
@@ -2929,7 +3029,7 @@ GET /api/nodes/bin/:os/:arch
 
 ---
 
-## 17. 接口一览表
+## 18. 接口一览表
 
 | # | 操作 | 方法 | 路径 | 认证 |
 |---|------|------|------|------|
@@ -3048,9 +3148,11 @@ GET /api/nodes/bin/:os/:arch
 | 14.4 | 更新工作流状态 | `PATCH` | `/api/workflows/:id/status` | JWT |
 | 14.5 | 列出工作流任务 | `GET` | `/api/workflows/:id/tasks` | JWT |
 | 14.6 | 附加任务到工作流 | `POST` | `/api/workflows/attach` | JWT |
-| 16.1 | 健康检查 | `GET` | `/api/health` | 公开 |
-| 16.2 | WebSocket 仪表盘 | `GET` | `/ws/dashboard` | 公开 |
-| 16.3 | WebSocket 消息总线 | `GET` | `/ws/bus` | 公开 |
-| 16.4 | 安装脚本（Linux） | `GET` | `/api/nodes/install.sh` | 公开 |
-| 16.5 | 安装脚本（Windows） | `GET` | `/api/nodes/install.ps1` | 公开 |
-| 16.6 | 下载节点二进制 | `GET` | `/api/nodes/bin/:os/:arch` | 公开 |
+| 16.1 | 列出所有工具 | `GET` | `/api/tools` | JWT |
+| 16.2 | 切换工具开关 | `POST` | `/api/tools/:toolName/toggle` | JWT |
+| 17.1 | 健康检查 | `GET` | `/api/health` | 公开 |
+| 17.2 | WebSocket 仪表盘 | `GET` | `/ws/dashboard` | 公开 |
+| 17.3 | WebSocket 消息总线 | `GET` | `/ws/bus` | 公开 |
+| 17.4 | 安装脚本（Linux） | `GET` | `/api/nodes/install.sh` | 公开 |
+| 17.5 | 安装脚本（Windows） | `GET` | `/api/nodes/install.ps1` | 公开 |
+| 17.6 | 下载节点二进制 | `GET` | `/api/nodes/bin/:os/:arch` | 公开 |

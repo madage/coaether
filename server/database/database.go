@@ -703,6 +703,17 @@ func Migrate() error {
 			status      VARCHAR(16) NOT NULL DEFAULT 'active',
 			updated_at  TIMESTAMP NOT NULL DEFAULT NOW()
 		)`,
+		`CREATE TABLE IF NOT EXISTS api_tokens (
+			id           VARCHAR(36) PRIMARY KEY,
+			user_id      VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			name         VARCHAR(128) NOT NULL,
+			token_hash   VARCHAR(128) NOT NULL UNIQUE,
+			expires_at   TIMESTAMP,
+			last_used_at TIMESTAMP,
+			created_at   TIMESTAMP NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_api_tokens_user_id ON api_tokens(user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_api_tokens_token_hash ON api_tokens(token_hash)`,
 	}
 	for _, t := range harnessTables {
 		if _, err := DB.Exec(t); err != nil {

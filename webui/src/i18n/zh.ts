@@ -725,5 +725,30 @@ export const zh = {
   decompPlanNoItems: '计划中暂无条目。',
   decompPlanSummary: '概要',
 
+  // Token Management
+  tokenManagement: 'Token管理',
+  tokenList: 'Token列表',
+  tokenCreate: '生成Token',
+  tokenName: '名称',
+  tokenNamePlaceholder: '输入Token名称...',
+  tokenExpiry: '有效期',
+  tokenExpiry7d: '7天',
+  tokenExpiry30d: '30天',
+  tokenExpiry90d: '90天',
+  tokenExpiryPermanent: '永久',
+  tokenCreated: '创建于',
+  tokenExpires: '过期时间',
+  tokenPermanent: '永不过期',
+  tokenLastUsed: '最后使用',
+  tokenNeverUsed: '未使用',
+  tokenReveal: 'Token已生成',
+  tokenRevealWarning: '请立即复制并保存此Token。关闭此窗口后将无法再次查看。',
+  tokenCopyButton: '复制',
+  tokenCopied: '已复制！',
+  tokenRevoke: '撤销',
+  tokenRevokeConfirm: '确定要撤销该Token吗？',
+  tokenGenerate: '生成Token',
+  tokenNoTokens: '暂无Token',
+
 } as const;
 

@@ -169,6 +169,9 @@ func main() {
 	toolSetH.Hub = dashHub
 	toolSetH.PolicyEngine = workflowH.Harness.Policy
 
+	// API Token handler
+	tokenH := handlers.NewTokenHandler(database.DB)
+
 	// Safety Guard (anti-runaway monitor)
 	safetyGuard := harness.NewSafetyGuard(database.DB)
 	safetyGuard.StartPeriodicCheck(5 * time.Minute)
@@ -248,7 +251,7 @@ func main() {
 
 	api := r.Group("/api")
 
-	api.Use(middleware.AuthMiddleware(cfg.JWTSecret))
+	api.Use(middleware.AuthMiddleware(cfg.JWTSecret, database.DB))
 
 	api.Use(middleware.WorkspaceAuthMiddleware(database.DB))
 
@@ -398,6 +401,11 @@ func main() {
 		api.POST("/invitations/:token/accept", workspaceH.AcceptInvitation)
 
 		api.GET("/invitations/pending", workspaceH.ListPendingInvitations)
+
+		// API Token management (admin/owner)
+		api.GET("/tokens", tokenH.List)
+		api.POST("/tokens", tokenH.Create)
+		api.DELETE("/tokens/:id", tokenH.Delete)
 
 		// User management (admin/owner)
 

@@ -510,3 +510,25 @@ export interface UserSummary {
   email: string;
   created_at: string;
 }
+
+// === API Token Types ===
+export interface ApiToken {
+  id: string;
+  name: string;
+  created_at: string;
+  expires_at: string | null;
+  last_used_at: string | null;
+}
+
+export interface CreateTokenReq {
+  name: string;
+  expiry: '7d' | '30d' | '90d' | 'permanent';
+}
+
+export interface CreateTokenRes {
+  token: string;
+  id: string;
+  name: string;
+  expires_at: string | null;
+  created_at: string;
+}

@@ -1,4 +1,4 @@
-import type { Node, Session, CreateSessionReq, Agent, AgentProfile, RuntimeEntity, Task, CreateTaskReq, UpdateTaskReq, TaskStatus, TaskAssignee, AddAssigneeReq, Priority, Project, CreateProjectReq, UpdateProjectReq, ProjectStatus, Workspace, CreateWorkspaceReq, UpdateWorkspaceReq, WorkspaceMember, AddMemberReq, UpdateMemberRoleReq, PendingInvitation, InviteMemberReq, UserSummary, Comment, CreateCommentReq, PluginInfo, AppNotification, TaskRule, TaskRuleLog, CreateRuleReq, UpdateRuleReq, Skill, CreateSkillReq, ExtractSkillReq, AgentQueueItem, AgentLoadInfo, ReviewTaskReq, Workflow, CreateWorkflowReq, AttachToWorkflowReq, DecompositionPlan, DecompositionPlanItem, ApprovePlanReq, SystemTool } from '../types';
+import type { Node, Session, CreateSessionReq, Agent, AgentProfile, RuntimeEntity, Task, CreateTaskReq, UpdateTaskReq, TaskStatus, TaskAssignee, AddAssigneeReq, Priority, Project, CreateProjectReq, UpdateProjectReq, ProjectStatus, Workspace, CreateWorkspaceReq, UpdateWorkspaceReq, WorkspaceMember, AddMemberReq, UpdateMemberRoleReq, PendingInvitation, InviteMemberReq, UserSummary, Comment, CreateCommentReq, PluginInfo, AppNotification, TaskRule, TaskRuleLog, CreateRuleReq, UpdateRuleReq, Skill, CreateSkillReq, ExtractSkillReq, AgentQueueItem, AgentLoadInfo, ReviewTaskReq, Workflow, CreateWorkflowReq, AttachToWorkflowReq, DecompositionPlan, DecompositionPlanItem, ApprovePlanReq, SystemTool, ApiToken, CreateTokenReq, CreateTokenRes } from '../types';
 
 
 
@@ -26,7 +26,7 @@ function authHeaders(): Record<string, string> {
 
 // List of path prefixes that should NOT get workspace_id appended
 
-const unscopedPrefixes = ['/workspaces', '/auth/', '/nodes', '/agents/runtimes', '/invitations/', '/users', '/invitations/pending'];
+const unscopedPrefixes = ['/workspaces', '/auth/', '/nodes', '/agents/runtimes', '/invitations/', '/users', '/invitations/pending', '/tokens'];
 
 
 
@@ -698,6 +698,20 @@ export const users = {
   delete: (id: string) =>
 
     request<{ status: string }>(`/users/${id}`, { method: 'DELETE' }),
+
+};
+
+// API Tokens
+
+export const tokens = {
+
+  list: () => request<{ tokens: ApiToken[] }>('/tokens'),
+
+  create: (data: CreateTokenReq) =>
+    request<CreateTokenRes>('/tokens', { method: 'POST', body: JSON.stringify(data) }),
+
+  delete: (id: string) =>
+    request<{ status: string }>(`/tokens/${id}`, { method: 'DELETE' }),
 
 };
 
