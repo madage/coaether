@@ -532,3 +532,59 @@ export interface CreateTokenRes {
   expires_at: string | null;
   created_at: string;
 }
+
+// === Log Types ===
+export interface AgentToolLogItem {
+  id: string;
+  agent_id: string;
+  agent_name: string;
+  workflow_id: string | null;
+  task_id: string | null;
+  tool_name: string;
+  parameters: string;
+  status: string;
+  deny_reason: string;
+  created_at: string;
+}
+
+export interface AccessLogItem {
+  id: string;
+  user_id: string;
+  username: string;
+  method: string;
+  path: string;
+  status: number;
+  latency_ms: number;
+  client_ip: string;
+  created_at: string;
+}
+
+export interface TokenUsageItem {
+  id: string;
+  workflow_id: string | null;
+  task_id: string | null;
+  agent_profile_id: string | null;
+  agent_name: string;
+  session_id: string | null;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  stage: string;
+  created_at: string;
+}
+
+export interface SystemEventItem {
+  id: string;
+  event_type: string;
+  source: string;
+  title: string;
+  detail: string;
+  created_at: string;
+}
+
+export interface PaginatedResp<T> {
+  items: T[];
+  total: number;
+  page: number;
+  size: number;
+}

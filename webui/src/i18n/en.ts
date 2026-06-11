@@ -750,5 +750,33 @@ export const en = {
   tokenGenerate: 'Generate Token',
   tokenNoTokens: 'No tokens yet',
 
+  // Logs
+  navLogs: 'Logs',
+  logAgentAudit: 'Agent Audit',
+  logAccess: 'Access Logs',
+  logTokenUsage: 'Token Usage',
+  logSystemEvents: 'System Events',
+  logTime: 'Time',
+  logAgent: 'Agent',
+  logTool: 'Tool',
+  logStatus: 'Status',
+  logReason: 'Reason',
+  logUser: 'User',
+  logMethod: 'Method',
+  logPath: 'Path',
+  logLatency: 'Latency(ms)',
+  logClientIP: 'Client IP',
+  logPromptTokens: 'Prompt',
+  logCompletionTokens: 'Completion',
+  logTotalTokens: 'Total',
+  logStage: 'Stage',
+  logEventType: 'Type',
+  logDetail: 'Detail',
+  logPrevPage: 'Prev',
+  logNextPage: 'Next',
+  logPageInfo: 'Page {page} / {total} total',
+  logNoData: 'No log records',
+  logFilterPath: 'Filter by path...',
+
 } as const;
 

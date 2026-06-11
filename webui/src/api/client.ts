@@ -1,4 +1,4 @@
-import type { Node, Session, CreateSessionReq, Agent, AgentProfile, RuntimeEntity, Task, CreateTaskReq, UpdateTaskReq, TaskStatus, TaskAssignee, AddAssigneeReq, Priority, Project, CreateProjectReq, UpdateProjectReq, ProjectStatus, Workspace, CreateWorkspaceReq, UpdateWorkspaceReq, WorkspaceMember, AddMemberReq, UpdateMemberRoleReq, PendingInvitation, InviteMemberReq, UserSummary, Comment, CreateCommentReq, PluginInfo, AppNotification, TaskRule, TaskRuleLog, CreateRuleReq, UpdateRuleReq, Skill, CreateSkillReq, ExtractSkillReq, AgentQueueItem, AgentLoadInfo, ReviewTaskReq, Workflow, CreateWorkflowReq, AttachToWorkflowReq, DecompositionPlan, DecompositionPlanItem, ApprovePlanReq, SystemTool, ApiToken, CreateTokenReq, CreateTokenRes } from '../types';
+import type { Node, Session, CreateSessionReq, Agent, AgentProfile, RuntimeEntity, Task, CreateTaskReq, UpdateTaskReq, TaskStatus, TaskAssignee, AddAssigneeReq, Priority, Project, CreateProjectReq, UpdateProjectReq, ProjectStatus, Workspace, CreateWorkspaceReq, UpdateWorkspaceReq, WorkspaceMember, AddMemberReq, UpdateMemberRoleReq, PendingInvitation, InviteMemberReq, UserSummary, Comment, CreateCommentReq, PluginInfo, AppNotification, TaskRule, TaskRuleLog, CreateRuleReq, UpdateRuleReq, Skill, CreateSkillReq, ExtractSkillReq, AgentQueueItem, AgentLoadInfo, ReviewTaskReq, Workflow, CreateWorkflowReq, AttachToWorkflowReq, DecompositionPlan, DecompositionPlanItem, ApprovePlanReq, SystemTool, ApiToken, CreateTokenReq, CreateTokenRes, AgentToolLogItem, AccessLogItem, TokenUsageItem, SystemEventItem, PaginatedResp } from '../types';
 
 
 
@@ -26,7 +26,7 @@ function authHeaders(): Record<string, string> {
 
 // List of path prefixes that should NOT get workspace_id appended
 
-const unscopedPrefixes = ['/workspaces', '/auth/', '/nodes', '/agents/runtimes', '/invitations/', '/users', '/invitations/pending', '/tokens'];
+const unscopedPrefixes = ['/workspaces', '/auth/', '/nodes', '/agents/runtimes', '/invitations/', '/users', '/invitations/pending', '/tokens', '/logs'];
 
 
 
@@ -698,6 +698,30 @@ export const users = {
   delete: (id: string) =>
 
     request<{ status: string }>(`/users/${id}`, { method: 'DELETE' }),
+
+};
+
+// Logs
+
+export const logs = {
+
+  agentTool: (page = 1, size = 30) =>
+    request<PaginatedResp<AgentToolLogItem>>(`/logs/agent-tool?page=${page}&size=${size}`),
+
+  access: (page = 1, size = 30, path?: string) => {
+    const qs = new URLSearchParams({ page: String(page), size: String(size) });
+    if (path) qs.set('path', path);
+    return request<PaginatedResp<AccessLogItem>>(`/logs/access?${qs}`);
+  },
+
+  tokenUsage: (page = 1, size = 30) =>
+    request<PaginatedResp<TokenUsageItem>>(`/logs/token-usage?page=${page}&size=${size}`),
+
+  systemEvents: (page = 1, size = 30) =>
+    request<PaginatedResp<SystemEventItem>>(`/logs/system-events?page=${page}&size=${size}`),
+
+  ruleLogs: (ruleId: string) =>
+    request<{ logs: TaskRuleLog[] }>(`/rules/${ruleId}/logs`),
 
 };
 

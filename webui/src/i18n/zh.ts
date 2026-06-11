@@ -750,5 +750,33 @@ export const zh = {
   tokenGenerate: '生成Token',
   tokenNoTokens: '暂无Token',
 
+  // Logs
+  navLogs: '日志',
+  logAgentAudit: 'Agent审计',
+  logAccess: '访问日志',
+  logTokenUsage: 'Token用量',
+  logSystemEvents: '系统事件',
+  logTime: '时间',
+  logAgent: 'Agent',
+  logTool: '工具',
+  logStatus: '状态',
+  logReason: '原因',
+  logUser: '用户',
+  logMethod: '方法',
+  logPath: '路径',
+  logLatency: '耗时(ms)',
+  logClientIP: '客户端IP',
+  logPromptTokens: '输入',
+  logCompletionTokens: '输出',
+  logTotalTokens: '总计',
+  logStage: '阶段',
+  logEventType: '类型',
+  logDetail: '详情',
+  logPrevPage: '上一页',
+  logNextPage: '下一页',
+  logPageInfo: '第 {page} 页 / 共 {total} 条',
+  logNoData: '暂无日志记录',
+  logFilterPath: '按路径筛选...',
+
 } as const;
 

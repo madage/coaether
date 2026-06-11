@@ -172,6 +172,9 @@ func main() {
 	// API Token handler
 	tokenH := handlers.NewTokenHandler(database.DB)
 
+	// Log handler
+	logH := handlers.NewLogHandler(database.DB)
+
 	// Safety Guard (anti-runaway monitor)
 	safetyGuard := harness.NewSafetyGuard(database.DB)
 	safetyGuard.StartPeriodicCheck(5 * time.Minute)
@@ -179,6 +182,7 @@ func main() {
 	// Router
 
 	r := gin.Default()
+	r.Use(middleware.AccessLogMiddleware(database.DB))
 
 	// CORS
 
@@ -401,6 +405,12 @@ func main() {
 		api.POST("/invitations/:token/accept", workspaceH.AcceptInvitation)
 
 		api.GET("/invitations/pending", workspaceH.ListPendingInvitations)
+
+		// Log management
+		api.GET("/logs/agent-tool", logH.AgentToolLogs)
+		api.GET("/logs/access", logH.AccessLogs)
+		api.GET("/logs/token-usage", logH.TokenUsage)
+		api.GET("/logs/system-events", logH.SystemEvents)
 
 		// API Token management (admin/owner)
 		api.GET("/tokens", tokenH.List)
