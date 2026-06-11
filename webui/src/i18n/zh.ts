@@ -777,6 +777,22 @@ export const zh = {
   logPageInfo: '第 {page} 页 / 共 {total} 条',
   logNoData: '暂无日志记录',
   logFilterPath: '按路径筛选...',
+  logDetailTitle: '日志详情',
+  logClickHint: '点击表格行查看完整详情',
+  logFieldId: '编号',
+  logFieldAgentId: '智能体ID',
+  logFieldWorkflowId: '工作流',
+  logFieldTaskId: '任务',
+  logFieldSessionId: '会话',
+  logFieldParameters: '参数',
+  logFieldClientIP: '客户端IP',
+  logFieldUserId: '用户ID',
+  logFieldAgentProfileId: '智能体配置',
+  logFieldSource: '来源',
+  logFieldCreatedAt: '创建时间',
+  logFieldPromptTokens: '输入Token',
+  logFieldCompletionTokens: '输出Token',
+  logCopyId: '复制ID',
 
 } as const;
 

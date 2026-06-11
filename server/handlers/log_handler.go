@@ -190,7 +190,7 @@ func (h *LogHandler) TokenUsage(c *gin.Context) {
 	c.JSON(http.StatusOK, paginatedResp{Items: items, Total: total, Page: page, Size: size})
 }
 
-// ========== System Events (workflow_escalations union task_reviews) ==========
+// ========== System Events (workflow_escalations UNION task_reviews UNION app_events) ==========
 
 type systemEventItem struct {
 	ID        string `json:"id"`
@@ -204,20 +204,20 @@ type systemEventItem struct {
 func (h *LogHandler) SystemEvents(c *gin.Context) {
 	page, size, offset := parsePage(c)
 
-	// Count total from both tables
-	var eCount, rCount int
+	var eCount, rCount, aCount int
 	h.DB.QueryRow(`SELECT COUNT(*) FROM workflow_escalations`).Scan(&eCount)
 	h.DB.QueryRow(`SELECT COUNT(*) FROM task_reviews`).Scan(&rCount)
-	total := eCount + rCount
+	h.DB.QueryRow(`SELECT COUNT(*) FROM app_events`).Scan(&aCount)
+	total := eCount + rCount + aCount
 
 	items := make([]systemEventItem, 0, size)
 
-	// Query escalations (first half of page)
-	eLimit := size / 2
+	// Query escalations
+	eLimit := size / 3
 	if eLimit < 1 {
-		eLimit = size
+		eLimit = size / 2
 	}
-	eOffset := offset / 2
+	eOffset := offset / 3
 	eRows, err := h.DB.Query(
 		`SELECT id, workflow_id, task_id, level, trigger_reason, action_taken, created_at
 		 FROM workflow_escalations ORDER BY created_at DESC LIMIT $1 OFFSET $2`, eLimit, eOffset,
@@ -232,26 +232,21 @@ func (h *LogHandler) SystemEvents(c *gin.Context) {
 			if err := eRows.Scan(&id, &wfID, &taskID, &level, &reason, &action, &t); err != nil {
 				continue
 			}
-			taskStr := ""
-			if taskID != nil {
-				taskStr = truncateID(*taskID, 8)
-			}
 			items = append(items, systemEventItem{
 				ID: id, EventType: "escalation", Source: "workflow",
-				Title:       "工作流熔断 L" + strconv.Itoa(level),
-				Detail:      reason + " → " + action,
-				CreatedAt:   t.Format(time.RFC3339),
+				Title:     "工作流熔断 L" + strconv.Itoa(level),
+				Detail:    reason + " → " + action,
+				CreatedAt: t.Format(time.RFC3339),
 			})
-			_ = taskStr
 		}
 	}
 
-	// Query task reviews (second half)
+	// Query task reviews
 	rLimit := size - len(items)
 	if rLimit < 1 {
-		rLimit = size / 2
+		rLimit = size / 3
 	}
-	rOffset := offset / 2
+	rOffset := offset / 3
 	rRows, err := h.DB.Query(
 		`SELECT r.id, r.task_id, r.action, COALESCE(r.comment,''), COALESCE(u.username,''), r.created_at
 		 FROM task_reviews r LEFT JOIN users u ON r.reviewer_id = u.id
@@ -266,17 +261,39 @@ func (h *LogHandler) SystemEvents(c *gin.Context) {
 			if err := rRows.Scan(&id, &taskID, &action, &comment, &reviewer, &t); err != nil {
 				continue
 			}
-			taskStr := ""
-			if taskID != nil {
-				taskStr = truncateID(*taskID, 8)
-			}
 			items = append(items, systemEventItem{
 				ID: id, EventType: "review", Source: "review",
-				Title:       "任务" + action,
-				Detail:      comment + " | 审核人:" + reviewer,
-				CreatedAt:   t.Format(time.RFC3339),
+				Title:     "任务" + action,
+				Detail:    comment + " | 审核人:" + reviewer,
+				CreatedAt: t.Format(time.RFC3339),
 			})
-			_ = taskStr
+		}
+	}
+
+	// Query app events
+	aLimit := size - len(items)
+	if aLimit < 1 {
+		aLimit = size / 3
+	}
+	aOffset := offset / 3
+	aRows, err := h.DB.Query(
+		`SELECT id, event_type, source, title, detail, COALESCE(task_id,''), COALESCE(agent_id,''), created_at
+		 FROM app_events ORDER BY created_at DESC LIMIT $1 OFFSET $2`, aLimit, aOffset,
+	)
+	if err == nil {
+		defer aRows.Close()
+		for aRows.Next() {
+			var id, evtType, source, title, detail, tID, aID string
+			var t time.Time
+			if err := aRows.Scan(&id, &evtType, &source, &title, &detail, &tID, &aID, &t); err != nil {
+				continue
+			}
+			items = append(items, systemEventItem{
+				ID: id, EventType: evtType, Source: source,
+				Title:     title,
+				Detail:    detail,
+				CreatedAt: t.Format(time.RFC3339),
+			})
 		}
 	}
 

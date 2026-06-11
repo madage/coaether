@@ -777,6 +777,22 @@ export const en = {
   logPageInfo: 'Page {page} / {total} total',
   logNoData: 'No log records',
   logFilterPath: 'Filter by path...',
+  logDetailTitle: 'Log Detail',
+  logClickHint: 'Click on a row to view full details',
+  logFieldId: 'ID',
+  logFieldAgentId: 'Agent ID',
+  logFieldWorkflowId: 'Workflow',
+  logFieldTaskId: 'Task',
+  logFieldSessionId: 'Session',
+  logFieldParameters: 'Parameters',
+  logFieldClientIP: 'Client IP',
+  logFieldUserId: 'User ID',
+  logFieldAgentProfileId: 'Agent Profile',
+  logFieldSource: 'Source',
+  logFieldCreatedAt: 'Created At',
+  logFieldPromptTokens: 'Prompt Tokens',
+  logFieldCompletionTokens: 'Completion Tokens',
+  logCopyId: 'Copy ID',
 
 } as const;
 

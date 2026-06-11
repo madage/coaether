@@ -389,11 +389,6 @@ func (s *TaskService) handleReviewToStuck(taskID string, snap taskSnapshot, opts
 // ========== Completion routing (inlined from ReviewRouter.RouteTask) ==========
 
 func (s *TaskService) routeCompletion(taskID string, snap taskSnapshot, opts TransitionOpts) {
-	// Only route tasks in "completed" status
-	if snap.Status != string(models.TaskCompleted) {
-		return
-	}
-
 	switch snap.CompletionBehavior {
 	case models.CompletionAutoDone:
 		// If result_summary is non-empty, go to review so user can see output
@@ -406,6 +401,7 @@ func (s *TaskService) routeCompletion(taskID string, snap taskSnapshot, opts Tra
 	case models.CompletionAutoReview:
 		if snap.AssigneeType == "agent_profile" && snap.AssigneeID != "" && s.Reviewer != nil {
 			s.Reviewer.createReviewQueue(taskID, snap.AssigneeID, snap.WorkflowID)
+			s.TransitionStatus(taskID, string(models.TaskReview), opts)
 		} else {
 			s.TransitionStatus(taskID, string(models.TaskReview), opts)
 		}
