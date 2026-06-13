@@ -1056,6 +1056,10 @@ func (r *Runtime) handleAgentMention(env *protocol.Envelope) {
 
 	log.Printf("[Runtime] Agent mentioned in task %s (queue: %s)", taskID[:8], queueID[:8])
 
+	// Immediately claim the queue item to prevent the queue poller from
+	// picking it up during evaluation (which can take 20-30s for LLM API).
+	r.updateQueueStatus(queueID, "processing", "")
+
 	// Get task details for evaluation context
 	baseURL := "http://" + r.ServerURL
 	auth := fmt.Sprintf("node_id=%s&node_secret=%s", r.NodeID, r.Secret)
@@ -1122,12 +1126,10 @@ Respond with exactly one of these two formats:
 		existingSessionID := r.findActiveSession(taskID, agentProfileID)
 
 		if existingSessionID != "" {
-			// An active session already exists — likely the queue poller
-			// created it while handleAgentMention was evaluating (race).
-			// The agent will discover the @mention through get_task_detail
-			// during normal processing. Do NOT inject (avoids double reply)
-			// and do NOT touch the queue status (session lifecycle owns it).
-			log.Printf("[Runtime] Session %s already active for task %s — skipping (agent will discover via get_task_detail)", existingSessionID[:8], taskID[:8])
+			// An active session already exists for this task+agent.
+			// Release the queue - the session lifecycle owns the work.
+			log.Printf("[Runtime] Session %s already active for task %s - releasing queue", existingSessionID[:8], taskID[:8])
+			r.updateQueueStatus(queueID, "completed", "")
 			return
 		}
 
@@ -1146,8 +1148,7 @@ Respond with exactly one of these two formats:
 		}
 		r.connMu.Unlock()
 
-		// No active session — create a new one (original flow)
-		r.updateQueueStatus(queueID, "processing", "")
+		// No active session - create a new one
 
 		sessionURL := fmt.Sprintf("%s/api/node/sessions?%s", baseURL, auth)
 		sessionReq := map[string]string{
