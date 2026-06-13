@@ -256,7 +256,7 @@ func harnessToolDefs() []toolDef {
 		},
 		{
 			Name:        "add_comment",
-			Description: "Add a comment to a task. Use to report progress, results, or ask questions.",
+			Description: "Post a SINGLE consolidated reply comment to a task. Put ALL your content (questions, summary, progress update) into ONE call. Do NOT call this tool more than once per round — multiple calls create duplicate comments that confuse the user.",
 			InputSchema: inputSchema{
 				Type: "object",
 				Properties: map[string]interface{}{
