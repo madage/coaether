@@ -1387,18 +1387,26 @@ func (h *TaskHandler) CreateComment(c *gin.Context) {
 
 				// Send instant mention event to the runtime via MessageBus
 				if h.MessageBus != nil {
+					// Check if this is a continuation (agent has previous comments on this task)
+					var agentCommentCount int
+					h.DB.QueryRow(
+						`SELECT COUNT(*) FROM task_comments WHERE task_id = $1 AND agent_profile_id = $2 AND is_agent_comment = true`,
+						taskID, ap.ID,
+					).Scan(&agentCommentCount)
+
 					runtimeEndpoint := "runtime://" + ap.NodeID
 					mentionEnv := protocol.NewEnvelope("system://api", runtimeEndpoint, protocol.MsgAgentMention,
 						&protocol.Payload{
 							Metadata: map[string]any{
-								"task_id":           taskID,
-								"task_title":        taskTitle,
-								"queue_id":          queueID,
-								"comment_id":        comment.ID,
-								"comment_content":   req.Content,
-								"agent_profile_id":  ap.ID,
-								"system_prompt":     ap.SystemPrompt,
-								"instructions":      ap.Instructions,
+								"task_id":              taskID,
+								"task_title":           taskTitle,
+								"queue_id":             queueID,
+								"comment_id":           comment.ID,
+								"comment_content":      req.Content,
+								"agent_profile_id":     ap.ID,
+								"system_prompt":        ap.SystemPrompt,
+								"instructions":         ap.Instructions,
+								"agent_comment_count":  agentCommentCount,
 							},
 						},
 					)

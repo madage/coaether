@@ -828,7 +828,7 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 			// is a short confirmation (≤50 runes, contains keywords like "已发送"/"已提出"),
 			// append it to the existing comment instead of creating a duplicate.
 			runes := []rune(p.Content)
-			if len(runes) <= 50 && isConfirmMessage(p.Content) {
+			if len(runes) <= 200 && isConfirmMessage(p.Content) {
 				var existingID, existingContent string
 				if err := h.DB.QueryRow(
 					`SELECT id, content FROM task_comments WHERE task_id = $1 AND agent_profile_id = $2
@@ -1275,8 +1275,10 @@ func isCircularDelegation(db *sql.DB, taskID string, targetAgentID string) bool 
 		keywords := []string{
 			"已发送",
 			"已提出",
+			"已发布",
 			"等待你的回复",
 			"等待回复",
+			"等待用户回复",
 			"等你回复",
 			"问题已发",
 		}

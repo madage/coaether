@@ -1048,6 +1048,8 @@ func (r *Runtime) handleAgentMention(env *protocol.Envelope) {
 	agentProfileID, _ := meta["agent_profile_id"].(string)
 	systemPrompt, _ := meta["system_prompt"].(string)
 	instructions, _ := meta["instructions"].(string)
+	agentCommentCountRaw, _ := meta["agent_comment_count"].(float64)
+	agentCommentCount := int(agentCommentCountRaw)
 
 	if taskID == "" || queueID == "" {
 		log.Printf("[Runtime] Incomplete mention event: missing task_id or queue_id")
@@ -1080,6 +1082,21 @@ func (r *Runtime) handleAgentMention(env *protocol.Envelope) {
 	}
 
 	// Build evaluation prompt with agent personality
+	decisionGuide := `Respond with exactly one of these two formats:
+- WORK: <brief reason> — if this task needs your work
+- REPLY: <your response> — if a simple reply is sufficient
+  (IMPORTANT: When REPLY, follow the System Prompt and Behavior Instructions above.)`
+
+	if agentCommentCount > 0 {
+		decisionGuide = fmt.Sprintf(`This is round %d of an ongoing conversation. --resume will automatically restore full conversation history from prior sessions.
+
+CRITICAL: You MUST respond with WORK to maintain conversation continuity. Only use REPLY for trivial single-word acknowledgments (e.g., "ok", "thanks", "got it") with zero follow-up needed.
+
+Respond with exactly one of these two formats:
+- WORK: <brief reason> — REQUIRED for any substantive continuation of the conversation
+- REPLY: <trivial acknowledgment> — ONLY for single-word acknowledgments`, agentCommentCount+1)
+	}
+
 	evalPrompt := fmt.Sprintf(`You have been @mentioned in a comment on the task "%s".
 
 System Prompt (your role):
@@ -1092,10 +1109,7 @@ Task Description: %s
 
 Comment: %s
 
-Respond with exactly one of these two formats:
-- WORK: <brief reason> — if this task needs your work
-- REPLY: <your response> — if a simple reply is sufficient
-  (IMPORTANT: When REPLY, follow the System Prompt and Behavior Instructions above.)`, taskTitle, systemPrompt, instructions, taskDesc, commentContent)
+%s`, taskTitle, systemPrompt, instructions, taskDesc, commentContent, decisionGuide)
 
 	// Use the first available backend to evaluate
 	var evalResult string
