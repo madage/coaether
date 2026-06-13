@@ -595,8 +595,10 @@ You are a task-decomposition agent. Your ONLY job is to break down this task int
 		&protocol.Payload{
 			Content: []protocol.ContentBlock{protocol.TextBlock(prompt)},
 			Metadata: map[string]any{
-				"task_id":   req.TaskID,
-				"auto_task": true,
+				"task_id":          req.TaskID,
+				"queue_id":         req.QueueID,
+				"agent_profile_id": req.AgentID,
+				"auto_task":        true,
 			},
 		},
 	)

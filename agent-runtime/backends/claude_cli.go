@@ -120,7 +120,17 @@ func (b *ClaudeCLIBackend) HandleMessage(env *protocol.Envelope) (*protocol.Enve
 		taskID, _ := getMetaStr(env.Payload.Metadata, "task_id")
 		queueID, _ := getMetaStr(env.Payload.Metadata, "queue_id")
 		profileID, _ := getMetaStr(env.Payload.Metadata, "agent_profile_id")
-		sess = b.startSession(sessionID, taskID, queueID, profileID)
+
+		// Compute workspace key and lookup --resume session while holding b.mu
+		var wsKey string
+		if taskID == "" || profileID == "" {
+			wsKey = sessionID
+		} else {
+			wsKey = taskID[:8] + "-" + profileID[:8]
+		}
+		prevClaudeID := b.resumeSessions[wsKey]
+
+		sess = b.startSession(sessionID, taskID, queueID, profileID, wsKey, prevClaudeID)
 		if sess == nil {
 			b.mu.Unlock()
 			return protocol.NewEnvelope("", "", protocol.MsgError,
@@ -176,7 +186,7 @@ type assistantContentBlock struct {
 
 // ---- session lifecycle ----
 
-func (b *ClaudeCLIBackend) startSession(sessionID, taskID, queueID, profileID string) *claudeSession {
+func (b *ClaudeCLIBackend) startSession(sessionID, taskID, queueID, profileID, wsKey, prevClaudeID string) *claudeSession {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	args := []string{
@@ -186,24 +196,10 @@ func (b *ClaudeCLIBackend) startSession(sessionID, taskID, queueID, profileID st
 		"--verbose",
 	}
 
-	// Use persistent workspace per task+agent so Claude sees conversation
-	// history across sessions for the same task.
-	var wsKey string
-	if taskID == "" || profileID == "" {
-		wsKey = sessionID // fallback for non-task sessions
-	} else {
-		wsKey = taskID[:8] + "-" + profileID[:8]
-	}
-
 	// Resume previous Claude session for the same task+agent if available
-	if wsKey != "" {
-		b.mu.Lock()
-		prevClaudeID := b.resumeSessions[wsKey]
-		b.mu.Unlock()
-		if prevClaudeID != "" {
-			args = append(args, "--resume", prevClaudeID)
-			log.Printf("[ClaudeCLI] Resuming claude session %s for workspace %s", prevClaudeID[:8], wsKey)
-		}
+	if prevClaudeID != "" {
+		args = append(args, "--resume", prevClaudeID)
+		log.Printf("[ClaudeCLI] Resuming claude session %s for workspace %s", prevClaudeID[:8], wsKey)
 	}
 
 	cmd := exec.CommandContext(ctx, b.command, args...)
