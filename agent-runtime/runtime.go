@@ -1114,50 +1114,39 @@ Respond with exactly one of these two formats:
 		existingSessionID := r.findActiveSession(taskID, agentProfileID)
 
 		if existingSessionID != "" {
-			// Inject @mention into the existing session instead of creating a new one
-			injectMsg := fmt.Sprintf(`[@mention] You have been mentioned in a comment on this task:
-
-%s
-
-Continue working on this task and address the comment above.`, commentContent)
-
-			if cli, ok := r.backends["claude"].(*backends.ClaudeCLIBackend); ok {
-				if err := cli.InjectMessage(existingSessionID, injectMsg); err != nil {
-					log.Printf("[Runtime] Failed to inject mention: %v, falling back to new session", err)
-					existingSessionID = "" // fall through
-				} else {
-					log.Printf("[Runtime] Injected @mention into existing session %s for task %s", existingSessionID[:8], taskID[:8])
-					r.updateQueueStatus(queueID, "completed", "injected into existing session "+existingSessionID[:8])
-				}
-			}
+			// An active session already exists — likely the queue poller
+			// created it while handleAgentMention was evaluating (race).
+			// The agent will discover the @mention through get_task_detail
+			// during normal processing. Do NOT inject (avoids double reply)
+			// and do NOT touch the queue status (session lifecycle owns it).
+			log.Printf("[Runtime] Session %s already active for task %s — skipping (agent will discover via get_task_detail)", existingSessionID[:8], taskID[:8])
+			return
 		}
 
-		if existingSessionID == "" {
-			// No active session — create a new one (original flow)
-			r.updateQueueStatus(queueID, "processing", "")
+		// No active session — create a new one (original flow)
+		r.updateQueueStatus(queueID, "processing", "")
 
-			sessionURL := fmt.Sprintf("%s/api/node/sessions?%s", baseURL, auth)
-			sessionReq := map[string]string{
-				"task_id":  taskID,
-				"agent_id": agentProfileID,
-				"queue_id": queueID,
+		sessionURL := fmt.Sprintf("%s/api/node/sessions?%s", baseURL, auth)
+		sessionReq := map[string]string{
+			"task_id":  taskID,
+			"agent_id": agentProfileID,
+			"queue_id": queueID,
+		}
+		sessionBody, _ := json.Marshal(sessionReq)
+		resp, err := http.Post(sessionURL, "application/json", bytes.NewBuffer(sessionBody))
+		if err != nil {
+			log.Printf("[Runtime] Session creation failed: %v", err)
+			return
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusCreated {
+			var sr struct {
+				SessionID string `json:"session_id"`
 			}
-			sessionBody, _ := json.Marshal(sessionReq)
-			resp, err := http.Post(sessionURL, "application/json", bytes.NewBuffer(sessionBody))
-			if err != nil {
-				log.Printf("[Runtime] Session creation failed: %v", err)
-				return
-			}
-			defer resp.Body.Close()
-			if resp.StatusCode == http.StatusCreated {
-				var sr struct {
-					SessionID string `json:"session_id"`
-				}
-				json.NewDecoder(resp.Body).Decode(&sr)
-				log.Printf("[Runtime] Session %s created for mentioned task %s", sr.SessionID[:8], taskID[:8])
-			} else {
-				log.Printf("[Runtime] Session creation returned %d", resp.StatusCode)
-			}
+			json.NewDecoder(resp.Body).Decode(&sr)
+			log.Printf("[Runtime] Session %s created for mentioned task %s", sr.SessionID[:8], taskID[:8])
+		} else {
+			log.Printf("[Runtime] Session creation returned %d", resp.StatusCode)
 		}
 	default:
 		log.Printf("[Runtime] Unrecognized evaluation result, using as reply")
