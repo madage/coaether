@@ -97,7 +97,7 @@ The system uses a **dual WebSocket channel** architecture:
 - Supports CLI and API backend modes
 - Runtime auto-discovery and registration
 - Supports workspace-scoped configuration
-- **Capability System** — Each agent profile has a set of capabilities (`create_sub_task`, `assign_task`, `review_task`, `add_comment`, `get_task_detail`, `list_sub_tasks`, `update_task_status`) that govern which tools the agent can use; configurable at creation and editable in the detail modal
+- **Capability System** — Each agent profile has a set of capabilities (`propose_decomposition_plan`, `create_sub_task`, `assign_task`, `review_task`, `add_comment`, `get_task_detail`, `list_sub_tasks`, `update_task_status`, `search_agent_profiles`) that govern which tools the agent can use; configurable at creation and editable in the detail modal
 - **Behavior Instructions** — Define communication style, tone, and guidelines per agent; injected into auto-task prompts for more natural interactions
 
 ### Task Management
@@ -109,6 +109,7 @@ The system uses a **dual WebSocket channel** architecture:
 - **Priority** — `urgent` > `high` > `medium` > `low`
 - **Task Comments** — Issue-style comments, postable by both users and agents, supports deletion
 - **Agent Auto-Processing** — When a task's assignee is an agent profile and status changes to `in_progress`, the agent automatically starts working using both `system_prompt` (tool definitions, agent roles) and `instructions` (communication style) from the agent profile; when a non-assignee agent completes a task, the assignee agent auto-reviews the result. Sub-tasks created via Harness tools with `assignee_type=agent_profile` and no dependencies are auto-queued for immediate processing.
+- **@Mention Session Reuse** — When a user @mentions an agent in a task comment, if the agent already has an active session for that task, the mention is injected into the existing session (preserving workspace state) instead of killing and recreating a new one. If no active session exists, a new session is created as before.
 - **DAG Auto-Progress** — Workflow tasks advance automatically: when a task completes, blocked tasks with all dependencies met are unblocked → agent tasks are auto-dispatched to queue → when all siblings are done, the parent task auto-closes and recursively advances the DAG
 - **Completion Behavior** — Each task supports `completion_behavior` field (`auto_done`/`auto_review`/`sample_review`/`needs_review`). When set to `auto_done`, agent completion automatically moves the task to `done` and triggers DAG propagation; otherwise moves to `review` for human/agent review
 - **Agent Queue Status** — Task Detail sidebar shows real-time agent queue status: queued/processing/completed/failed with color-coded indicators and result summary on hover

@@ -1353,24 +1353,36 @@ func (h *TaskHandler) CreateComment(c *gin.Context) {
 					continue
 				}
 
-				queueID := uuid.New().String()
-				now := time.Now()
-				metadata, _ := json.Marshal(map[string]string{
-					"trigger_type":    "mention",
-					"comment_id":      comment.ID,
-					"comment_content": req.Content,
-				})
+				// Dedup: skip creating a new queue entry if one is already active for this task+agent.
+				// The mention event will still be sent below so the runtime can inject into the existing session.
+				var existingQueueID string
+				dupErr := h.DB.QueryRow(
+					`SELECT id FROM task_agent_queue WHERE task_id = $1 AND agent_profile_id = $2 AND status IN ('queued', 'claimed', 'processing') LIMIT 1`,
+					taskID, ap.ID,
+				).Scan(&existingQueueID)
 
-				h.DB.Exec(
-					`INSERT INTO task_agent_queue (id, task_id, agent_profile_id, status, trigger_type, metadata, assigned_at, created_at)
-					 VALUES ($1, $2, $3, 'queued', 'mention', $4, $5, $5)`,
-					queueID, taskID, ap.ID, metadata, now,
-				)
-				h.DB.Exec(`UPDATE agent_profiles SET current_load = current_load + 1, last_active_at = $1 WHERE id = $2`,
-					now, ap.ID)
+				queueID := existingQueueID
+				if dupErr != nil {
+					// No existing active queue entry -- create one
+					queueID = uuid.New().String()
+					now := time.Now()
+					metadata, _ := json.Marshal(map[string]string{
+						"trigger_type":    "mention",
+						"comment_id":      comment.ID,
+						"comment_content": req.Content,
+					})
 
-				if h.Hub != nil {
-					h.Hub.SignalChange("task_agent_queue")
+					h.DB.Exec(
+						`INSERT INTO task_agent_queue (id, task_id, agent_profile_id, status, trigger_type, metadata, assigned_at, created_at)
+							 VALUES ($1, $2, $3, 'queued', 'mention', $4, $5, $5)`,
+						queueID, taskID, ap.ID, metadata, now,
+					)
+					h.DB.Exec(`UPDATE agent_profiles SET current_load = current_load + 1, last_active_at = $1 WHERE id = $2`,
+						now, ap.ID)
+
+					if h.Hub != nil {
+						h.Hub.SignalChange("task_agent_queue")
+					}
 				}
 
 				// Send instant mention event to the runtime via MessageBus

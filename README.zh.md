@@ -96,6 +96,7 @@
 - 支持 CLI 和 API 两种后端模式
 - 运行时自动发现和注册
 - 支持按工作区隔离配置
+- **能力系统 (Capability System)** — 每个智能体配置包含一组能力集（`propose_decomposition_plan`、`create_sub_task`、`assign_task`、`review_task`、`add_comment`、`get_task_detail`、`list_sub_tasks`、`update_task_status`、`search_agent_profiles`），控制智能体可使用的工具范围；创建时可配置，详情弹窗中可编辑
 - **行为指令 (Behavior Instructions)** — 为每个智能体定义沟通风格、语气和行为准则，自动注入到任务提示词中，使交互更自然
 
 ### 任务管理 / Task Management
@@ -107,6 +108,7 @@
 - **优先级** / Priority — `urgent` > `high` > `medium` > `low`
 - **任务评论** / Comments — 类似 Issue 评论，用户和智能体均可发表，支持删除
 - **智能体自动处理** — 当任务的负责人是智能体且状态变为 `in_progress` 时，智能体自动开始工作；非负责人智能体完成任务后，负责人智能体自动审核结果
+- **@提及会话复用** — 用户在任务评论中 @提及智能体时，如果该智能体已有处理此任务的活跃会话，系统会将提及内容注入到现有会话中（保留工作区状态），而非终止并重建新会话。若没有活跃会话，则按原有逻辑创建新会话
 - 关联项目，按项目组织任务
 - 回收站机制：软删除 + 可恢复 + 永久删除
 - 按工作区隔离
