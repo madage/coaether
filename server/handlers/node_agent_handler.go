@@ -393,7 +393,7 @@ func (h *NodeAgentHandler) CreateSession(c *gin.Context) {
 	if isResume {
 		// --resume already restores full context (task description, role, rules, previous exchanges).
 		// Only inject incremental info: round number. New review rejection is appended later.
-		prompt = fmt.Sprintf("（继续第 %d 轮对话。--resume 已恢复完整历史上下文，请直接回应用户的最新消息，不要重复之前已经确认过的提问。）", agentCommentCount+1)
+		prompt = fmt.Sprintf("（继续第 %d 轮对话。请先读取 workspace 中的 conversation.md 了解完整对话历史，然后直接回应用户的最新消息，不要重复之前已经确认过的提问。）", agentCommentCount+1)
 	} else {
 	if isDecomposer {
 		// Fetch available agent profiles for the workspace
@@ -631,6 +631,37 @@ You are a task-decomposition agent. Your ONLY job is to break down this task int
 	createEnv.SessionID = sessionID
 	h.Bus.Deliver(createEnv)
 
+	// For resume sessions, build conversation history so the agent can read it from workspace
+	var conversationHistory string
+	if isResume {
+		rows, err := h.DB.Query(
+			`SELECT tc.content, tc.is_agent_comment, tc.created_at,
+				COALESCE(ap.name, '用户') as author
+			 FROM task_comments tc
+			 LEFT JOIN agent_profiles ap ON ap.id = tc.agent_profile_id
+			 WHERE tc.task_id = $1
+			 ORDER BY tc.created_at ASC`, req.TaskID)
+		if err == nil {
+			defer rows.Close()
+			var lines []string
+			lines = append(lines, "# 对话历史\n")
+			for rows.Next() {
+				var content string
+				var isAgent bool
+				var createdAt time.Time
+				var author string
+				if err := rows.Scan(&content, &isAgent, &createdAt, &author); err == nil {
+					role := "用户"
+					if isAgent {
+						role = author
+					}
+					lines = append(lines, fmt.Sprintf("## %s (%s)\n\n%s\n", role, createdAt.Format("01-02 15:04"), content))
+				}
+			}
+			conversationHistory = strings.Join(lines, "\n")
+		}
+	}
+
 	log.Printf("[NodeAgent] Created session %s for task %s on node %s", sessionID, req.TaskID, auth.NodeID)
 
 	// Send the task prompt directly to the runtime, tagged with the session ID
@@ -639,10 +670,11 @@ You are a task-decomposition agent. Your ONLY job is to break down this task int
 		&protocol.Payload{
 			Content: []protocol.ContentBlock{protocol.TextBlock(prompt)},
 			Metadata: map[string]any{
-				"task_id":          req.TaskID,
-				"queue_id":         req.QueueID,
-				"agent_profile_id": req.AgentID,
-				"auto_task":        true,
+				"task_id":              req.TaskID,
+				"queue_id":             req.QueueID,
+				"agent_profile_id":     req.AgentID,
+				"auto_task":            true,
+				"conversation_history": conversationHistory,
 			},
 		},
 	)

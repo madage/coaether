@@ -120,6 +120,7 @@ func (b *ClaudeCLIBackend) HandleMessage(env *protocol.Envelope) (*protocol.Enve
 		taskID, _ := getMetaStr(env.Payload.Metadata, "task_id")
 		queueID, _ := getMetaStr(env.Payload.Metadata, "queue_id")
 		profileID, _ := getMetaStr(env.Payload.Metadata, "agent_profile_id")
+		conversationHistory, _ := getMetaStr(env.Payload.Metadata, "conversation_history")
 
 		// Compute workspace key and lookup --resume session while holding b.mu
 		var wsKey string
@@ -130,7 +131,7 @@ func (b *ClaudeCLIBackend) HandleMessage(env *protocol.Envelope) (*protocol.Enve
 		}
 		prevClaudeID := b.resumeSessions[wsKey]
 
-		sess = b.startSession(sessionID, taskID, queueID, profileID, wsKey, prevClaudeID)
+		sess = b.startSession(sessionID, taskID, queueID, profileID, wsKey, prevClaudeID, conversationHistory)
 		if sess == nil {
 			b.mu.Unlock()
 			return protocol.NewEnvelope("", "", protocol.MsgError,
@@ -186,7 +187,7 @@ type assistantContentBlock struct {
 
 // ---- session lifecycle ----
 
-func (b *ClaudeCLIBackend) startSession(sessionID, taskID, queueID, profileID, wsKey, prevClaudeID string) *claudeSession {
+func (b *ClaudeCLIBackend) startSession(sessionID, taskID, queueID, profileID, wsKey, prevClaudeID, conversationHistory string) *claudeSession {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	args := []string{
@@ -232,6 +233,16 @@ func (b *ClaudeCLIBackend) startSession(sessionID, taskID, queueID, profileID, w
 				log.Printf("[ClaudeCLI] Failed to write .mcp.json: %v", err)
 			} else {
 				log.Printf("[ClaudeCLI] Wrote MCP config for session %s", sessionID[:8])
+			}
+		}
+
+		// Write conversation.md so the agent can read prior conversation history
+		if conversationHistory != "" {
+			convPath := filepath.Join(wsDir, "conversation.md")
+			if err := os.WriteFile(convPath, []byte(conversationHistory), 0644); err != nil {
+				log.Printf("[ClaudeCLI] Failed to write conversation.md: %v", err)
+			} else {
+				log.Printf("[ClaudeCLI] Wrote conversation.md (%d bytes) for session %s", len(conversationHistory), sessionID[:8])
 			}
 		}
 	}
