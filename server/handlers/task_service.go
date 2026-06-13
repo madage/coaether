@@ -127,7 +127,7 @@ func (s *TaskService) readTaskSnapshot(taskID string) (taskSnapshot, error) {
 		`SELECT status, COALESCE(completion_behavior, 'auto_done'),
 			COALESCE(assignee_type, ''), COALESCE(assignee_id, ''),
 			workflow_id, parent_id,
-			COALESCE(agent_loop_count, 0), COALESCE(max_agent_loops, 3),
+			COALESCE(agent_loop_count, 0), COALESCE(max_agent_loops, 6),
 			user_id, title, workspace_id,
 			COALESCE(pending_review_actions, '[]')
 		 FROM tasks WHERE id = $1 AND deleted_at IS NULL`,

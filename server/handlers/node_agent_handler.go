@@ -452,7 +452,7 @@ You are a task-decomposition agent. Your ONLY job is to break down this task int
 		var taskStatus string
 		var loopCount, maxLoops int
 		if err := h.DB.QueryRow(
-			`SELECT COALESCE(status,''), COALESCE(agent_loop_count,0), COALESCE(max_agent_loops,3) FROM tasks WHERE id = $1`,
+			`SELECT COALESCE(status,''), COALESCE(agent_loop_count,0), COALESCE(max_agent_loops,6) FROM tasks WHERE id = $1`,
 			req.TaskID,
 		).Scan(&taskStatus, &loopCount, &maxLoops); err == nil {
 			ctxLines = append(ctxLines, fmt.Sprintf("\n任务状态: %s\n重试次数: %d/%d", taskStatus, loopCount, maxLoops))
