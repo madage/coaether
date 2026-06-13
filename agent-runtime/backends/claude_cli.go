@@ -30,8 +30,9 @@ type ClaudeCLIBackend struct {
 	serverURL     string
 	nodeID        string
 	nodeSecret    string
-	mcpServerPath string
-	mu            sync.Mutex
+	mcpServerPath  string
+	resumeSessions map[string]string // workspaceKey → last claudeSessionID for --resume
+	mu             sync.Mutex
 }
 
 func (b *ClaudeCLIBackend) SetOnSessionComplete(fn OnSessionComplete) {
@@ -61,6 +62,7 @@ type claudeSession struct {
 	taskID    string
 	queueID   string
 	profileID string
+	claudeSessionID string // Claude's native session_id for --resume across rounds
 }
 
 func (s *claudeSession) setCompleted() {
@@ -84,9 +86,10 @@ func NewClaudeCLIBackend(cmdPath string) *ClaudeCLIBackend {
 		return nil
 	}
 	return &ClaudeCLIBackend{
-		command:  cmdPath,
-		timeout:  30 * time.Minute,
-		sessions: make(map[string]*claudeSession),
+		command:        cmdPath,
+		timeout:        30 * time.Minute,
+		sessions:       make(map[string]*claudeSession),
+		resumeSessions: make(map[string]string),
 	}
 }
 
@@ -183,16 +186,27 @@ func (b *ClaudeCLIBackend) startSession(sessionID, taskID, queueID, profileID st
 		"--verbose",
 	}
 
-	cmd := exec.CommandContext(ctx, b.command, args...)
-
 	// Use persistent workspace per task+agent so Claude sees conversation
-	// history across sessions for the same task. --resume continues prior work.
+	// history across sessions for the same task.
 	var wsKey string
 	if taskID == "" || profileID == "" {
 		wsKey = sessionID // fallback for non-task sessions
 	} else {
 		wsKey = taskID[:8] + "-" + profileID[:8]
 	}
+
+	// Resume previous Claude session for the same task+agent if available
+	if wsKey != "" {
+		b.mu.Lock()
+		prevClaudeID := b.resumeSessions[wsKey]
+		b.mu.Unlock()
+		if prevClaudeID != "" {
+			args = append(args, "--resume", prevClaudeID)
+			log.Printf("[ClaudeCLI] Resuming claude session %s for workspace %s", prevClaudeID[:8], wsKey)
+		}
+	}
+
+	cmd := exec.CommandContext(ctx, b.command, args...)
 	wsDir := filepath.Join("workspaces", wsKey)
 	if err := os.MkdirAll(wsDir, 0755); err != nil {
 		log.Printf("[ClaudeCLI] Failed to create workspace %s: %v", wsDir, err)
@@ -354,13 +368,22 @@ func (b *ClaudeCLIBackend) handleSystemEvent(sess *claudeSession, rawJSON string
 	}
 	sess.mu.Lock()
 	sess.model = raw.Model
+	sess.claudeSessionID = raw.SessionID
 	sess.mu.Unlock()
+
+	// Store Claude session_id for --resume on next round (same task+agent)
+	if sess.taskID != "" && sess.profileID != "" {
+		wsKey := sess.taskID[:8] + "-" + sess.profileID[:8]
+		b.mu.Lock()
+		b.resumeSessions[wsKey] = raw.SessionID
+		b.mu.Unlock()
+	}
 
 	sid := sess.sessionID
 	if len(sid) > 8 {
 		sid = sid[:8]
 	}
-	log.Printf("[ClaudeCLI][%s] Init: model=%s", sid, raw.Model)
+	log.Printf("[ClaudeCLI][%s] Init: model=%s claude_session=%s", sid, raw.Model, raw.SessionID[:8])
 }
 
 func sessionTo(to string) string {
