@@ -1254,8 +1254,8 @@ func (h *TaskHandler) ListComments(c *gin.Context) {
 			&cm.ID, &cm.TaskID, &cm.UserID, &cm.Username,
 			&cm.AgentProfileID, &cm.AgentName, &cm.AgentAvatar,
 			&cm.Content, &cm.ParentID, &cm.IsAgentComment,
-			&cm.SourceTaskID, &cm.SourceTaskTitle,
 			&cm.CreatedAt, &cm.UpdatedAt,
+			&cm.SourceTaskID, &cm.SourceTaskTitle,
 		); err != nil {
 			continue
 		}

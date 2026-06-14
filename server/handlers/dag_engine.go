@@ -167,7 +167,7 @@ func (e *DAGEngine) gatherDAGTransitions(taskID string) (toUnblock []string, par
 	log.Printf("[DAGEngine] gatherDAGTransitions: querying dependents of task=%s", taskID[:8])
 
 	rows, err := e.DB.Query(
-		`SELECT td.task_id, t.workflow_id
+		`SELECT td.task_id
 		 FROM task_dependencies td
 		 JOIN tasks t ON t.id = td.task_id
 		 WHERE td.depends_on_id = $1
@@ -182,8 +182,8 @@ func (e *DAGEngine) gatherDAGTransitions(taskID string) (toUnblock []string, par
 	defer rows.Close()
 
 	for rows.Next() {
-		var dependentID, wfID string
-		if err := rows.Scan(&dependentID, &wfID); err != nil {
+		var dependentID string
+		if err := rows.Scan(&dependentID); err != nil {
 			log.Printf("[DAGEngine] Scan error: %v", err)
 			continue
 		}
@@ -200,7 +200,6 @@ func (e *DAGEngine) gatherDAGTransitions(taskID string) (toUnblock []string, par
 
 		if allDone {
 			toUnblock = append(toUnblock, dependentID)
-			_ = wfID
 		}
 	}
 	if err := rows.Err(); err != nil {
