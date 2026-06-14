@@ -16,6 +16,32 @@ import (
 	"github.com/coaether/server/models"
 )
 
+// FlexibleStringSlice unmarshals a JSON array that may contain either strings or numbers.
+// LLMs frequently send depends_on as integer indices [0, 1] even when the schema says strings.
+type FlexibleStringSlice []string
+
+func (f *FlexibleStringSlice) UnmarshalJSON(data []byte) error {
+	var raw []json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	result := make([]string, 0, len(raw))
+	for _, r := range raw {
+		var s string
+		if err := json.Unmarshal(r, &s); err != nil {
+			// Try as number
+			var n float64
+			if err2 := json.Unmarshal(r, &n); err2 != nil {
+				return fmt.Errorf("cannot unmarshal %s as string or number: %w", string(r), err)
+			}
+			s = fmt.Sprintf("%.0f", n)
+		}
+		result = append(result, s)
+	}
+	*f = result
+	return nil
+}
+
 // WorkflowHandler manages workflows and their tasks.
 type WorkflowHandler struct {
 	DB         *sql.DB
@@ -321,13 +347,13 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 	harness.RegisterExecutor(harness.ToolProposeDecompositionPlan, func(ctx *harness.AgentContext, params json.RawMessage) (interface{}, error) {
 		var p struct {
 			Items   []struct {
-				Title              string   `json:"title"`
-				Description        string   `json:"description"`
-				DependsOn          []string `json:"depends_on"`
-				ParallelGroup      string   `json:"parallel_group"`
-				AssigneeID         string   `json:"assignee_id"`
-				AssigneeType       string   `json:"assignee_type"`
-				CompletionBehavior string   `json:"completion_behavior"`
+				Title              string              `json:"title"`
+				Description        string              `json:"description"`
+				DependsOn          FlexibleStringSlice `json:"depends_on"`
+				ParallelGroup      string              `json:"parallel_group"`
+				AssigneeID         string              `json:"assignee_id"`
+				AssigneeType       string              `json:"assignee_type"`
+				CompletionBehavior string              `json:"completion_behavior"`
 			} `json:"items"`
 			Summary string `json:"summary"`
 		}
@@ -435,13 +461,13 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 
 	harness.RegisterExecutor(harness.ToolCreateSubTask, func(ctx *harness.AgentContext, params json.RawMessage) (interface{}, error) {
 		var p struct {
-			Title              string   `json:"title"`
-			Description        string   `json:"description"`
-			DependsOn          []string `json:"depends_on"`
-			ParallelGroup      string   `json:"parallel_group"`
-			AssigneeID         string   `json:"assignee_id"`
-			AssigneeType       string   `json:"assignee_type"`
-			CompletionBehavior string   `json:"completion_behavior"`
+			Title              string              `json:"title"`
+			Description        string              `json:"description"`
+			DependsOn          FlexibleStringSlice `json:"depends_on"`
+			ParallelGroup      string              `json:"parallel_group"`
+			AssigneeID         string              `json:"assignee_id"`
+			AssigneeType       string              `json:"assignee_type"`
+			CompletionBehavior string              `json:"completion_behavior"`
 		}
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, fmt.Errorf("invalid params: %w", err)
