@@ -185,8 +185,8 @@ func (h *AgentScheduler) AutoAssign(c *gin.Context) {
 		h.Hub.SignalChange("task_agent_queue")
 	}
 
-	// Trigger auto-processing (create session and deliver to runtime)
-	go h.processAgentTask(taskID, agentID, queueID)
+	// Queue entry created; runtime queue poller will pick it up naturally.
+	// No need to auto-create a session — the poller runs every 15s.
 }
 
 // Claim marks a queue item as claimed by an agent.

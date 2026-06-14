@@ -252,15 +252,27 @@ func (h *NodeAgentHandler) UpdateQueueStatus(c *gin.Context) {
 					goto afterStatusUpdate
 				}
 
-				// Delegate to TaskService for complete orchestration
-				opts := TransitionOpts{
-					AgentProfileID: agentProfileID,
-					ActorID:        auth.UserID,
-					ResultSummary:  req.ResultSummary,
-					QueueID:        queueID,
+				// Check if this is a conversational agent (multi-round).
+				// Their sessions end after each round but the task stays in_progress
+				// until the agent explicitly calls update_task_status.
+				// Use agent profile ID to be immune to renames.
+				conversationalAgentIDs := map[string]bool{
+					"7ca861c3-664b-4026-84f9-e4706a4701cd": true, // 产品需求挖掘经理
 				}
-				if err := h.TaskService.MarkCompleted(taskID, opts); err != nil {
-					log.Printf("[NodeAgent] MarkCompleted failed: %v", err)
+				skipAutoComplete := conversationalAgentIDs[agentProfileID]
+
+				if !skipAutoComplete {
+					opts := TransitionOpts{
+						AgentProfileID: agentProfileID,
+						ActorID:        auth.UserID,
+						ResultSummary:  req.ResultSummary,
+						QueueID:        queueID,
+					}
+					if err := h.TaskService.MarkCompleted(taskID, opts); err != nil {
+						log.Printf("[NodeAgent] MarkCompleted failed: %v", err)
+					}
+				} else {
+					log.Printf("[NodeAgent] Skipping auto-complete for conversational agent %s on task %s", agentProfileID[:8], taskID[:8])
 				}
 
 				// If task was routed to review and has a different assignee agent, trigger review queue

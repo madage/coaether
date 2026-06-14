@@ -824,6 +824,40 @@ func Migrate() error {
 
 
 
+	// Clean up stale queue entries whose sessions have already failed
+	// (prevents load counter leaks when server restarts mid-session)
+	staleQueue, err := DB.Exec(
+		`UPDATE task_agent_queue SET status = 'failed', completed_at = NOW()
+		 WHERE status IN ('claimed', 'processing')
+		 AND id IN (
+			 SELECT q.id FROM task_agent_queue q
+			 LEFT JOIN sessions s ON s.queue_id = q.id
+			 WHERE q.status IN ('claimed', 'processing')
+			 AND (s.id IS NULL OR s.status IN ('failed', 'crashed'))
+		 )`,
+	)
+	if err != nil {
+		log.Printf("[DB] Stale queue cleanup warning: %v", err)
+	} else {
+		if n, _ := staleQueue.RowsAffected(); n > 0 {
+			log.Printf("[DB] Marked %d stale queue entry(s) as failed (session mismatch)", n)
+		}
+	}
+
+	// Recalculate agent current_load from actual active queue entries
+	_, err = DB.Exec(
+		`UPDATE agent_profiles SET current_load = (
+			 SELECT COUNT(*) FROM task_agent_queue q
+			 WHERE q.agent_profile_id = agent_profiles.id
+			 AND q.status IN ('queued', 'claimed', 'processing')
+		 )`,
+	)
+	if err != nil {
+		log.Printf("[DB] Load recalculation warning: %v", err)
+	} else {
+		log.Printf("[DB] Agent current_load recalculated")
+	}
+
 	// Expire old pending invitations
 
 	DB.Exec(`UPDATE pending_invitations SET status = 'expired' WHERE status = 'pending' AND expires_at < NOW()`)

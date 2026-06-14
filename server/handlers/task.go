@@ -317,8 +317,7 @@ func (h *TaskHandler) autoAssignTask(taskID, workspaceID string) {
 		h.Hub.SignalChange("task_agent_queue")
 	}
 
-	// Auto-process: create session and send task to the runtime
-	h.processAgentTask(taskID, agentID, queueID)
+		// Queue entry created; runtime queue poller will pick it up naturally.
 }
 
 func (h *TaskHandler) processAgentTask(taskID, agentProfileID, queueID string) {
