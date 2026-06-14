@@ -309,7 +309,23 @@ func (s *TaskService) handleInProgressToReview(taskID string, snap taskSnapshot,
 		}
 	}
 
-	// 2. Completion-behavior-specific review setup
+	// 2. Record the review submission in task_reviews so the UI can display it.
+	// Agents may trigger review via update_task_status without calling review_task directly.
+	if opts.AgentProfileID != "" {
+		reviewID := uuid.New().String()
+		now := time.Now()
+		comment := opts.Comment
+		if comment == "" {
+			comment = opts.ResultSummary
+		}
+		s.DB.Exec(
+			`INSERT INTO task_reviews (id, task_id, reviewer_agent_id, action, comment, loop_count, created_at)
+			 VALUES ($1, $2, $3, 'submitted', $4, $5, $6)`,
+			reviewID, taskID, opts.AgentProfileID, comment, snap.AgentLoopCount+1, now,
+		)
+	}
+
+	// 3. Completion-behavior-specific review setup
 	hasPendingPlan := s.hasPendingDecompositionPlan(taskID)
 	if hasPendingPlan && opts.AgentProfileID != "" {
 		var creatorID, taskTitle string
@@ -327,17 +343,17 @@ func (s *TaskService) handleInProgressToReview(taskID string, snap taskSnapshot,
 		}
 	}
 
-	// 3. If auto_review with agent assignee, create review queue for the agent
+	// 4. If auto_review with agent assignee, create review queue for the agent
 	if snap.CompletionBehavior == models.CompletionAutoReview && snap.AssigneeType == "agent_profile" && snap.AssigneeID != "" && s.Reviewer != nil {
 		s.Reviewer.createReviewQueue(taskID, snap.AssigneeID, snap.WorkflowID)
 	}
 
-	// 4. Notify workspace about review needed
+	// 5. Notify workspace about review needed
 	if s.Reviewer != nil {
 		s.Reviewer.notifyWorkspace(taskID, "task_needs_review", "任务等待审核")
 	}
 
-	// 5. DAG advancement via unified scheduler (work product is ready even though review is pending)
+	// 6. DAG advancement via unified scheduler (work product is ready even though review is pending)
 	if s.Scheduler != nil {
 		s.Scheduler.Trigger(TriggerRequest{
 			Source:     TriggerDAGComplete,
@@ -347,7 +363,7 @@ func (s *TaskService) handleInProgressToReview(taskID string, snap taskSnapshot,
 		s.DAGEngine.OnTaskCompleted(taskID)
 	}
 
-	// 6. Rule engine
+	// 7. Rule engine
 	if s.RuleEngine != nil {
 		s.RuleEngine.Evaluate("on_status_change", taskID, ExtractTaskContext(taskID, snap.Title, snap.AssigneeID, snap.AssigneeType))
 	}
