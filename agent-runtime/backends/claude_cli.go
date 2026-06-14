@@ -27,10 +27,11 @@ type ClaudeCLIBackend struct {
 	sessions      map[string]*claudeSession
 	sendFunc      func(*protocol.Envelope)
 	onComplete    OnSessionComplete
-	serverURL     string
-	nodeID        string
-	nodeSecret    string
+	serverURL      string
+	nodeID         string
+	nodeSecret     string
 	mcpServerPath  string
+	maxTurns       int               // --max-turns for Claude CLI sessions (0 = default 100)
 	resumeSessions map[string]string // workspaceKey → last claudeSessionID for --resume
 	mu             sync.Mutex
 }
@@ -120,7 +121,6 @@ func (b *ClaudeCLIBackend) HandleMessage(env *protocol.Envelope) (*protocol.Enve
 		taskID, _ := getMetaStr(env.Payload.Metadata, "task_id")
 		queueID, _ := getMetaStr(env.Payload.Metadata, "queue_id")
 		profileID, _ := getMetaStr(env.Payload.Metadata, "agent_profile_id")
-		conversationHistory, _ := getMetaStr(env.Payload.Metadata, "conversation_history")
 
 		// Compute workspace key and lookup --resume session while holding b.mu
 		var wsKey string
@@ -131,7 +131,7 @@ func (b *ClaudeCLIBackend) HandleMessage(env *protocol.Envelope) (*protocol.Enve
 		}
 		prevClaudeID := b.resumeSessions[wsKey]
 
-		sess = b.startSession(sessionID, taskID, queueID, profileID, wsKey, prevClaudeID, conversationHistory)
+		sess = b.startSession(sessionID, taskID, queueID, profileID, wsKey, prevClaudeID)
 		if sess == nil {
 			b.mu.Unlock()
 			return protocol.NewEnvelope("", "", protocol.MsgError,
@@ -187,15 +187,23 @@ type assistantContentBlock struct {
 
 // ---- session lifecycle ----
 
-func (b *ClaudeCLIBackend) startSession(sessionID, taskID, queueID, profileID, wsKey, prevClaudeID, conversationHistory string) *claudeSession {
+func (b *ClaudeCLIBackend) startSession(sessionID, taskID, queueID, profileID, wsKey, prevClaudeID string) *claudeSession {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	args := []string{
+		"-p",
 		"--output-format", "stream-json",
 		"--input-format", "stream-json",
-		"--dangerously-skip-permissions",
 		"--verbose",
+		"--permission-mode", "bypassPermissions",
+		"--disallowedTools", "AskUserQuestion",
 	}
+
+	maxTurns := b.maxTurns
+	if maxTurns <= 0 {
+		maxTurns = 100
+	}
+	args = append(args, "--max-turns", fmt.Sprintf("%d", maxTurns))
 
 	// Resume previous Claude session for the same task+agent if available
 	if prevClaudeID != "" {
@@ -204,6 +212,7 @@ func (b *ClaudeCLIBackend) startSession(sessionID, taskID, queueID, profileID, w
 	}
 
 	cmd := exec.CommandContext(ctx, b.command, args...)
+	cmd.Env = filterClaudeEnv(os.Environ())
 	wsDir := filepath.Join("workspaces", wsKey)
 	if err := os.MkdirAll(wsDir, 0755); err != nil {
 		log.Printf("[ClaudeCLI] Failed to create workspace %s: %v", wsDir, err)
@@ -236,15 +245,6 @@ func (b *ClaudeCLIBackend) startSession(sessionID, taskID, queueID, profileID, w
 			}
 		}
 
-		// Write conversation.md so the agent can read prior conversation history
-		if conversationHistory != "" {
-			convPath := filepath.Join(wsDir, "conversation.md")
-			if err := os.WriteFile(convPath, []byte(conversationHistory), 0644); err != nil {
-				log.Printf("[ClaudeCLI] Failed to write conversation.md: %v", err)
-			} else {
-				log.Printf("[ClaudeCLI] Wrote conversation.md (%d bytes) for session %s", len(conversationHistory), sessionID[:8])
-			}
-		}
 	}
 
 	stdin, err := cmd.StdinPipe()
@@ -306,6 +306,15 @@ func (b *ClaudeCLIBackend) startSession(sessionID, taskID, queueID, profileID, w
 	go func() {
 		cmd.Wait()
 		log.Printf("[ClaudeCLI] Process exited for session %s (pid=%d)", sid, cmd.Process.Pid)
+		// Clean up session map if still present (may already be cleaned by readStdout)
+		b.mu.Lock()
+		if _, exists := b.sessions[sess.sessionID]; exists {
+			if !sess.isCompleted() && b.onComplete != nil {
+				b.onComplete(sess.sessionID, "", "crash", true)
+			}
+			delete(b.sessions, sess.sessionID)
+		}
+		b.mu.Unlock()
 	}()
 
 	return sess
@@ -344,7 +353,7 @@ func (b *ClaudeCLIBackend) readStdout(sess *claudeSession, stdout io.Reader) {
 		case "permission":
 			b.handlePermissionEvent(sess, &evt)
 		case "control_request":
-			b.handleControlRequest(sess, line)
+			b.handleControlRequestAuto(sess, line)
 		case "user":
 			b.handleUserEvent(sess, line)
 		default:
@@ -361,6 +370,10 @@ func (b *ClaudeCLIBackend) readStdout(sess *claudeSession, stdout io.Reader) {
 		log.Printf("[ClaudeCLI][%s] Session ended without result event", sid)
 		b.onComplete(sess.sessionID, "", "error", true)
 	}
+
+	b.mu.Lock()
+	delete(b.sessions, sess.sessionID)
+	b.mu.Unlock()
 }
 
 // ---- event handlers ----
@@ -519,86 +532,66 @@ func (b *ClaudeCLIBackend) handlePermissionEvent(sess *claudeSession, evt *strea
 }
 
 
-func (b *ClaudeCLIBackend) handleControlRequest(sess *claudeSession, rawLine string) {
+// handleControlRequestAuto auto-approves all control_request events from Claude Code
+// in daemon mode. With --permission-mode bypassPermissions, Claude Code auto-approves
+// most tool calls internally, but certain boundary cases still emit control_request and
+// require an explicit control_response on stdin. Without this handler the session would
+// stall indefinitely. Pattern matches Multica's approach: parse request_id + input,
+// respond with behavior="allow".
+func (b *ClaudeCLIBackend) handleControlRequestAuto(sess *claudeSession, rawLine string) {
 	var raw struct {
-		RequestID string `json:"request_id"`
-		Request   struct {
-			Subtype     string `json:"subtype"`
-			ToolName    string `json:"tool_name"`
-			DisplayName string `json:"display_name"`
-			Input       any    `json:"input"`
-			Description string `json:"description"`
-		} `json:"request"`
+		RequestID string          `json:"request_id"`
+		Request   json.RawMessage `json:"request"`
 	}
 	if err := json.Unmarshal([]byte(rawLine), &raw); err != nil {
-		log.Printf("[ClaudeCLI][%s] ControlRequest parse error: %v", sess.sessionID, err)
-		b.handleControlRequestGeneric(sess, rawLine)
+		log.Printf("[ClaudeCLI][%s] ControlRequest parse error, cannot respond: %v", sess.sessionID[:8], err)
+		return
+	}
+	if raw.RequestID == "" {
 		return
 	}
 
-	if raw.Request.Subtype != "can_use_tool" {
-		shortID := sess.sessionID
-		if len(shortID) > 8 {
-			shortID = shortID[:8]
-		}
-		log.Printf("[ClaudeCLI][%s] Unhandled control_request subtype: %s", shortID, raw.Request.Subtype)
-		return
+	// Extract tool name and input for logging
+	var reqPayload struct {
+		Subtype  string `json:"subtype"`
+		ToolName string `json:"tool_name"`
+		Input    any    `json:"input"`
 	}
+	_ = json.Unmarshal(raw.Request, &reqPayload)
 
-	inputStr := ""
-	if raw.Request.Input != nil {
-		b, _ := json.Marshal(raw.Request.Input)
-		inputStr = string(b)
-	}
-
-	shortID := sess.sessionID
-	if len(shortID) > 8 {
-		shortID = shortID[:8]
-	}
-	log.Printf("[ClaudeCLI][%s] ControlRequest: tool=%s id=%s input=%s", shortID, raw.Request.ToolName, raw.RequestID, truncate(inputStr, 100))
-
-	log.Printf("[ClaudeCLI][%s] Forwarding permission request: %s (id=%s)", shortID, raw.Request.ToolName, raw.RequestID)
-	b.sendToBus(protocol.NewEnvelope("", sessionTo(sess.sessionID), protocol.MsgPermissionRequest,
-		&protocol.Payload{
-			ToolUseID: raw.RequestID,
-			Tool:      raw.Request.ToolName,
-			Input:     inputStr,
-			Message:   raw.Request.Description,
-		}).WithSession(sess.sessionID))
-}
-
-func (b *ClaudeCLIBackend) handleControlRequestGeneric(sess *claudeSession, rawLine string) {
-	var raw map[string]any
-	if err := json.Unmarshal([]byte(rawLine), &raw); err != nil {
-		return
-	}
-
-	requestID := getStr(raw, "request_id")
-	if requestID == "" {
-		return
-	}
-
-	var toolName string
-	if req, ok := raw["request"].(map[string]any); ok {
-		toolName = getStr(req, "tool_name")
-		if toolName == "" {
-			toolName = getStr(req, "name")
+	var inputMap map[string]any
+	if reqPayload.Input != nil {
+		if m, ok := reqPayload.Input.(map[string]any); ok {
+			inputMap = m
 		}
 	}
-
-	log.Printf("[ClaudeCLI] Auto-approving (generic): %s (id=%s)", toolName, requestID)
-	jsonMsg := fmt.Sprintf(`{"type":"control_response","request_id":%s,"response":{"approved":true}}`,
-		jsonEscape(requestID))
-	if _, err := io.WriteString(sess.stdin, jsonMsg+"\n"); err != nil {
-		log.Printf("[ClaudeCLI] Control response write error (generic): %v", err)
+	if inputMap == nil {
+		inputMap = map[string]any{}
 	}
-	b.sendToBus(protocol.NewEnvelope("", sessionTo(sess.sessionID), protocol.MsgPermissionRequest,
-		&protocol.Payload{
-			ToolUseID: requestID,
-			Tool:      toolName,
-			Input:     "",
-			Message:   "Allow this tool call?",
-		}).WithSession(sess.sessionID))
+
+	shortID := sess.sessionID[:8]
+	log.Printf("[ClaudeCLI][%s] Auto-approving control_request: tool=%s subtype=%s id=%s",
+		shortID, reqPayload.ToolName, reqPayload.Subtype, raw.RequestID)
+
+	response := map[string]any{
+		"type": "control_response",
+		"response": map[string]any{
+			"subtype":    "success",
+			"request_id": raw.RequestID,
+			"response": map[string]any{
+				"behavior":     "allow",
+				"updatedInput": inputMap,
+			},
+		},
+	}
+	data, err := json.Marshal(response)
+	if err != nil {
+		log.Printf("[ClaudeCLI][%s] Control response marshal error: %v", shortID, err)
+		return
+	}
+	if _, err := io.WriteString(sess.stdin, string(data)+"\n"); err != nil {
+		log.Printf("[ClaudeCLI][%s] Control response write error: %v", shortID, err)
+	}
 }
 
 func (b *ClaudeCLIBackend) handleUserEvent(sess *claudeSession, rawLine string) {
@@ -784,12 +777,15 @@ func (b *ClaudeCLIBackend) Evaluate(prompt string) (string, error) {
 	defer cancel()
 
 	args := []string{
+		"-p",
 		"--output-format", "stream-json",
 		"--input-format", "stream-json",
-		"--dangerously-skip-permissions",
 		"--verbose",
+		"--permission-mode", "bypassPermissions",
+		"--max-turns", "1",
 	}
 	cmd := exec.CommandContext(ctx, b.command, args...)
+	cmd.Env = filterClaudeEnv(os.Environ())
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -799,10 +795,25 @@ func (b *ClaudeCLIBackend) Evaluate(prompt string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("stdout pipe: %w", err)
 	}
+	var stderrBuf strings.Builder
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return "", fmt.Errorf("stderr pipe: %w", err)
+	}
 
 	if err := cmd.Start(); err != nil {
 		return "", fmt.Errorf("start: %w", err)
 	}
+
+	// Drain stderr in background
+	go func() {
+		bufio.NewScanner(stderr)
+		sc := bufio.NewScanner(stderr)
+		for sc.Scan() {
+			stderrBuf.WriteString(sc.Text())
+			stderrBuf.WriteByte('\n')
+		}
+	}()
 
 	// Send the evaluation prompt
 	msg := fmt.Sprintf(`{"type":"user","message":{"role":"user","content":%s}}`, jsonEscape(prompt))
@@ -856,7 +867,15 @@ func (b *ClaudeCLIBackend) Evaluate(prompt string) (string, error) {
 
 	result := strings.TrimSpace(responseText.String())
 	if result == "" {
-		return "", fmt.Errorf("no response from claude")
+		errMsg := "no response from claude"
+		if stderrStr := strings.TrimSpace(stderrBuf.String()); stderrStr != "" {
+			const maxTail = 1024
+			if len(stderrStr) > maxTail {
+				stderrStr = stderrStr[len(stderrStr)-maxTail:]
+			}
+			errMsg = fmt.Sprintf("%s (stderr: %s)", errMsg, stderrStr)
+		}
+		return "", fmt.Errorf(errMsg)
 	}
 	return result, nil
 }
@@ -891,9 +910,8 @@ func (b *ClaudeCLIBackend) CloseSession(sessionID string) {
 
 func (b *ClaudeCLIBackend) CleanIdleSessions() {
 	b.mu.Lock()
-	defer b.mu.Unlock()
-
 	now := time.Now()
+	var timedOut []*claudeSession
 	for id, sess := range b.sessions {
 		sess.mu.Lock()
 		idle := now.Sub(sess.lastActivity)
@@ -908,8 +926,29 @@ func (b *ClaudeCLIBackend) CleanIdleSessions() {
 			if sess.cancel != nil {
 				sess.cancel()
 			}
+			timedOut = append(timedOut, sess)
 			delete(b.sessions, id)
 		}
+	}
+	b.mu.Unlock()
+
+	// Notify outside the lock to avoid deadlock
+	for _, sess := range timedOut {
+		if !sess.isCompleted() && b.onComplete != nil {
+			b.onComplete(sess.sessionID, "", "timeout", true)
+		}
+	}
+}
+
+// Shutdown cancels all active sessions. Called during runtime graceful shutdown.
+func (b *ClaudeCLIBackend) Shutdown() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for id, sess := range b.sessions {
+		if sess.cancel != nil {
+			sess.cancel()
+		}
+		delete(b.sessions, id)
 	}
 }
 
@@ -976,4 +1015,32 @@ func escJSON(s string) string {
 	s = strings.ReplaceAll(s, "\r", `\r`)
 	s = strings.ReplaceAll(s, "\t", `\t`)
 	return s
+}
+
+// filterClaudeEnv removes internal Claude Code runtime markers from the
+// environment so the child process does not mistake itself for a nested or
+// resumed session, or inherit the parent's transport configuration.
+// The public CLAUDE_CODE_* config namespace is preserved (users set those
+// deliberately). Only undocumented per-process markers are stripped.
+func filterClaudeEnv(base []string) []string {
+	out := make([]string, 0, len(base))
+	for _, entry := range base {
+		key := entry
+		if idx := strings.Index(entry, "="); idx >= 0 {
+			key = entry[:idx]
+		}
+		switch key {
+		case "CLAUDECODE", // "1" when running inside Claude Code
+			"CLAUDE_CODE_ENTRYPOINT", // entrypoint marker (cli/sdk-cli/...)
+			"CLAUDE_CODE_EXECPATH",   // path to the running CLI binary
+			"CLAUDE_CODE_SESSION_ID", // per-session identifier
+			"CLAUDE_CODE_SSE_PORT":   // IDE-extension transport port
+			continue
+		}
+		if strings.HasPrefix(key, "CLAUDECODE_") {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out
 }

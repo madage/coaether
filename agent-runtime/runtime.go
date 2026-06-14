@@ -626,6 +626,11 @@ func (r *Runtime) Shutdown() {
 	}
 	r.connMu.Unlock()
 
+	// Terminate all active Claude sessions cleanly
+	if cli, ok := r.backends["claude"].(*backends.ClaudeCLIBackend); ok {
+		cli.Shutdown()
+	}
+
 	log.Println("[Runtime] Shutdown complete")
 }
 
