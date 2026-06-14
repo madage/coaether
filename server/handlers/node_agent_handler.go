@@ -382,15 +382,12 @@ func (h *NodeAgentHandler) CreateSession(c *gin.Context) {
 		agentID = "claude"
 	}
 
-	// Fetch agent capabilities to determine if this is a decomposition or execution agent
-	var capsJSON, agentSysPrompt, agentInstructions string
-	isDecomposer := false
+	// Fetch agent profile
+	var agentSysPrompt, agentInstructions, agentName string
 	if agentID != "claude" && agentID != "echo" {
 		h.DB.QueryRow(
-			`SELECT COALESCE(capabilities::text,'[]'), COALESCE(system_prompt,''), COALESCE(instructions,'')
-			 FROM agent_profiles WHERE id = $1`, agentID,
-		).Scan(&capsJSON, &agentSysPrompt, &agentInstructions)
-		isDecomposer = strings.Contains(capsJSON, "propose_decomposition_plan")
+			`SELECT COALESCE(system_prompt,''), COALESCE(instructions,''), COALESCE(name,'') FROM agent_profiles WHERE id = $1`, agentID,
+		).Scan(&agentSysPrompt, &agentInstructions, &agentName)
 	}
 
 	// Check if this is a resume session (agent already has comments on this task).
@@ -437,7 +434,11 @@ func (h *NodeAgentHandler) CreateSession(c *gin.Context) {
 
 					source := "用户"
 					if isSelf {
-						source = "我（需求受理师）"
+						if agentName != "" {
+							source = "我（" + agentName + "）"
+						} else {
+							source = "我（需求受理师）"
+						}
 					} else if isAgent && agentName != "" {
 						source = agentName
 					} else if userName != "" {
@@ -463,71 +464,35 @@ func (h *NodeAgentHandler) CreateSession(c *gin.Context) {
 		}
 		prompt = fmt.Sprintf("（继续第 %d 轮对话。%s%s\n\n请参考上面的对话历史和角色规则。不要重复已经问过且已得到明确回答的问题。如果关键信息已经足够，考虑输出需求摘要结束对话。）", agentCommentCount+1, sysPromptSection, conversationHistory)
 	} else {
-	if isDecomposer {
-		// Fetch available agent profiles for the workspace
-			agentRows, _ := h.DB.Query(
-				`SELECT id, name, COALESCE(description, '') FROM agent_profiles WHERE enabled = true
-				 AND workspace_id = (SELECT workspace_id FROM tasks WHERE id = $1) ORDER BY name`,
-				req.TaskID,
-			)
-			var agentList string
-			if agentRows != nil {
-				var agents []string
-				for agentRows.Next() {
-					var id, name, desc string
-					if err := agentRows.Scan(&id, &name, &desc); err == nil {
-						short := id
-						if len(desc) > 60 {
-							desc = desc[:60] + "..."
-						}
-						agents = append(agents, fmt.Sprintf("  - %s (%s): %s", name, short, desc))
+		// Fetch available agent profiles for the workspace (context for all agents)
+		agentRows, _ := h.DB.Query(
+			`SELECT id, name, COALESCE(description, '') FROM agent_profiles WHERE enabled = true
+			 AND workspace_id = (SELECT workspace_id FROM tasks WHERE id = $1) ORDER BY name`,
+			req.TaskID,
+		)
+		var agentList string
+		if agentRows != nil {
+			var agents []string
+			for agentRows.Next() {
+				var id, name, desc string
+				if err := agentRows.Scan(&id, &name, &desc); err == nil {
+					if len(desc) > 60 {
+						desc = desc[:60] + "..."
 					}
-				}
-				agentRows.Close()
-				if len(agents) > 0 {
-					agentList = "\nAvailable agents to assign sub-tasks to:\n" + strings.Join(agents, "\n")
+					agents = append(agents, fmt.Sprintf("  - %s (%s): %s", name, id, desc))
 				}
 			}
-
-			prompt = fmt.Sprintf(`Task ID: %s
-Title: %s
-
-Description: %s
-
-## Your Role
-
-You are a task-decomposition agent. Your ONLY job is to break down this task into sub-tasks and assign them to appropriate agents. You MUST NOT attempt to do the work yourself. Do NOT research, analyze, or produce content — only decompose and assign.
-
-## How It Works
-
-1. Analyze the task and decide how to split it into manageable sub-tasks
-2. Call mcp__coaether-harness__propose_decomposition_plan ONCE with ALL sub-tasks as an items array:
-   - Each item must have: title, description, assignee_id, assignee_type="agent_profile"
-   - Optional: depends_on (array of other item indices/groups), parallel_group, completion_behavior
-3. Add a summary explaining your decomposition strategy
-4. The system will present your plan to the user for human review with per-task checkboxes
-5. After a human approves (per-item or all), the system creates sub-tasks automatically
-6. DO NOT call create_sub_task - your capabilities do not include this tool, calls will be DENIED
-
-## CRITICAL RULES
-
-- Call propose_decomposition_plan ONCE with ALL sub-tasks in the items array
-- Every item MUST include assignee_id AND assignee_type="agent_profile"
-- DO NOT call create_sub_task - your capabilities do not include this tool, calls will be DENIED
-- Do NOT use WebSearch, codegraph, or any research tools — you decompose, you do NOT execute
-- Do NOT attempt to answer the task question yourself
-- Do NOT use filesystem, shell, or code execution tools
-- Use ONLY mcp__coaether-harness__ tools: propose_decomposition_plan, list_sub_tasks, add_comment, get_task_detail
-- If you do not know which agent to assign, use get_task_detail to inspect the task further%s`,
-				req.TaskID, title, description, agentList)
-	} else {
-		if agentSysPrompt != "" {
-			prompt = fmt.Sprintf("SYSTEM: %s\n\nTask ID: %s\nTitle: %s\n\nDescription: %s\n\n## Your Role\n\nYou are an execution agent. Complete this task directly using your available tools.\n\n## Instructions\n\n%s\n\n## CRITICAL RULES\n\n- Do NOT call propose_decomposition_plan or create_sub_task — you execute, you do NOT decompose\n- Complete the task described above using the appropriate tools available to you\n- Report your results clearly when done\n- Use harness tools (mcp__coaether-harness__ prefix) for task management: add_comment, get_task_detail, update_task_status\n- add_comment MUST be called at most ONCE per round. Put ALL your content into a SINGLE add_comment call. After calling add_comment, STOP — do not post any follow-up comments, summaries, or confirmations.", agentSysPrompt, req.TaskID, title, description, agentInstructions)
-		} else {
-			prompt = fmt.Sprintf("Task ID: %s\nTitle: %s\n\nDescription: %s\n\n## Your Role\n\nYou are an execution agent. Complete this task directly using your available tools.\n\n## CRITICAL RULES\n\n- Do NOT call propose_decomposition_plan or create_sub_task — you execute, you do NOT decompose\n- Complete the task described above using the appropriate tools available to you\n- Report your results clearly when done\n- Use harness tools (mcp__coaether-harness__ prefix) for task management: add_comment, get_task_detail, update_task_status\n- add_comment MUST be called at most ONCE per round. Put ALL your content into a SINGLE add_comment call. After calling add_comment, STOP — do not post any follow-up comments, summaries, or confirmations.", req.TaskID, title, description)
+			agentRows.Close()
+			if len(agents) > 0 {
+				agentList = "\n\n## 工作区可用智能体\n" + strings.Join(agents, "\n")
+			}
 		}
 
-	}
+		if agentSysPrompt != "" {
+			prompt = fmt.Sprintf("SYSTEM: %s\n\n## 行为指令\n\n%s\n\nTask ID: %s\nTitle: %s\n\nDescription: %s\n\n%s\n\n## 通用规则\n\n- 严格遵循上面 SYSTEM 中定义的角色和职责\n- 使用 mcp__coaether-harness__ 前缀的工具进行任务管理\n- add_comment 每轮最多调用一次，将全部内容合并到单次调用中。调用后立即停止，不要发确认或总结\n- 禁止向用户输出内部推理、工具调用状态、思考过程", agentSysPrompt, agentInstructions, req.TaskID, title, description, agentList)
+		} else {
+			prompt = fmt.Sprintf("Task ID: %s\nTitle: %s\n\nDescription: %s\n\n%s\n\n## 通用规则\n\n- 使用 mcp__coaether-harness__ 前缀的工具进行任务管理\n- add_comment 每轮最多调用一次，调用后立即停止\n- 禁止输出内部推理、工具调用状态、思考过程", req.TaskID, title, description, agentList)
+		}
 	}
 
 	// --- 前情提要: inject task context for retry sessions ---
