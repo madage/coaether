@@ -165,12 +165,6 @@ func (e *DAGEngine) gatherDAGTransitions(taskID string) (toUnblock []string, par
 
 	// Find all tasks that depend on this task
 	log.Printf("[DAGEngine] gatherDAGTransitions: querying dependents of task=%s", taskID[:8])
-		log.Printf("[DAGEngine] gatherDAGTransitions: querying dependents of task=%s", taskID[:8])
-
-		// Debug: COUNT first
-		var cnt int
-		e.DB.QueryRow(`SELECT COUNT(*) FROM task_dependencies td JOIN tasks t ON t.id = td.task_id WHERE td.depends_on_id = $1 AND t.deleted_at IS NULL AND t.status = 'blocked'`, taskID).Scan(&cnt)
-		log.Printf("[DAGEngine] gatherDAGTransitions: COUNT query returned %d for task=%s", cnt, taskID[:8])
 
 	rows, err := e.DB.Query(
 		`SELECT td.task_id, t.workflow_id
@@ -187,10 +181,10 @@ func (e *DAGEngine) gatherDAGTransitions(taskID string) (toUnblock []string, par
 	}
 	defer rows.Close()
 
-	log.Printf("[DAGEngine] gatherDAGTransitions: iterating rows for task=%s", taskID[:8])
 	for rows.Next() {
 		var dependentID, wfID string
 		if err := rows.Scan(&dependentID, &wfID); err != nil {
+			log.Printf("[DAGEngine] Scan error: %v", err)
 			continue
 		}
 
@@ -205,12 +199,12 @@ func (e *DAGEngine) gatherDAGTransitions(taskID string) (toUnblock []string, par
 		).Scan(&allDone)
 
 		if allDone {
-			log.Printf("[DAGEngine] gatherDAGTransitions: unblocking dep=%s", dependentID[:8])
 			toUnblock = append(toUnblock, dependentID)
 			_ = wfID
-		} else {
-			log.Printf("[DAGEngine] gatherDAGTransitions: NOT all deps done for dep=%s", dependentID[:8])
 		}
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[DAGEngine] rows iteration error: %v", err)
 	}
 
 	log.Printf("[DAGEngine] gatherDAGTransitions: toUnblock=%d for task=%s", len(toUnblock), taskID[:8])
@@ -255,56 +249,6 @@ func (e *DAGEngine) checkParentAutoCloseLocked(taskID string, now time.Time) (st
 
 	return parentID, hasPlan
 }
-
-// tryAutoDispatchLocked creates a queue entry for an unblocked task with an agent_profile assignee.
-func (e *DAGEngine) tryAutoDispatchLocked(taskID string, now time.Time) {
-	var assigneeType, assigneeID, taskStatus string
-	err := e.DB.QueryRow(
-		`SELECT COALESCE(assignee_type,''), COALESCE(assignee_id,''), status FROM tasks WHERE id = $1 AND deleted_at IS NULL`,
-		taskID,
-	).Scan(&assigneeType, &assigneeID, &taskStatus)
-	if err != nil || assigneeType != "agent_profile" || assigneeID == "" {
-		return
-	}
-
-	// Never dispatch blocked tasks — they have unmet dependencies
-	if taskStatus == "blocked" {
-		log.Printf("[DAGEngine] Skipping dispatch of blocked task %s", taskID[:8])
-		return
-	}
-
-	// Check if already queued for this task+agent (deduplication)
-	var existingID string
-	err = e.DB.QueryRow(
-		`SELECT id FROM task_agent_queue WHERE task_id = $1 AND agent_profile_id = $2 AND status IN ('queued', 'claimed', 'processing') LIMIT 1`,
-		taskID, assigneeID,
-	).Scan(&existingID)
-	if err == nil {
-		log.Printf("[DAGEngine] Task %s already queued for agent %s (queue=%s), skipping", taskID[:8], assigneeID[:8], existingID[:8])
-		return
-	}
-
-	// Check agent capacity
-	var canProcess bool
-	e.DB.QueryRow(
-		`SELECT COALESCE(current_load, 0) < COALESCE(max_concurrency, 1) FROM agent_profiles WHERE id = $1 AND enabled = true`,
-		assigneeID,
-	).Scan(&canProcess)
-	if !canProcess {
-		return
-	}
-
-	queueID := uuid.New().String()
-	e.DB.Exec(
-		`INSERT INTO task_agent_queue (id, task_id, agent_profile_id, status, trigger_type, assigned_at, created_at)
-		 VALUES ($1, $2, $3, 'queued', 'status_change', $4, $4)`,
-		queueID, taskID, assigneeID, now,
-	)
-	e.DB.Exec(`UPDATE agent_profiles SET current_load = current_load + 1, last_active_at = $1 WHERE id = $2`,
-		now, assigneeID)
-	log.Printf("[DAGEngine] Auto-dispatched task %s to agent %s (queue=%s)", taskID[:8], assigneeID[:8], queueID[:8])
-}
-
 
 // SetTaskBlocked marks a task as blocked if it has unmet dependencies.
 func (e *DAGEngine) SetTaskBlocked(taskID string) {

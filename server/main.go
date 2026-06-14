@@ -211,6 +211,11 @@ func main() {
 	reviewRouter.TaskService = taskService
 	ruleEngine.TaskService = taskService
 
+	// TaskChainScheduler — unified dispatch for all trigger sources
+	scheduler := handlers.NewTaskChainScheduler(database.DB, messageBus, dashHub,
+		workflowH.DAGEngine, taskService, notifH)
+	taskService.Scheduler = scheduler
+
 	// Wire DAGEngine Hub for real-time updates
 	workflowH.DAGEngine.Hub = dashHub
 	reviewRouter.DAGEngine.Hub = dashHub

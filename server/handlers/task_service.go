@@ -54,6 +54,7 @@ type TaskService struct {
 	Notifier   *NotificationHandler
 	RuleEngine *RuleEngine
 	Bus        *protocol.MessageBus
+	Scheduler  *TaskChainScheduler
 }
 
 // NewTaskService creates a new TaskService.
@@ -268,17 +269,27 @@ func (s *TaskService) dispatchSideEffects(taskID, from, to string, snap taskSnap
 // handleInProgressToDone is the unified handler for in_progress → done.
 // It combines what was previously split across in_progress→completed→done (two writes).
 func (s *TaskService) handleInProgressToDone(taskID string, snap taskSnapshot, opts TransitionOpts) {
-		log.Printf("[TaskService] handleInProgressToDone: task=%s DAGEngine=%v", safe8(taskID), s.DAGEngine != nil)
 	// 1. Post agent comment if result summary provided
 	if opts.ResultSummary != "" && opts.AgentProfileID != "" {
 		s.postAgentComment(taskID, opts.AgentProfileID, opts.ResultSummary, snap.UserID)
+		// Sync to parent task if this is a sub-task
+		if snap.ParentID != "" && s.Scheduler != nil {
+			s.Scheduler.notifyParentProgress(taskID, snap.ParentID, "dag_unblock", taskID)
+		}
 	}
 
 	// 2. Process pending dispatch actions (create_sub_task, assign_task)
 	s.processPendingActions(taskID)
 
-	// 3. DAG advancement
-	s.DAGEngine.OnTaskCompleted(taskID)
+	// 3. DAG advancement via unified scheduler
+	if s.Scheduler != nil {
+		s.Scheduler.Trigger(TriggerRequest{
+			Source:     TriggerDAGComplete,
+			FromTaskID: taskID,
+		})
+	} else {
+		s.DAGEngine.OnTaskCompleted(taskID)
+	}
 
 	// 4. Rule engine
 	if s.RuleEngine != nil {
@@ -289,10 +300,13 @@ func (s *TaskService) handleInProgressToDone(taskID string, snap taskSnapshot, o
 // handleInProgressToReview is the unified handler for in_progress → review.
 // It combines what was previously split across in_progress→completed→review (two writes).
 func (s *TaskService) handleInProgressToReview(taskID string, snap taskSnapshot, opts TransitionOpts) {
-		log.Printf("[TaskService] handleInProgressToReview: task=%s DAGEngine=%v", safe8(taskID), s.DAGEngine != nil)
 	// 1. Post agent comment if result summary provided
 	if opts.ResultSummary != "" && opts.AgentProfileID != "" {
 		s.postAgentComment(taskID, opts.AgentProfileID, opts.ResultSummary, snap.UserID)
+		// Sync to parent task if this is a sub-task
+		if snap.ParentID != "" && s.Scheduler != nil {
+			s.Scheduler.notifyParentProgress(taskID, snap.ParentID, "dag_unblock", taskID)
+		}
 	}
 
 	// 2. Completion-behavior-specific review setup
@@ -323,8 +337,15 @@ func (s *TaskService) handleInProgressToReview(taskID string, snap taskSnapshot,
 		s.Reviewer.notifyWorkspace(taskID, "task_needs_review", "任务等待审核")
 	}
 
-	// 5. DAG advancement (work product is ready even though review is pending)
-	s.DAGEngine.OnTaskCompleted(taskID)
+	// 5. DAG advancement via unified scheduler (work product is ready even though review is pending)
+	if s.Scheduler != nil {
+		s.Scheduler.Trigger(TriggerRequest{
+			Source:     TriggerDAGComplete,
+			FromTaskID: taskID,
+		})
+	} else {
+		s.DAGEngine.OnTaskCompleted(taskID)
+	}
 
 	// 6. Rule engine
 	if s.RuleEngine != nil {
@@ -334,7 +355,6 @@ func (s *TaskService) handleInProgressToReview(taskID string, snap taskSnapshot,
 
 func (s *TaskService) handleReviewToDone(taskID string, snap taskSnapshot, opts TransitionOpts, now time.Time) {
 	// Process pending dispatch actions
-		log.Printf("[TaskService] handleReviewToDone: task=%s DAGEngine=%v", safe8(taskID), s.DAGEngine != nil)
 	s.processPendingActions(taskID)
 
 	// Audit log
@@ -345,8 +365,15 @@ func (s *TaskService) handleReviewToDone(taskID string, snap taskSnapshot, opts 
 	}
 	s.auditReview(taskID, opts.ReviewerAgentID, action, comment)
 
-	// DAG advancement
-	s.DAGEngine.OnTaskCompleted(taskID)
+	// DAG advancement via unified scheduler
+	if s.Scheduler != nil {
+		s.Scheduler.Trigger(TriggerRequest{
+			Source:     TriggerReviewApproved,
+			FromTaskID: taskID,
+		})
+	} else {
+		s.DAGEngine.OnTaskCompleted(taskID)
+	}
 
 	// Cancel remaining active queue entries for this task and decrement agent load
 	s.DB.Exec(`UPDATE agent_profiles SET current_load = GREATEST(0, current_load - 1)
@@ -542,44 +569,17 @@ func (s *TaskService) MarkTodo(taskID string, opts TransitionOpts) error {
 
 // ========== Private helpers ==========
 
-// tryAutoDispatch queues a task to an agent if assignee is agent_profile and agent has capacity.
+// tryAutoDispatch queues a task to an agent via the unified scheduler.
 func (s *TaskService) tryAutoDispatch(taskID string, snap taskSnapshot) {
 	if snap.AssigneeType != "agent_profile" || snap.AssigneeID == "" {
 		return
 	}
-
-	// Skip if already queued
-	var existingID string
-	err := s.DB.QueryRow(
-		`SELECT id FROM task_agent_queue WHERE task_id = $1 AND agent_profile_id = $2 AND status IN ('queued', 'claimed', 'processing') LIMIT 1`,
-		taskID, snap.AssigneeID,
-	).Scan(&existingID)
-	if err == nil {
-		return
+	if s.Scheduler != nil {
+		s.Scheduler.dispatchToTask(taskID, TriggerRequest{
+			Source:     TriggerStateChange,
+			FromTaskID: taskID,
+		})
 	}
-
-	// Check if agent is enabled (capacity is validated at claim time, not dispatch time)
-	var enabled bool
-	s.DB.QueryRow(`SELECT enabled FROM agent_profiles WHERE id = $1`, snap.AssigneeID).Scan(&enabled)
-	if !enabled {
-		return
-	}
-
-	now := time.Now()
-	queueID := uuid.New().String()
-	s.DB.Exec(
-		`INSERT INTO task_agent_queue (id, task_id, agent_profile_id, status, trigger_type, assigned_at, created_at)
-		 VALUES ($1, $2, $3, 'queued', 'status_change', $4, $4)`,
-		queueID, taskID, snap.AssigneeID, now,
-	)
-	s.DB.Exec(`UPDATE agent_profiles SET current_load = current_load + 1, last_active_at = $1 WHERE id = $2`,
-		now, snap.AssigneeID)
-
-	if s.Hub != nil {
-		s.Hub.SignalChange("task_agent_queue")
-	}
-
-	log.Printf("[TaskService] Auto-dispatched task %s to agent %s (queue=%s)", safe8(taskID), safe8(snap.AssigneeID), safe8(queueID))
 }
 
 // processPendingActions releases gated sub-tasks and assignments when review is approved.

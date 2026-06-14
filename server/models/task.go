@@ -113,18 +113,20 @@ type TaskTag struct {
 }
 
 type TaskComment struct {
-	ID            string     `json:"id"`
-	TaskID        string     `json:"task_id"`
-	UserID        string     `json:"user_id"`
-	Username      string     `json:"username"`
-	AgentProfileID *string   `json:"agent_profile_id,omitempty"`
-	AgentName     string     `json:"agent_name,omitempty"`
-	AgentAvatar   string     `json:"agent_avatar,omitempty"`
-	Content       string     `json:"content"`
-	ParentID      *string    `json:"parent_id,omitempty"`
-	IsAgentComment bool      `json:"is_agent_comment"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
+	ID              string     `json:"id"`
+	TaskID          string     `json:"task_id"`
+	UserID          string     `json:"user_id"`
+	Username        string     `json:"username"`
+	AgentProfileID  *string    `json:"agent_profile_id,omitempty"`
+	AgentName       string     `json:"agent_name,omitempty"`
+	AgentAvatar     string     `json:"agent_avatar,omitempty"`
+	Content         string     `json:"content"`
+	ParentID        *string    `json:"parent_id,omitempty"`
+	IsAgentComment  bool       `json:"is_agent_comment"`
+	SourceTaskID    string     `json:"source_task_id,omitempty"`
+	SourceTaskTitle string     `json:"source_task_title,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
 }
 
 type CreateCommentReq struct {

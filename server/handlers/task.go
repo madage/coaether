@@ -1201,15 +1201,47 @@ func (h *TaskHandler) ListSubtasks(c *gin.Context) {
 func (h *TaskHandler) ListComments(c *gin.Context) {
 	taskID := c.Param("id")
 
-	rows, err := h.DB.Query(`
-		SELECT c.id, c.task_id, c.user_id, COALESCE(u.username, '') AS username,
-			c.agent_profile_id, COALESCE(ap.name, '') AS agent_name, COALESCE(ap.avatar, '') AS agent_avatar,
-			c.content, c.parent_id, c.is_agent_comment, c.created_at, c.updated_at
-		FROM task_comments c
-		LEFT JOIN users u ON u.id = c.user_id
-		LEFT JOIN agent_profiles ap ON ap.id = c.agent_profile_id
-		WHERE c.task_id = $1
-		ORDER BY c.created_at ASC`, taskID)
+	// If the task has sub-tasks, merge child agent comments via UNION
+	var childCount int
+	h.DB.QueryRow(`SELECT COUNT(*) FROM tasks WHERE parent_id = $1 AND deleted_at IS NULL`, taskID).Scan(&childCount)
+
+	var rows *sql.Rows
+	var err error
+	if childCount > 0 {
+		rows, err = h.DB.Query(`
+			SELECT c.id, c.task_id, c.user_id, COALESCE(u.username, '') AS username,
+				c.agent_profile_id, COALESCE(ap.name, '') AS agent_name, COALESCE(ap.avatar, '') AS agent_avatar,
+				c.content, c.parent_id, c.is_agent_comment, c.created_at, c.updated_at,
+				'' AS source_task_id, '' AS source_task_title
+			FROM task_comments c
+			LEFT JOIN users u ON u.id = c.user_id
+			LEFT JOIN agent_profiles ap ON ap.id = c.agent_profile_id
+			WHERE c.task_id = $1
+			UNION ALL
+			SELECT c.id, c.task_id, c.user_id, COALESCE(u.username, '') AS username,
+				c.agent_profile_id, COALESCE(ap.name, '') AS agent_name, COALESCE(ap.avatar, '') AS agent_avatar,
+				c.content, c.parent_id, c.is_agent_comment, c.created_at, c.updated_at,
+				t.id, t.title
+			FROM task_comments c
+			JOIN tasks t ON t.id = c.task_id
+			LEFT JOIN users u ON u.id = c.user_id
+			LEFT JOIN agent_profiles ap ON ap.id = c.agent_profile_id
+			WHERE t.parent_id = $1
+				AND c.is_agent_comment = true
+				AND t.deleted_at IS NULL
+			ORDER BY created_at ASC`, taskID)
+	} else {
+		rows, err = h.DB.Query(`
+			SELECT c.id, c.task_id, c.user_id, COALESCE(u.username, '') AS username,
+				c.agent_profile_id, COALESCE(ap.name, '') AS agent_name, COALESCE(ap.avatar, '') AS agent_avatar,
+				c.content, c.parent_id, c.is_agent_comment, c.created_at, c.updated_at,
+				'' AS source_task_id, '' AS source_task_title
+			FROM task_comments c
+			LEFT JOIN users u ON u.id = c.user_id
+			LEFT JOIN agent_profiles ap ON ap.id = c.agent_profile_id
+			WHERE c.task_id = $1
+			ORDER BY c.created_at ASC`, taskID)
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query comments"})
 		return
@@ -1222,7 +1254,9 @@ func (h *TaskHandler) ListComments(c *gin.Context) {
 		if err := rows.Scan(
 			&cm.ID, &cm.TaskID, &cm.UserID, &cm.Username,
 			&cm.AgentProfileID, &cm.AgentName, &cm.AgentAvatar,
-			&cm.Content, &cm.ParentID, &cm.IsAgentComment, &cm.CreatedAt, &cm.UpdatedAt,
+			&cm.Content, &cm.ParentID, &cm.IsAgentComment,
+			&cm.SourceTaskID, &cm.SourceTaskTitle,
+			&cm.CreatedAt, &cm.UpdatedAt,
 		); err != nil {
 			continue
 		}
@@ -1335,83 +1369,28 @@ func (h *TaskHandler) CreateComment(c *gin.Context) {
 					&taskID)
 			}
 
-			// Notify @mentioned agent profiles
-			var wsID string
-			h.DB.QueryRow(`SELECT workspace_id FROM tasks WHERE id = $1`, taskID).Scan(&wsID)
-			for _, name := range mentioned {
-				var ap struct {
-					ID            string
-					NodeID        string
-					SystemPrompt  string
-					Instructions  string
-				}
-				err := h.DB.QueryRow(
-					`SELECT id, node_id, COALESCE(system_prompt,''), COALESCE(instructions,'') FROM agent_profiles WHERE workspace_id = $1 AND name = $2 AND enabled = true`,
-					wsID, name,
-				).Scan(&ap.ID, &ap.NodeID, &ap.SystemPrompt, &ap.Instructions)
-				if err != nil || ap.NodeID == "" {
-					continue
-				}
-
-				// Dedup: skip creating a new queue entry if one is already active for this task+agent.
-				// The mention event will still be sent below so the runtime can inject into the existing session.
-				var existingQueueID string
-				dupErr := h.DB.QueryRow(
-					`SELECT id FROM task_agent_queue WHERE task_id = $1 AND agent_profile_id = $2 AND status IN ('queued', 'claimed', 'processing') LIMIT 1`,
-					taskID, ap.ID,
-				).Scan(&existingQueueID)
-
-				queueID := existingQueueID
-				if dupErr != nil {
-					// No existing active queue entry -- create one
-					queueID = uuid.New().String()
-					now := time.Now()
-					metadata, _ := json.Marshal(map[string]string{
-						"trigger_type":    "mention",
-						"comment_id":      comment.ID,
-						"comment_content": req.Content,
-					})
-
-					h.DB.Exec(
-						`INSERT INTO task_agent_queue (id, task_id, agent_profile_id, status, trigger_type, metadata, assigned_at, created_at)
-							 VALUES ($1, $2, $3, 'queued', 'mention', $4, $5, $5)`,
-						queueID, taskID, ap.ID, metadata, now,
-					)
-					h.DB.Exec(`UPDATE agent_profiles SET current_load = current_load + 1, last_active_at = $1 WHERE id = $2`,
-						now, ap.ID)
-
-					if h.Hub != nil {
-						h.Hub.SignalChange("task_agent_queue")
+			// Notify @mentioned agent profiles via unified scheduler
+			if h.TaskService != nil && h.TaskService.Scheduler != nil {
+				var wsID string
+				h.DB.QueryRow(`SELECT workspace_id FROM tasks WHERE id = $1`, taskID).Scan(&wsID)
+				for _, name := range mentioned {
+					var apID string
+					err := h.DB.QueryRow(
+						`SELECT id FROM agent_profiles WHERE workspace_id = $1 AND name = $2 AND enabled = true`,
+						wsID, name,
+					).Scan(&apID)
+					if err != nil {
+						continue
 					}
-				}
-
-				// Send instant mention event to the runtime via MessageBus
-				if h.MessageBus != nil {
-					// Check if this is a continuation (agent has previous comments on this task)
-					var agentCommentCount int
-					h.DB.QueryRow(
-						`SELECT COUNT(*) FROM task_comments WHERE task_id = $1 AND agent_profile_id = $2 AND is_agent_comment = true`,
-						taskID, ap.ID,
-					).Scan(&agentCommentCount)
-
-					runtimeEndpoint := "runtime://" + ap.NodeID
-					mentionEnv := protocol.NewEnvelope("system://api", runtimeEndpoint, protocol.MsgAgentMention,
-						&protocol.Payload{
-							Metadata: map[string]any{
-								"task_id":              taskID,
-								"task_title":           taskTitle,
-								"queue_id":             queueID,
-								"comment_id":           comment.ID,
-								"comment_content":      req.Content,
-								"agent_profile_id":     ap.ID,
-								"system_prompt":        ap.SystemPrompt,
-								"instructions":         ap.Instructions,
-								"agent_comment_count":  agentCommentCount,
-							},
-						},
-					)
-					h.MessageBus.Deliver(mentionEnv)
-					log.Printf("[Task] Sent MsgAgentMention to %s for agent %s", runtimeEndpoint, ap.ID[:8])
+					h.TaskService.Scheduler.Trigger(TriggerRequest{
+						Source:          TriggerMention,
+						FromTaskID:      taskID,
+						TargetAgentID:   apID,
+						TargetAgentName: name,
+						CommentContent:  req.Content,
+						CommentID:       comment.ID,
+						ActorID:         commenterStr,
+					})
 				}
 			}
 		}

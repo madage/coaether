@@ -130,17 +130,29 @@ func (h *NodeAgentHandler) ClaimQueueItem(c *gin.Context) {
 
 	queueID := c.Param("id")
 
-	var currentStatus string
-	err := h.DB.QueryRow(`SELECT status FROM task_agent_queue WHERE id = $1`, queueID).Scan(&currentStatus)
-	if err == sql.ErrNoRows {
-		c.JSON(http.StatusNotFound, gin.H{"error": "queue item not found"})
-		return
-	}
+	now := time.Now()
+
+	// Atomic claim: use UPDATE ... WHERE status='queued' to prevent
+	// race conditions where two concurrent poll cycles both see the
+	// item as queued and both proceed to create sessions.
+	result, err := h.DB.Exec(
+		`UPDATE task_agent_queue SET status = 'claimed', claimed_at = $1
+		 WHERE id = $2 AND status = 'queued'`,
+		now, queueID,
+	)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query queue"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to claim item"})
 		return
 	}
-	if currentStatus != "queued" {
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		// Either not found or already claimed by a concurrent request.
+		// Check which case it is to return an appropriate error.
+		var currentStatus string
+		if err := h.DB.QueryRow(`SELECT status FROM task_agent_queue WHERE id = $1`, queueID).Scan(&currentStatus); err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "queue item not found"})
+			return
+		}
 		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("cannot claim item with status %s", currentStatus)})
 		return
 	}
@@ -157,17 +169,9 @@ func (h *NodeAgentHandler) ClaimQueueItem(c *gin.Context) {
 		return
 	}
 	if agentNodeID != auth.NodeID {
+		// Rollback: release the claim since this node shouldn't have it
+		h.DB.Exec(`UPDATE task_agent_queue SET status = 'queued', claimed_at = NULL WHERE id = $1`, queueID)
 		c.JSON(http.StatusForbidden, gin.H{"error": "this agent is assigned to a different node"})
-		return
-	}
-
-	now := time.Now()
-	_, err = h.DB.Exec(
-		`UPDATE task_agent_queue SET status = 'claimed', claimed_at = $1 WHERE id = $2`,
-		now, queueID,
-	)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to claim item"})
 		return
 	}
 
@@ -391,44 +395,61 @@ func (h *NodeAgentHandler) CreateSession(c *gin.Context) {
 
 	var prompt string
 	if isResume {
-		// --resume already restores full context (task description, role, rules, previous exchanges).
-		// But the user's NEW comment (which triggered this round) was posted AFTER the session
-		// ended — it is NOT in the session JSONL. Must explicitly include it.
-		var latestUserComments string
+		// Fetch the full conversation history so the agent knows what was already asked and answered.
+		// We inject this explicitly because --resume session files may not be available on disk.
+		var conversationHistory string
 		commentRows, err := h.DB.Query(
-			`SELECT COALESCE(u.username,''), COALESCE(ap.name,''), c.content, c.is_agent_comment
+			`SELECT COALESCE(u.username,''), COALESCE(ap.name,''), c.content, c.is_agent_comment,
+			 CASE WHEN c.agent_profile_id = $2 THEN true ELSE false END as is_self
 			 FROM task_comments c
 			 LEFT JOIN users u ON u.id = c.user_id
 			 LEFT JOIN agent_profiles ap ON ap.id = c.agent_profile_id
-			 WHERE c.task_id = $1 AND (c.agent_profile_id != $2 OR c.agent_profile_id IS NULL)
-			 ORDER BY c.created_at DESC LIMIT 3`, req.TaskID, req.AgentID,
+			 WHERE c.task_id = $1
+			 ORDER BY c.created_at ASC LIMIT 30`, req.TaskID, req.AgentID,
 		)
 		if err == nil && commentRows != nil {
 			var parts []string
+			seenContent := make(map[string]bool)
 			for commentRows.Next() {
 				var userName, agentName, content string
-				var isAgent bool
-				if err := commentRows.Scan(&userName, &agentName, &content, &isAgent); err == nil {
-					source := userName
-					if isAgent && agentName != "" {
-						source = agentName + " (Agent)"
+				var isAgent, isSelf bool
+				if err := commentRows.Scan(&userName, &agentName, &content, &isAgent, &isSelf); err == nil {
+					// Dedup: skip short system confirmations
+					if len(content) < 30 && isAgent && strings.Contains(content, "轮已发出") {
+						continue
 					}
-					if source == "" {
-						source = "User"
+					if seenContent[content] {
+						continue
 					}
-					parts = append(parts, fmt.Sprintf("[%s]: %s", source, content))
+					seenContent[content] = true
+
+					source := "用户"
+					if isSelf {
+						source = "我（需求受理师）"
+					} else if isAgent && agentName != "" {
+						source = agentName
+					} else if userName != "" {
+						source = userName
+					}
+					// Trim long agent responses to avoid context bloat
+					trimmed := content
+					if isAgent && len(content) > 800 {
+						trimmed = content[:800] + "...(truncated)"
+					}
+					parts = append(parts, fmt.Sprintf("[%s]: %s", source, trimmed))
 				}
 			}
 			commentRows.Close()
 			if len(parts) > 0 {
-				// Reverse to chronological order
-				for i, j := 0, len(parts)-1; i < j; i, j = i+1, j-1 {
-					parts[i], parts[j] = parts[j], parts[i]
-				}
-				latestUserComments = "\n\n用户的最新消息：\n" + strings.Join(parts, "\n")
+				conversationHistory = "\n\n=== 对话历史（你已说过的和用户已回答的）===\n" + strings.Join(parts, "\n\n") + "\n=== 历史结束 ===\n"
 			}
 		}
-		prompt = fmt.Sprintf("（继续第 %d 轮对话。--resume 已恢复完整历史上下文。%s\n\n请根据上下文直接回应用户的最新消息，不要重复之前已经确认过的提问。）", agentCommentCount+1, latestUserComments)
+		// Include system prompt since --resume may not restore it from disk
+		sysPromptSection := ""
+		if agentSysPrompt != "" {
+			sysPromptSection = "\n\n=== 你的角色与规则 ===\n" + agentSysPrompt + "\n\n" + agentInstructions
+		}
+		prompt = fmt.Sprintf("（继续第 %d 轮对话。%s%s\n\n请参考上面的对话历史和角色规则。不要重复已经问过且已得到明确回答的问题。如果关键信息已经足够，考虑输出需求摘要结束对话。）", agentCommentCount+1, sysPromptSection, conversationHistory)
 	} else {
 	if isDecomposer {
 		// Fetch available agent profiles for the workspace
