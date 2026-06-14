@@ -278,10 +278,40 @@ func (s *TaskService) handleInProgressToDone(taskID string, snap taskSnapshot, o
 		}
 	}
 
-	// 2. Process pending dispatch actions (create_sub_task, assign_task)
+	// 2. Record completion in task_reviews so UI can display agent output.
+	if opts.AgentProfileID != "" {
+		reviewID := uuid.New().String()
+		now := time.Now()
+		comment := opts.Comment
+		if comment == "" {
+			comment = opts.ResultSummary
+		}
+		if comment == "" {
+			var latestComment string
+			s.DB.QueryRow(
+				`SELECT content FROM task_comments
+				 WHERE task_id = $1 AND is_agent_comment = true
+				 ORDER BY created_at DESC LIMIT 1`,
+				taskID,
+			).Scan(&latestComment)
+			if len(latestComment) > 3000 {
+				latestComment = latestComment[:3000]
+			}
+			comment = latestComment
+		}
+		if _, err := s.DB.Exec(
+			`INSERT INTO task_reviews (id, task_id, reviewer_agent_id, action, comment, loop_count, created_at)
+			 VALUES ($1, $2, $3, 'auto_completed', $4, $5, $6)`,
+			reviewID, taskID, opts.AgentProfileID, comment, snap.AgentLoopCount+1, now,
+		); err != nil {
+			log.Printf("[TaskService] Failed to insert auto-complete review for task %s: %v", safe8(taskID), err)
+		}
+	}
+
+	// 3. Process pending dispatch actions (create_sub_task, assign_task)
 	s.processPendingActions(taskID)
 
-	// 3. DAG advancement via unified scheduler
+	// 4. DAG advancement via unified scheduler
 	if s.Scheduler != nil {
 		s.Scheduler.Trigger(TriggerRequest{
 			Source:     TriggerDAGComplete,
@@ -291,7 +321,7 @@ func (s *TaskService) handleInProgressToDone(taskID string, snap taskSnapshot, o
 		s.DAGEngine.OnTaskCompleted(taskID)
 	}
 
-	// 4. Rule engine
+	// 5. Rule engine
 	if s.RuleEngine != nil {
 		s.RuleEngine.Evaluate("on_status_change", taskID, ExtractTaskContext(taskID, snap.Title, snap.AssigneeID, snap.AssigneeType))
 	}
