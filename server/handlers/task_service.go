@@ -318,6 +318,21 @@ func (s *TaskService) handleInProgressToReview(taskID string, snap taskSnapshot,
 		if comment == "" {
 			comment = opts.ResultSummary
 		}
+		// Fallback: grab the most recent agent comment on this task.
+		// The agent may have posted content via add_comment before or after the status transition.
+		if comment == "" {
+			var latestComment string
+			s.DB.QueryRow(
+				`SELECT content FROM task_comments
+				 WHERE task_id = $1 AND is_agent_comment = true
+				 ORDER BY created_at DESC LIMIT 1`,
+				taskID,
+			).Scan(&latestComment)
+			if len(latestComment) > 3000 {
+				latestComment = latestComment[:3000]
+			}
+			comment = latestComment
+		}
 		s.DB.Exec(
 			`INSERT INTO task_reviews (id, task_id, reviewer_agent_id, action, comment, loop_count, created_at)
 			 VALUES ($1, $2, $3, 'submitted', $4, $5, $6)`,
