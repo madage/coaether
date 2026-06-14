@@ -1130,76 +1130,86 @@ Comment: %s
 	evalResult = strings.TrimSpace(evalResult)
 	log.Printf("[Runtime] Evaluation result: %s", truncateStr(evalResult, 200))
 
+	doWork := false
+
 	switch {
 	case strings.HasPrefix(evalResult, "REPLY:"):
 		reply := strings.TrimSpace(strings.TrimPrefix(evalResult, "REPLY:"))
 		if reply == "" {
 			reply = "Acknowledged."
 		}
-		// updateQueueStatus passes result_summary → MarkCompleted → handleInProgressToCompleted
-		// which posts the comment. Do NOT also call postAgentComment — that causes duplicates.
 		r.updateQueueStatus(queueID, "completed", reply)
+		return
 
 	case strings.HasPrefix(evalResult, "WORK:"):
-		// Check if there's already an active session for this task+agent
-		existingSessionID := r.findActiveSession(taskID, agentProfileID)
+		doWork = true
 
-		if existingSessionID != "" {
-			// An active session already exists for this task+agent.
-			// Release the queue - the session lifecycle owns the work.
-			log.Printf("[Runtime] Session %s already active for task %s - releasing queue", existingSessionID[:8], taskID[:8])
-			r.updateQueueStatus(queueID, "completed", "")
+	default:
+		if agentCommentCount > 0 {
+			log.Printf("[Runtime] Unrecognized eval in continuation round, defaulting to WORK")
+			doWork = true
+		} else {
+			log.Printf("[Runtime] Unrecognized evaluation result, using as reply")
+			reply := evalResult
+			if len([]rune(reply)) > 2000 {
+				reply = string([]rune(reply)[:2000]) + "\n\n...（过长已截断）"
+			}
+			r.updateQueueStatus(queueID, "completed", reply)
 			return
 		}
+	}
 
-		// Brief dedup window (15s) only to prevent race between
-		// handleAgentMention and queue poller creating duplicate sessions.
-		// Persistent workspaces + --resume make continuation sessions safe.
-		recentKey := taskID + ":" + agentProfileID
-		r.connMu.Lock()
-		if completedAt, exists := r.recentlyCompleted[recentKey]; exists {
-			if time.Since(completedAt) < 15*time.Second {
-				r.connMu.Unlock()
-				log.Printf("[Runtime] Task %s session just completed — skipping to avoid race", taskID[:8])
+	if doWork {
+			// Check if there's already an active session for this task+agent
+			existingSessionID := r.findActiveSession(taskID, agentProfileID)
+	
+			if existingSessionID != "" {
+				// An active session already exists for this task+agent.
+				// Release the queue - the session lifecycle owns the work.
+				log.Printf("[Runtime] Session %s already active for task %s - releasing queue", existingSessionID[:8], taskID[:8])
+				r.updateQueueStatus(queueID, "completed", "")
 				return
 			}
-			delete(r.recentlyCompleted, recentKey)
-		}
-		r.connMu.Unlock()
-
-		// No active session - create a new one
-
-		sessionURL := fmt.Sprintf("%s/api/node/sessions?%s", baseURL, auth)
-		sessionReq := map[string]string{
-			"task_id":  taskID,
-			"agent_id": agentProfileID,
-			"queue_id": queueID,
-		}
-		sessionBody, _ := json.Marshal(sessionReq)
-		resp, err := http.Post(sessionURL, "application/json", bytes.NewBuffer(sessionBody))
-		if err != nil {
-			log.Printf("[Runtime] Session creation failed: %v", err)
-			return
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode == http.StatusCreated {
-			var sr struct {
-				SessionID string `json:"session_id"`
+	
+			// Brief dedup window (15s) only to prevent race between
+			// handleAgentMention and queue poller creating duplicate sessions.
+			// Persistent workspaces + --resume make continuation sessions safe.
+			recentKey := taskID + ":" + agentProfileID
+			r.connMu.Lock()
+			if completedAt, exists := r.recentlyCompleted[recentKey]; exists {
+				if time.Since(completedAt) < 15*time.Second {
+					r.connMu.Unlock()
+					log.Printf("[Runtime] Task %s session just completed — skipping to avoid race", taskID[:8])
+					return
+				}
+				delete(r.recentlyCompleted, recentKey)
 			}
-			json.NewDecoder(resp.Body).Decode(&sr)
-			log.Printf("[Runtime] Session %s created for mentioned task %s", sr.SessionID[:8], taskID[:8])
-		} else {
-			log.Printf("[Runtime] Session creation returned %d", resp.StatusCode)
-		}
-	default:
-		log.Printf("[Runtime] Unrecognized evaluation result, using as reply")
-		reply := evalResult
-		if len([]rune(reply)) > 2000 {
-			reply = string([]rune(reply)[:2000]) + "\n\n...（过长已截断）"
-		}
-		// updateQueueStatus passes result_summary → MarkCompleted → handleInProgressToCompleted
-		// which posts the comment. Do NOT also call postAgentComment — that causes duplicates.
-		r.updateQueueStatus(queueID, "completed", reply)
+			r.connMu.Unlock()
+	
+			// No active session - create a new one
+	
+			sessionURL := fmt.Sprintf("%s/api/node/sessions?%s", baseURL, auth)
+			sessionReq := map[string]string{
+				"task_id":  taskID,
+				"agent_id": agentProfileID,
+				"queue_id": queueID,
+			}
+			sessionBody, _ := json.Marshal(sessionReq)
+			resp, err := http.Post(sessionURL, "application/json", bytes.NewBuffer(sessionBody))
+			if err != nil {
+				log.Printf("[Runtime] Session creation failed: %v", err)
+				return
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode == http.StatusCreated {
+				var sr struct {
+					SessionID string `json:"session_id"`
+				}
+				json.NewDecoder(resp.Body).Decode(&sr)
+				log.Printf("[Runtime] Session %s created for mentioned task %s", sr.SessionID[:8], taskID[:8])
+			} else {
+				log.Printf("[Runtime] Session creation returned %d", resp.StatusCode)
+			}
 	}
 }
 

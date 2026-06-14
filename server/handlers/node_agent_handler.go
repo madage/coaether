@@ -392,8 +392,43 @@ func (h *NodeAgentHandler) CreateSession(c *gin.Context) {
 	var prompt string
 	if isResume {
 		// --resume already restores full context (task description, role, rules, previous exchanges).
-		// Only inject incremental info: round number. New review rejection is appended later.
-		prompt = fmt.Sprintf("（继续第 %d 轮对话。--resume 已恢复完整历史上下文，请根据上下文直接回应用户的最新消息，不要重复之前已经确认过的提问。）", agentCommentCount+1)
+		// But the user's NEW comment (which triggered this round) was posted AFTER the session
+		// ended — it is NOT in the session JSONL. Must explicitly include it.
+		var latestUserComments string
+		commentRows, err := h.DB.Query(
+			`SELECT COALESCE(u.username,''), COALESCE(ap.name,''), c.content, c.is_agent_comment
+			 FROM task_comments c
+			 LEFT JOIN users u ON u.id = c.user_id
+			 LEFT JOIN agent_profiles ap ON ap.id = c.agent_profile_id
+			 WHERE c.task_id = $1 AND (c.agent_profile_id != $2 OR c.agent_profile_id IS NULL)
+			 ORDER BY c.created_at DESC LIMIT 3`, req.TaskID, req.AgentID,
+		)
+		if err == nil && commentRows != nil {
+			var parts []string
+			for commentRows.Next() {
+				var userName, agentName, content string
+				var isAgent bool
+				if err := commentRows.Scan(&userName, &agentName, &content, &isAgent); err == nil {
+					source := userName
+					if isAgent && agentName != "" {
+						source = agentName + " (Agent)"
+					}
+					if source == "" {
+						source = "User"
+					}
+					parts = append(parts, fmt.Sprintf("[%s]: %s", source, content))
+				}
+			}
+			commentRows.Close()
+			if len(parts) > 0 {
+				// Reverse to chronological order
+				for i, j := 0, len(parts)-1; i < j; i, j = i+1, j-1 {
+					parts[i], parts[j] = parts[j], parts[i]
+				}
+				latestUserComments = "\n\n用户的最新消息：\n" + strings.Join(parts, "\n")
+			}
+		}
+		prompt = fmt.Sprintf("（继续第 %d 轮对话。--resume 已恢复完整历史上下文。%s\n\n请根据上下文直接回应用户的最新消息，不要重复之前已经确认过的提问。）", agentCommentCount+1, latestUserComments)
 	} else {
 	if isDecomposer {
 		// Fetch available agent profiles for the workspace
