@@ -110,6 +110,7 @@ func (e *DAGEngine) WouldCreateCycle(workflowID, taskID, dependsOnID string) (bo
 // auto-dispatches unblocked agent tasks to the queue,
 // and auto-closes the parent task when all sub-tasks are done.
 func (e *DAGEngine) OnTaskCompleted(taskID string) {
+	log.Printf("[DAGEngine] OnTaskCompleted CALLED: task=%s", taskID[:8])
 	// Re-entrancy guard: if a task is already being processed (cycle or deep recursion),
 	// skip it to prevent infinite loops.
 	if _, loaded := e.processing.LoadOrStore(taskID, struct{}{}); loaded {
@@ -163,6 +164,14 @@ func (e *DAGEngine) gatherDAGTransitions(taskID string) (toUnblock []string, par
 	now := time.Now()
 
 	// Find all tasks that depend on this task
+	log.Printf("[DAGEngine] gatherDAGTransitions: querying dependents of task=%s", taskID[:8])
+		log.Printf("[DAGEngine] gatherDAGTransitions: querying dependents of task=%s", taskID[:8])
+
+		// Debug: COUNT first
+		var cnt int
+		e.DB.QueryRow(`SELECT COUNT(*) FROM task_dependencies td JOIN tasks t ON t.id = td.task_id WHERE td.depends_on_id = $1 AND t.deleted_at IS NULL AND t.status = 'blocked'`, taskID).Scan(&cnt)
+		log.Printf("[DAGEngine] gatherDAGTransitions: COUNT query returned %d for task=%s", cnt, taskID[:8])
+
 	rows, err := e.DB.Query(
 		`SELECT td.task_id, t.workflow_id
 		 FROM task_dependencies td
@@ -178,6 +187,7 @@ func (e *DAGEngine) gatherDAGTransitions(taskID string) (toUnblock []string, par
 	}
 	defer rows.Close()
 
+	log.Printf("[DAGEngine] gatherDAGTransitions: iterating rows for task=%s", taskID[:8])
 	for rows.Next() {
 		var dependentID, wfID string
 		if err := rows.Scan(&dependentID, &wfID); err != nil {
@@ -195,11 +205,15 @@ func (e *DAGEngine) gatherDAGTransitions(taskID string) (toUnblock []string, par
 		).Scan(&allDone)
 
 		if allDone {
+			log.Printf("[DAGEngine] gatherDAGTransitions: unblocking dep=%s", dependentID[:8])
 			toUnblock = append(toUnblock, dependentID)
-			_ = wfID // used for logging in caller
+			_ = wfID
+		} else {
+			log.Printf("[DAGEngine] gatherDAGTransitions: NOT all deps done for dep=%s", dependentID[:8])
 		}
 	}
 
+	log.Printf("[DAGEngine] gatherDAGTransitions: toUnblock=%d for task=%s", len(toUnblock), taskID[:8])
 	// Check if parent can be auto-closed
 	parentID, parentHasPlan = e.checkParentAutoCloseLocked(taskID, now)
 	return

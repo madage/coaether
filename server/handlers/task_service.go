@@ -209,6 +209,7 @@ func (s *TaskService) transitionValid(from, to string) bool {
 
 // dispatchSideEffects fires all orchestration logic based on the from/to pair.
 func (s *TaskService) dispatchSideEffects(taskID, from, to string, snap taskSnapshot, opts TransitionOpts, now time.Time) {
+		log.Printf("[TaskService] dispatchSideEffects: task=%s from=%s to=%s behavior=%s", safe8(taskID), from, to, snap.CompletionBehavior)
 	switch {
 	// ---- in_progress -> done (resolved from completed, single write) ----
 	case from == string(models.TaskInProgress) && to == string(models.TaskDone):
@@ -267,6 +268,7 @@ func (s *TaskService) dispatchSideEffects(taskID, from, to string, snap taskSnap
 // handleInProgressToDone is the unified handler for in_progress → done.
 // It combines what was previously split across in_progress→completed→done (two writes).
 func (s *TaskService) handleInProgressToDone(taskID string, snap taskSnapshot, opts TransitionOpts) {
+		log.Printf("[TaskService] handleInProgressToDone: task=%s DAGEngine=%v", safe8(taskID), s.DAGEngine != nil)
 	// 1. Post agent comment if result summary provided
 	if opts.ResultSummary != "" && opts.AgentProfileID != "" {
 		s.postAgentComment(taskID, opts.AgentProfileID, opts.ResultSummary, snap.UserID)
@@ -287,6 +289,7 @@ func (s *TaskService) handleInProgressToDone(taskID string, snap taskSnapshot, o
 // handleInProgressToReview is the unified handler for in_progress → review.
 // It combines what was previously split across in_progress→completed→review (two writes).
 func (s *TaskService) handleInProgressToReview(taskID string, snap taskSnapshot, opts TransitionOpts) {
+		log.Printf("[TaskService] handleInProgressToReview: task=%s DAGEngine=%v", safe8(taskID), s.DAGEngine != nil)
 	// 1. Post agent comment if result summary provided
 	if opts.ResultSummary != "" && opts.AgentProfileID != "" {
 		s.postAgentComment(taskID, opts.AgentProfileID, opts.ResultSummary, snap.UserID)
@@ -331,6 +334,7 @@ func (s *TaskService) handleInProgressToReview(taskID string, snap taskSnapshot,
 
 func (s *TaskService) handleReviewToDone(taskID string, snap taskSnapshot, opts TransitionOpts, now time.Time) {
 	// Process pending dispatch actions
+		log.Printf("[TaskService] handleReviewToDone: task=%s DAGEngine=%v", safe8(taskID), s.DAGEngine != nil)
 	s.processPendingActions(taskID)
 
 	// Audit log
