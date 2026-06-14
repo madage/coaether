@@ -1753,7 +1753,8 @@ POST /api/node/sessions?node_id=<node_id>&node_secret=<secret>
 
 **说明：**
 - 如果同一 `task_id` + `agent_profile_id` 已有活跃会话（`pending`/`running`），接口返回已有会话 ID 并附带 `status: "existing"`，避免重复创建。
-- **持久化工作区：** 每个任务+智能体组合使用固定的工作区目录 `workspaces/<taskID[:8]>-<profileID[:8]>/`，Claude CLI 启动时使用 `--resume` 参数恢复之前的会话上下文。这意味着同一任务+智能体的多次@提及会共享同一个 Claude 会话，保持对话连续性，而非每次新建会话。
+- **持久化工作区：** 每个任务+智能体组合使用固定的工作区目录 `workspaces/<taskID[:8]>-<profileID[:8]>/` 存放项目文件。Claude CLI 启动时使用 `--resume` 参数从 `~/.claude/projects/` 目录加载原生 session JSONL 文件（含完整消息历史、工具调用、thinking trace），恢复之前的完整对话上下文。`--permission-mode bypassPermissions` 确保会话结束时正确写入 session 文件，同时通过 `control_response` 自动批准避免流阻塞。同一任务+智能体的多次@提及通过 `--resume` 保持对话连续性。
+- **续接轮次：** 非首轮（`isResume=true`）时，系统会将用户最新评论注入 prompt，同时 `--resume` 恢复完整历史上下文，智能体直接回应最新消息而不会重复提问。
 
 **响应（201）：**
 
@@ -2489,7 +2490,7 @@ GET /api/logs/system-events?page=1&size=30
 
 ## 14. 会话管理
 
-> 会话由 MessageBus 管理内存生命周期，由 SessionService 同步 DB 状态。Runtime 加入时自动标记 `running`，结束时标记 `completed`，断连时标记 `failed`。超时空壳会话由 GC 定期清理（内存每10分钟，DB每30分钟）。
+> 会话由 MessageBus 管理内存生命周期，由 SessionService 同步 DB 状态。Runtime 加入时自动标记 `running`，结束时标记 `completed`，断连时标记 `failed`。超时空壳会话由 GC 定期清理（内存每10分钟，DB每30分钟）。进程退出时活跃会话自动标记为 `failed`，防止 Claude 子进程泄漏。
 >
 > **会话复用机制：** 每个任务+智能体组合（`task_id` + `agent_profile_id`）在整个任务生命周期内共享一个持久化 Claude 工作区（`workspaces/<taskID[:8]>-<profileID[:8]>/`），启动时使用 `--resume` 恢复之前的对话上下文。用户通过 @提及 触发同一个任务+智能体时：
 > - 若已有活跃会话 → @提及消息注入已有会话（保留完整对话历史）
@@ -2497,6 +2498,8 @@ GET /api/logs/system-events?page=1&size=30
 > - 若会话已完成超过 15 秒且需要继续 → 在同一工作区中新建会话（通过 `--resume` 恢复上下文）
 >
 > 这确保每个任务卡片下的智能体始终维护唯一的会话和工作区，避免重复创建会话。
+>
+> **会话持久化机制：** Claude Code 通过 `--permission-mode bypassPermissions`（替代废弃的 `--dangerously-skip-permissions`）保持权限引擎运行，使会话结束时原生 session JSONL 文件（含完整消息历史、工具调用、thinking trace、权限决策）写入 `~/.claude/projects/` 目录。`--resume` 参数从这些原生文件中恢复完整对话上下文，而非依赖简化的 conversation.md（已移除）。同时通过 `--disallowedTools AskUserQuestion` 防止无人值守模式下交互式提问卡住，通过 `control_response` 自动批准机制确保流式协议层不会阻塞会话。
 
 ### 14.1 会话模型
 
