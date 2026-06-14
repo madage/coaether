@@ -410,9 +410,6 @@ func (s *TaskService) resolveCompletionTarget(taskID string, snap taskSnapshot, 
 
 	switch snap.CompletionBehavior {
 	case models.CompletionAutoDone:
-		if opts.ResultSummary != "" {
-			return string(models.TaskReview)
-		}
 		return string(models.TaskDone)
 
 	case models.CompletionAutoReview:
