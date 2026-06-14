@@ -1176,7 +1176,7 @@ GET /api/invitations/pending
   "current_load": 1,
   "tags": ["前端", "React"],
   "skills": ["typescript", "css"],
-  "capabilities": ["create_sub_task", "assign_task", "get_task_detail", "list_sub_tasks", "update_task_status"],
+  "capabilities": ["create_sub_task", "assign_task", "get_task_detail", "list_sub_tasks", "update_task_status", "propose_decomposition_plan", "search_agent_profiles"],
   "last_active_at": "datetime",
   "created_at": "datetime",
   "updated_at": "datetime",
@@ -1190,6 +1190,8 @@ GET /api/invitations/pending
   "review_timeout": 240
 }
 ```
+
+**说明：** `system_prompt` 和 `instructions` 是智能体行为的核心驱动。所有智能体（包括调度类智能体如「任务委派专家」）都通过数据库中的 `system_prompt` 字段控制角色、工作流程和规则，不再存在硬编码的代码路径。用户在 UI 上更新 `system_prompt` 后即时生效，无需重启服务器。
 
 ### 5.2 列出所有智能体
 
@@ -3079,6 +3081,8 @@ DAGEngine 在工作流执行过程中自动管理任务依赖：
 
 **说明：** 智能体调用此工具提出分解方案，不会创建实际任务。方案存入数据库后父任务保持 `in_progress`，用户在 UI 上逐条勾选审核。
 
+**前置要求：** 调用此工具前必须先通过 `search_agent_profiles` 实时查询目标智能体的真实 ID（不要假设或硬编码 ID）。`items` 中的 `assignee_id` 必须填入从 `search_agent_profiles` 返回的最新智能体 ID。
+
 **审核通过后：** 系统自动为每个选中的 items 创建实际 task，解析 `depends_on` 建立 DAG 依赖关系，无依赖的智能体任务自动入队列。
 
 **驳回后：** 父任务回到 `in_progress`，智能体可重新提出计划。
@@ -3160,6 +3164,8 @@ DAGEngine 在工作流执行过程中自动管理任务依赖：
 
 **说明：** 在工作区范围内查询启用的智能体，自动排除调用者自身（`agent_profile_id`）。支持组合过滤：`name` 做 ILIKE 模糊匹配、`tags` 做 JSONB `?|` 匹配、`capability` 做 JSONB `@>` 匹配。返回匹配的智能体列表及其实时负载状态。
 
+**典型用法：** 调度类智能体（如「任务委派专家」）在调用 `propose_decomposition_plan` 或 `create_sub_task` 前，必须先调用此工具查询目标智能体的最新 ID 和状态，确保「对的人做对的事」。例如：`search_agent_profiles({name:"写手"})` 查找写手智能体，获取其实时 ID 填入分配方案的 `assignee_id`。
+
 **响应示例：**
 
 ```json
@@ -3219,7 +3225,7 @@ GET /api/tools
       "required_perm": "task.write",
       "enabled": true,
       "status": "active",
-      "linked_agents": ["需求拆分专家", "任务快递员"],
+      "linked_agents": ["需求拆分专家", "任务委派专家"],
       "linked_agent_count": 2
     }
   ]

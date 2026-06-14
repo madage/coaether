@@ -215,6 +215,19 @@ func (h *TaskHandler) Create(c *gin.Context) {
 		UpdatedAt:    now,
 	}
 
+	// Inherit completion_behavior from agent profile when assigning to an agent
+	completionBehavior := "auto_done" // default
+	if task.AssigneeID != nil && task.AssigneeType != nil && *task.AssigneeType == "agent_profile" {
+		var agentCB string
+		if err := h.DB.QueryRow(
+			`SELECT COALESCE(completion_behavior, 'needs_review')
+			 FROM agent_profiles WHERE id = $1`, *task.AssigneeID,
+		).Scan(&agentCB); err == nil && agentCB != "" {
+			completionBehavior = agentCB
+		}
+	}
+	task.CompletionBehavior = completionBehavior
+
 	tx, err := h.DB.Begin()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create task"})
@@ -224,11 +237,11 @@ func (h *TaskHandler) Create(c *gin.Context) {
 
 	_, err = tx.Exec(
 		`INSERT INTO tasks (id, user_id, workspace_id, title, description, status, project_id,
-		 parent_id, assignee_id, assignee_type, priority, due_at, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+		 parent_id, assignee_id, assignee_type, priority, due_at, completion_behavior, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
 		task.ID, task.UserID, workspaceID, task.Title, task.Description, task.Status,
 		task.ProjectID, task.ParentID, task.AssigneeID, task.AssigneeType,
-		task.Priority, task.DueAt, task.CreatedAt, task.UpdatedAt,
+		task.Priority, task.DueAt, task.CompletionBehavior, task.CreatedAt, task.UpdatedAt,
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create task"})
