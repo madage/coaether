@@ -333,11 +333,13 @@ func (s *TaskService) handleInProgressToReview(taskID string, snap taskSnapshot,
 			}
 			comment = latestComment
 		}
-		s.DB.Exec(
+		if _, err := s.DB.Exec(
 			`INSERT INTO task_reviews (id, task_id, reviewer_agent_id, action, comment, loop_count, created_at)
 			 VALUES ($1, $2, $3, 'submitted', $4, $5, $6)`,
 			reviewID, taskID, opts.AgentProfileID, comment, snap.AgentLoopCount+1, now,
-		)
+		); err != nil {
+			log.Printf("[TaskService] Failed to insert review record for task %s: %v", safe8(taskID), err)
+		}
 	}
 
 	// 3. Completion-behavior-specific review setup
@@ -348,13 +350,15 @@ func (s *TaskService) handleInProgressToReview(taskID string, snap taskSnapshot,
 		if creatorID != "" {
 			commentID := uuid.New().String()
 			now := time.Now()
-			s.DB.Exec(
+			if _, err := s.DB.Exec(
 				`INSERT INTO task_comments (id, task_id, user_id, agent_profile_id, content, is_agent_comment, created_at, updated_at)
 				 VALUES ($1, $2, $3, NULL, $4, true, $5, $5)`,
 				commentID, taskID, creatorID,
 				fmt.Sprintf("@%s 任务「%s」的分解方案已准备好，请审核并批准子任务。", creatorID, taskTitle),
 				now,
-			)
+			); err != nil {
+				log.Printf("[TaskService] Failed to insert decomposition-comment for task %s: %v", safe8(taskID), err)
+			}
 		}
 	}
 
