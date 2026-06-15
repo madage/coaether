@@ -570,8 +570,12 @@ esac
 
 echo "Downloading agent-runtime for ${OS}/${ARCH}..."
 mkdir -p "$HOME/.coaether"
-curl -sL --connect-timeout 5 --max-time 30 "${SERVER_BASE}/api/nodes/bin/${OS}/${ARCH}" -o "$HOME/.coaether/agent-runtime" || { echo "Failed to download agent-runtime"; exit 1; }
+curl -sL --connect-timeout 5 --max-time 30 "${SERVER_BASE}/api/nodes/bin/agent-runtime/${OS}/${ARCH}" -o "$HOME/.coaether/agent-runtime" || { echo "Failed to download agent-runtime"; exit 1; }
 chmod +x "$HOME/.coaether/agent-runtime"
+
+echo "Downloading mcp-server for ${OS}/${ARCH}..."
+curl -sL --connect-timeout 5 --max-time 30 "${SERVER_BASE}/api/nodes/bin/mcp-server/${OS}/${ARCH}" -o "$HOME/.coaether/mcp-server" || { echo "Failed to download mcp-server"; exit 1; }
+chmod +x "$HOME/.coaether/mcp-server"
 
 # Install Claude Code CLI if not already installed
 if ! command -v claude &>/dev/null; then
@@ -737,9 +741,17 @@ New-Item -ItemType Directory -Force -Path $DIR | Out-Null
 # Download binary
 Write-Host "Downloading agent-runtime for windows/${ARCH}..."
 try {
-    Invoke-WebRequest -Uri "${SERVER_BASE}/api/nodes/bin/windows/${ARCH}" -OutFile "$DIR\\agent-runtime.exe" -TimeoutSec 30 -ErrorAction Stop
+    Invoke-WebRequest -Uri "${SERVER_BASE}/api/nodes/bin/agent-runtime/windows/${ARCH}" -OutFile "$DIR\\agent-runtime.exe" -TimeoutSec 30 -ErrorAction Stop
 } catch {
     Write-Host "Failed to download agent-runtime: $_"
+    exit 1
+}
+
+Write-Host "Downloading mcp-server for windows/${ARCH}..."
+try {
+    Invoke-WebRequest -Uri "${SERVER_BASE}/api/nodes/bin/mcp-server/windows/${ARCH}" -OutFile "$DIR\\mcp-server.exe" -TimeoutSec 30 -ErrorAction Stop
+} catch {
+    Write-Host "Failed to download mcp-server: $_"
     exit 1
 }
 
@@ -793,59 +805,43 @@ Write-Host "View process: Get-Process agent-runtime"
 	c.String(http.StatusOK, script)
 }
 
-// DownloadBinary serves pre-compiled agent-runtime binaries for remote platforms.
-
-func (h *NodeHandler) DownloadBinary(c *gin.Context) {
-
+// serveBinary looks up and serves a pre-compiled binary for the given os/arch.
+func (h *NodeHandler) serveBinary(c *gin.Context, binaryName string) {
 	osName := c.Param("os")
-
 	arch := c.Param("arch")
-
 	if arch != "amd64" && arch != "arm64" {
-
 		c.String(http.StatusBadRequest, "unsupported arch: "+arch)
-
 		return
-
 	}
 
-	// Try multiple possible locations for the binary
+	exeName := binaryName
+	if osName == "windows" {
+		exeName += ".exe"
+	}
 
 	paths := []string{
-
-		filepath.Join(binaryDir, osName+"-"+arch, "agent-runtime"),
-
-		filepath.Join(binaryDir, osName+"-"+arch, "agent-runtime.exe"),
-
-		filepath.Join("..", binaryDir, osName+"-"+arch, "agent-runtime"),
-
-		filepath.Join("..", binaryDir, osName+"-"+arch, "agent-runtime.exe"),
+		filepath.Join(binaryDir, osName+"-"+arch, exeName),
+		filepath.Join("..", binaryDir, osName+"-"+arch, exeName),
 	}
-
-	var foundPath string
 
 	for _, p := range paths {
-
 		if _, err := os.Stat(p); err == nil {
-
-			foundPath = p
-
-			break
-
+			c.File(p)
+			return
 		}
-
 	}
 
-	if foundPath == "" {
+	c.String(http.StatusNotFound, fmt.Sprintf("%s not found for %s/%s", binaryName, osName, arch))
+}
 
-		c.String(http.StatusNotFound, "binary not found for "+osName+"/"+arch)
+// DownloadAgentBinary serves pre-compiled agent-runtime binaries for remote platforms.
+func (h *NodeHandler) DownloadAgentBinary(c *gin.Context) {
+	h.serveBinary(c, "agent-runtime")
+}
 
-		return
-
-	}
-
-	c.File(foundPath)
-
+// DownloadMcpBinary serves pre-compiled mcp-server binaries for remote platforms.
+func (h *NodeHandler) DownloadMcpBinary(c *gin.Context) {
+	h.serveBinary(c, "mcp-server")
 }
 
 // StartNode generates a command for the user to run agent-runtime on the target machine.

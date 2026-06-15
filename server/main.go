@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"log"
+	"net/http"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -309,7 +312,8 @@ func main() {
 
 	r.GET("/api/nodes/install.ps1", nodeH.InstallScriptPS1)
 
-	r.GET("/api/nodes/bin/:os/:arch", nodeH.DownloadBinary)
+	r.GET("/api/nodes/bin/agent-runtime/:os/:arch", nodeH.DownloadAgentBinary)
+	r.GET("/api/nodes/bin/mcp-server/:os/:arch", nodeH.DownloadMcpBinary)
 
 	// Node-agent routes (auth via node_secret query param)
 
@@ -561,6 +565,28 @@ func main() {
 		log.Printf("[Server] Auto-started plugins: %v", started)
 	}
 	
+	// Serve static frontend and SPA fallback
+	webuiDir := "webui"
+	if _, err := os.Stat(webuiDir); err == nil {
+		r.NoRoute(func(c *gin.Context) {
+			path := c.Request.URL.Path
+			// Let API/WS routes 404 normally if not matched
+			if len(path) >= 4 && (path[:4] == "/api" || path[:3] == "/ws") {
+				c.JSON(404, gin.H{"error": "not found"})
+				return
+			}
+			// Try to serve static file
+			fsPath := filepath.Join(webuiDir, path)
+			if _, err := os.Stat(fsPath); err == nil {
+				http.ServeFile(c.Writer, c.Request, fsPath)
+				return
+			}
+			// SPA fallback
+			http.ServeFile(c.Writer, c.Request, filepath.Join(webuiDir, "index.html"))
+		})
+		log.Printf("[Server] Static frontend enabled: %s", webuiDir)
+	}
+
 	log.Printf("[Server] Starting on :%s", cfg.ServerPort)
 
 	if err := r.Run(":" + cfg.ServerPort); err != nil {

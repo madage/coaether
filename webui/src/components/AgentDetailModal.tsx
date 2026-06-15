@@ -4,6 +4,18 @@ import { agentProfiles, nodes, agents, tools, agentFolders } from '../api/client
 import { useLang } from '../i18n/context';
 import type { SystemTool } from '../types';
 
+// Normalize capabilities to string[] regardless of storage format.
+// Backend supports both ["tool"] and {"tools":["tool"]}; frontend needs string[].
+function normalizeCapabilities(caps: unknown): string[] {
+  if (!caps) return [];
+  if (Array.isArray(caps)) return caps as string[];
+  if (typeof caps === 'object' && 'tools' in (caps as Record<string, unknown>)) {
+    const tools = (caps as Record<string, unknown>).tools;
+    return Array.isArray(tools) ? tools as string[] : [];
+  }
+  return [];
+}
+
 interface AgentDetailModalProps {
   profile: AgentProfile;
   runtimeName?: string;
@@ -72,7 +84,7 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
   const [editMaxReviewLoops, setEditMaxReviewLoops] = useState(profile.max_review_loops ?? 3);
   const [editMaxDepth, setEditMaxDepth] = useState(profile.max_depth ?? 5);
   const [editCompletionBehavior, setEditCompletionBehavior] = useState(profile.completion_behavior || 'auto_done');
-  const [editCapabilities, setEditCapabilities] = useState<string[]>(profile.capabilities || []);
+  const [editCapabilities, setEditCapabilities] = useState<string[]>(normalizeCapabilities(profile.capabilities));
   const [editNodeId, setEditNodeId] = useState(profile.node_id || '');
   const [editAgentId, setEditAgentId] = useState(profile.agent_id);
   const [nodeList, setNodeList] = useState<Node[]>([]);
@@ -185,7 +197,7 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
     setEditSkills(profile.skills?.join(', ') || '');
     setEditAgentId(profile.agent_id);
     setEditNodeId(profile.node_id || '');
-    setEditCapabilities(profile.capabilities || []);
+    setEditCapabilities(normalizeCapabilities(profile.capabilities));
     setEditing(false);
   };
 
@@ -611,13 +623,13 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
               </div>
             )}
 
-            {profile.capabilities && profile.capabilities.length > 0 && (
+            {(() => { const caps = normalizeCapabilities(profile.capabilities); return caps.length > 0; })() && (
               <div style={{ marginBottom: '16px' }}>
                 <div style={{ fontWeight: 600, color: '#333', fontSize: '0.9em', marginBottom: '8px' }}>
                   {t('agentCapabilities')}
                 </div>
                 <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                  {profile.capabilities.map((cap, i) => {
+                  {normalizeCapabilities(profile.capabilities).map((cap, i) => {
                     const isDisabled = disabledTools.has(cap);
                     return (
                     <span key={i} style={{
