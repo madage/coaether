@@ -94,6 +94,9 @@ func (r *Runtime) Run() error {
 
 	r.sendHello()
 
+	// Recover session state from workspace directories before starting queue poller
+	r.scanWorkspaces()
+
 	// Start agent queue poller for autonomous task processing
 	r.startQueuePoller()
 
@@ -943,7 +946,9 @@ func (r *Runtime) registerBackends() {
 		// Configure MCP server path so .mcp.json is written for each session
 		mcpServerPath := "mcp-server.exe"
 		if exe, err := os.Executable(); err == nil {
-			exePath := filepath.Join(filepath.Dir(exe), "mcp-server.exe")
+			exeDir := filepath.Dir(exe)
+			backends.WorkspaceBaseDir = exeDir
+			exePath := filepath.Join(exeDir, "mcp-server.exe")
 			if _, err := os.Stat(exePath); err == nil {
 				mcpServerPath = exePath
 			}
@@ -1014,6 +1019,76 @@ func (r *Runtime) handleSessionComplete(sessionID, result, stopReason string, is
 		log.Printf("[Runtime] Queue %s updated to %s", queueID[:8], status)
 	} else {
 		log.Printf("[Runtime] Queue update returned %d", resp.StatusCode)
+	}
+}
+
+// scanWorkspaces recovers session state from workspace directories after a restart.
+// Active sessions (crashed) are marked as failed on the server.
+// Recently completed sessions are restored to resumeSessions for review/rework cycles.
+func (r *Runtime) scanWorkspaces() {
+	matches, err := filepath.Glob(filepath.Join(backends.WorkspaceBaseDir, "workspaces", "*", backends.SessionFileName))
+	if err != nil || len(matches) == 0 {
+		return
+	}
+	log.Printf("[Runtime] Scanning %d workspace(s) for session recovery...", len(matches))
+
+	baseURL := "http://" + r.ServerURL
+	auth := fmt.Sprintf("node_id=%s&node_secret=%s", r.NodeID, r.Secret)
+	cli, _ := r.backends["claude"].(*backends.ClaudeCLIBackend)
+	now := time.Now()
+	recovered := 0
+	cleaned := 0
+
+	for _, f := range matches {
+		wsDir := filepath.Dir(f)
+		state, err := backends.ReadSessionState(wsDir)
+		if err != nil {
+			continue
+		}
+
+		switch state.Status {
+		case "active":
+			// Crashed session — mark queue item as failed so server can reschedule
+			if state.QueueID != "" {
+				u := fmt.Sprintf("%s/api/node/queue/%s/status?%s", baseURL, state.QueueID, auth)
+				body := map[string]string{"status": "failed", "result_summary": "node restarted"}
+				bodyBytes, _ := json.Marshal(body)
+				req, _ := http.NewRequest("PUT", u, bytes.NewBuffer(bodyBytes))
+				req.Header.Set("Content-Type", "application/json")
+				if resp, err := http.DefaultClient.Do(req); err == nil {
+					resp.Body.Close()
+					log.Printf("[Runtime] Recovery: marked queue %s as failed (task %s, agent %s)",
+						state.QueueID[:8], state.TaskID[:8], state.AgentProfileID[:8])
+				}
+			}
+			backends.DeleteSessionState(wsDir)
+			cleaned++
+
+		case "completed":
+			updatedAt, err := time.Parse(time.RFC3339, state.UpdatedAt)
+			if err != nil || now.Sub(updatedAt) > 30*time.Minute {
+				backends.DeleteSessionState(wsDir)
+				cleaned++
+				continue
+			}
+			// Recent completion — rebuild resume mapping for pending review/rework
+			if cli != nil && state.ClaudeSessionID != "" {
+				wsKey := backends.WorkspaceKey(state.TaskID, state.AgentProfileID)
+				if wsKey != "" {
+					cli.RestoreResumeSession(wsKey, state.ClaudeSessionID)
+					log.Printf("[Runtime] Recovery: resume session %s → %s", wsKey, state.ClaudeSessionID[:8])
+				}
+			}
+			// Rebuild recentlyCompleted to suppress duplicate @mention triggers
+			r.connMu.Lock()
+			r.recentlyCompleted[state.TaskID+":"+state.AgentProfileID] = updatedAt
+			r.connMu.Unlock()
+			recovered++
+		}
+	}
+
+	if recovered > 0 || cleaned > 0 {
+		log.Printf("[Runtime] Session recovery done: %d resumed, %d cleaned", recovered, cleaned)
 	}
 }
 

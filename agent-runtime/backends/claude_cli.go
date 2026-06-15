@@ -98,6 +98,13 @@ func (b *ClaudeCLIBackend) SetSendFunc(fn func(*protocol.Envelope)) {
 	b.sendFunc = fn
 }
 
+// RestoreResumeSession rebuilds a resume mapping after restart from persisted state.
+func (b *ClaudeCLIBackend) RestoreResumeSession(wsKey, claudeSessionID string) {
+	b.mu.Lock()
+	b.resumeSessions[wsKey] = claudeSessionID
+	b.mu.Unlock()
+}
+
 func (b *ClaudeCLIBackend) Name() string    { return "Claude Code" }
 func (b *ClaudeCLIBackend) Version() string { return "stream-json" }
 
@@ -213,7 +220,7 @@ func (b *ClaudeCLIBackend) startSession(sessionID, taskID, queueID, profileID, w
 
 	cmd := exec.CommandContext(ctx, b.command, args...)
 	cmd.Env = filterClaudeEnv(os.Environ())
-	wsDir := filepath.Join("workspaces", wsKey)
+	wsDir := filepath.Join(WorkspaceBaseDir, "workspaces", wsKey)
 	if err := os.MkdirAll(wsDir, 0755); err != nil {
 		log.Printf("[ClaudeCLI] Failed to create workspace %s: %v", wsDir, err)
 	} else {
@@ -245,6 +252,20 @@ func (b *ClaudeCLIBackend) startSession(sessionID, taskID, queueID, profileID, w
 			}
 		}
 
+		// Persist session state so agent-runtime can recover after restart
+		if taskID != "" && profileID != "" {
+			state := &SessionState{
+				SessionID:      sessionID,
+				TaskID:         taskID,
+				AgentProfileID: profileID,
+				QueueID:        queueID,
+				Status:         "active",
+				CreatedAt:      time.Now().UTC().Format(time.RFC3339),
+			}
+			if err := WriteSessionState(wsDir, state); err != nil {
+				log.Printf("[ClaudeCLI] Failed to write session state: %v", err)
+			}
+		}
 	}
 
 	stdin, err := cmd.StdinPipe()
@@ -397,6 +418,15 @@ func (b *ClaudeCLIBackend) handleSystemEvent(sess *claudeSession, rawJSON string
 		b.mu.Lock()
 		b.resumeSessions[wsKey] = raw.SessionID
 		b.mu.Unlock()
+
+		// Update on-disk session state with claude native session id
+		wsDir := WorkspaceDir(sess.taskID, sess.profileID)
+		if state, err := ReadSessionState(wsDir); err == nil {
+			state.ClaudeSessionID = raw.SessionID
+			if err := WriteSessionState(wsDir, state); err != nil {
+				log.Printf("[ClaudeCLI] Failed to update session state: %v", err)
+			}
+		}
 	}
 
 	sid := sess.sessionID
@@ -486,6 +516,18 @@ func (b *ClaudeCLIBackend) handleResultEvent(sess *claudeSession, evt *streamJSO
 
 	// Notify caller that this session's claude process completed
 	sess.setCompleted()
+
+	// Mark session state as completed on disk
+	if sess.taskID != "" && sess.profileID != "" {
+		wsDir := WorkspaceDir(sess.taskID, sess.profileID)
+		if state, err := ReadSessionState(wsDir); err == nil {
+			state.Status = "completed"
+			if err := WriteSessionState(wsDir, state); err != nil {
+				log.Printf("[ClaudeCLI] Failed to mark session completed: %v", err)
+			}
+		}
+	}
+
 	if b.onComplete != nil {
 		b.onComplete(sess.sessionID, evt.Result, evt.StopReason, evt.IsError)
 	}
