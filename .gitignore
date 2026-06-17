@@ -61,6 +61,9 @@ start.ps1
 stop.bat
 stop.ps1
 
+# === Scripts (Python etc.) ===
+*.py
+
 # === Environment & Secrets ===
 .env
 .env.local
