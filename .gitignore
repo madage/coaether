@@ -2,8 +2,9 @@
 adminCoa/
 
 # === Deploy ===
-deploy/
-.taskmaster/
+/deploy/
+/scripts/
+/.taskmaster/
 
 # === Vite ===
 .vite/
@@ -38,7 +39,10 @@ webui/build/
 *.tsbuildinfo
 
 # === Claude Code ===
-.claude/
+.claude/settings.json
+.claude/settings.local.json
+.claude/skills/@codragraph/
+.claude/worktrees/
 .sessions/
 
 # === IDE & Editor ===
