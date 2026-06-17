@@ -76,12 +76,12 @@ service-account.json
 prompt.md
 
 # === Docs ===
-doc/
-docs/
-documents/
-文档/
-技术文档/
-产品说明/
+/doc/
+/documents/
+/文档/
+/技术文档/
+/产品说明/
+/docs文档/
 
 # === Logs ===
 *.log
