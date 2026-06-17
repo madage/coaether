@@ -12,8 +12,6 @@ import (
 var cstZone = time.FixedZone("CST", 8*3600)
 
 func formatTime(t time.Time) string {
-	// DB stores timestamp without time zone in CST; Go reads it as UTC.
-	// Reinterpret the same wall-clock time with CST zone for RFC3339 output.
 	cst := time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), cstZone)
 	return cst.Format(time.RFC3339)
 }
@@ -46,6 +44,17 @@ func parsePage(c *gin.Context) (page, size, offset int) {
 	return
 }
 
+// requireWorkspaceID returns the validated workspace_id from context,
+// or aborts with 400 if not provided.
+func requireWorkspaceID(c *gin.Context) (string, bool) {
+	wsID, _ := c.Get("validated_workspace_id")
+	if wsID == nil || wsID.(string) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "workspace_id is required"})
+		return "", false
+	}
+	return wsID.(string), true
+}
+
 // ========== Agent Tool Logs ==========
 
 type agentToolLogItem struct {
@@ -62,17 +71,26 @@ type agentToolLogItem struct {
 }
 
 func (h *LogHandler) AgentToolLogs(c *gin.Context) {
+	wsID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
 	page, size, offset := parsePage(c)
 
 	var total int
-	h.DB.QueryRow(`SELECT COUNT(*) FROM agent_tool_logs`).Scan(&total)
+	h.DB.QueryRow(
+		`SELECT COUNT(*) FROM agent_tool_logs l
+		 LEFT JOIN agent_profiles p ON l.agent_id = p.id
+		 WHERE p.workspace_id = $1`, wsID,
+	).Scan(&total)
 
 	rows, err := h.DB.Query(
 		`SELECT l.id, l.agent_id, COALESCE(p.name, ''), l.workflow_id, l.task_id,
 			l.tool_name, l.parameters::text, l.status, COALESCE(l.deny_reason, ''), l.created_at
 		 FROM agent_tool_logs l
 		 LEFT JOIN agent_profiles p ON l.agent_id = p.id
-		 ORDER BY l.created_at DESC LIMIT $1 OFFSET $2`, size, offset,
+		 WHERE p.workspace_id = $1
+		 ORDER BY l.created_at DESC LIMIT $2 OFFSET $3`, wsID, size, offset,
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "query failed"})
@@ -109,8 +127,11 @@ type accessLogItem struct {
 }
 
 func (h *LogHandler) AccessLogs(c *gin.Context) {
+	wsID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
 	page, size, offset := parsePage(c)
-
 	pathFilter := c.Query("path")
 
 	var total int
@@ -118,17 +139,30 @@ func (h *LogHandler) AccessLogs(c *gin.Context) {
 	var err error
 
 	if pathFilter != "" {
-		h.DB.QueryRow(`SELECT COUNT(*) FROM access_logs WHERE path ILIKE $1`, "%"+pathFilter+"%").Scan(&total)
+		h.DB.QueryRow(
+			`SELECT COUNT(*) FROM access_logs a
+			 WHERE a.path ILIKE $1
+			 AND a.user_id IN (SELECT user_id FROM workspace_members WHERE workspace_id = $2)`,
+			"%"+pathFilter+"%", wsID,
+		).Scan(&total)
 		rows, err = h.DB.Query(
 			`SELECT id, COALESCE(user_id,''), username, method, path, status, latency_ms, client_ip, created_at
-			 FROM access_logs WHERE path ILIKE $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
-			"%"+pathFilter+"%", size, offset,
+			 FROM access_logs
+			 WHERE path ILIKE $1
+			 AND user_id IN (SELECT user_id FROM workspace_members WHERE workspace_id = $2)
+			 ORDER BY created_at DESC LIMIT $3 OFFSET $4`,
+			"%"+pathFilter+"%", wsID, size, offset,
 		)
 	} else {
-		h.DB.QueryRow(`SELECT COUNT(*) FROM access_logs`).Scan(&total)
+		h.DB.QueryRow(
+			`SELECT COUNT(*) FROM access_logs
+			 WHERE user_id IN (SELECT user_id FROM workspace_members WHERE workspace_id = $1)`, wsID,
+		).Scan(&total)
 		rows, err = h.DB.Query(
 			`SELECT id, COALESCE(user_id,''), username, method, path, status, latency_ms, client_ip, created_at
-			 FROM access_logs ORDER BY created_at DESC LIMIT $1 OFFSET $2`, size, offset,
+			 FROM access_logs
+			 WHERE user_id IN (SELECT user_id FROM workspace_members WHERE workspace_id = $1)
+			 ORDER BY created_at DESC LIMIT $2 OFFSET $3`, wsID, size, offset,
 		)
 	}
 	if err != nil {
@@ -167,17 +201,27 @@ type tokenUsageItem struct {
 }
 
 func (h *LogHandler) TokenUsage(c *gin.Context) {
+	wsID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
 	page, size, offset := parsePage(c)
 
 	var total int
-	h.DB.QueryRow(`SELECT COUNT(*) FROM token_usage`).Scan(&total)
+	h.DB.QueryRow(
+		`SELECT COUNT(*) FROM token_usage t
+		 LEFT JOIN workflows w ON t.workflow_id = w.id
+		 WHERE w.workspace_id = $1`, wsID,
+	).Scan(&total)
 
 	rows, err := h.DB.Query(
 		`SELECT t.id, t.workflow_id, t.task_id, t.agent_profile_id, COALESCE(p.name,''),
 			t.session_id, t.prompt_tokens, t.completion_tokens, t.total_tokens, t.stage, t.created_at
 		 FROM token_usage t
+		 LEFT JOIN workflows w ON t.workflow_id = w.id
 		 LEFT JOIN agent_profiles p ON t.agent_profile_id = p.id
-		 ORDER BY t.created_at DESC LIMIT $1 OFFSET $2`, size, offset,
+		 WHERE w.workspace_id = $1
+		 ORDER BY t.created_at DESC LIMIT $2 OFFSET $3`, wsID, size, offset,
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "query failed"})
@@ -211,12 +255,29 @@ type systemEventItem struct {
 }
 
 func (h *LogHandler) SystemEvents(c *gin.Context) {
+	wsID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
 	page, size, offset := parsePage(c)
 
 	var eCount, rCount, aCount int
-	h.DB.QueryRow(`SELECT COUNT(*) FROM workflow_escalations`).Scan(&eCount)
-	h.DB.QueryRow(`SELECT COUNT(*) FROM task_reviews`).Scan(&rCount)
-	h.DB.QueryRow(`SELECT COUNT(*) FROM app_events`).Scan(&aCount)
+	h.DB.QueryRow(
+		`SELECT COUNT(*) FROM workflow_escalations e
+		 JOIN workflows w ON e.workflow_id = w.id
+		 WHERE w.workspace_id = $1`, wsID,
+	).Scan(&eCount)
+	h.DB.QueryRow(
+		`SELECT COUNT(*) FROM task_reviews r
+		 JOIN tasks t ON r.task_id = t.id
+		 WHERE t.workspace_id = $1`, wsID,
+	).Scan(&rCount)
+	h.DB.QueryRow(
+		`SELECT COUNT(*) FROM app_events a
+		 LEFT JOIN tasks t ON a.task_id = t.id
+		 LEFT JOIN agent_profiles p ON a.agent_id = p.id
+		 WHERE (t.workspace_id = $1 OR p.workspace_id = $1)`, wsID,
+	).Scan(&aCount)
 	total := eCount + rCount + aCount
 
 	items := make([]systemEventItem, 0, size)
@@ -228,8 +289,11 @@ func (h *LogHandler) SystemEvents(c *gin.Context) {
 	}
 	eOffset := offset / 3
 	eRows, err := h.DB.Query(
-		`SELECT id, workflow_id, task_id, level, trigger_reason, action_taken, created_at
-		 FROM workflow_escalations ORDER BY created_at DESC LIMIT $1 OFFSET $2`, eLimit, eOffset,
+		`SELECT e.id, e.workflow_id, e.task_id, e.level, e.trigger_reason, e.action_taken, e.created_at
+		 FROM workflow_escalations e
+		 JOIN workflows w ON e.workflow_id = w.id
+		 WHERE w.workspace_id = $1
+		 ORDER BY e.created_at DESC LIMIT $2 OFFSET $3`, wsID, eLimit, eOffset,
 	)
 	if err == nil {
 		defer eRows.Close()
@@ -258,8 +322,11 @@ func (h *LogHandler) SystemEvents(c *gin.Context) {
 	rOffset := offset / 3
 	rRows, err := h.DB.Query(
 		`SELECT r.id, r.task_id, r.action, COALESCE(r.comment,''), COALESCE(u.username,''), r.created_at
-		 FROM task_reviews r LEFT JOIN users u ON r.reviewer_id = u.id
-		 ORDER BY r.created_at DESC LIMIT $1 OFFSET $2`, rLimit, rOffset,
+		 FROM task_reviews r
+		 JOIN tasks t ON r.task_id = t.id
+		 LEFT JOIN users u ON r.reviewer_id = u.id
+		 WHERE t.workspace_id = $1
+		 ORDER BY r.created_at DESC LIMIT $2 OFFSET $3`, wsID, rLimit, rOffset,
 	)
 	if err == nil {
 		defer rRows.Close()
@@ -286,8 +353,13 @@ func (h *LogHandler) SystemEvents(c *gin.Context) {
 	}
 	aOffset := offset / 3
 	aRows, err := h.DB.Query(
-		`SELECT id, event_type, source, title, detail, COALESCE(task_id,''), COALESCE(agent_id,''), created_at
-		 FROM app_events ORDER BY created_at DESC LIMIT $1 OFFSET $2`, aLimit, aOffset,
+		`SELECT a.id, a.event_type, a.source, a.title, a.detail,
+			COALESCE(a.task_id,''), COALESCE(a.agent_id,''), a.created_at
+		 FROM app_events a
+		 LEFT JOIN tasks t ON a.task_id = t.id
+		 LEFT JOIN agent_profiles p ON a.agent_id = p.id
+		 WHERE (t.workspace_id = $1 OR p.workspace_id = $1)
+		 ORDER BY a.created_at DESC LIMIT $2 OFFSET $3`, wsID, aLimit, aOffset,
 	)
 	if err == nil {
 		defer aRows.Close()

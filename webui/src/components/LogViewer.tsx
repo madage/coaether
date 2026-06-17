@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useContext } from 'react';
 import { logs as logsApi } from '../api/client';
 import type { AgentToolLogItem, AccessLogItem, TokenUsageItem, SystemEventItem, PaginatedResp } from '../types';
 import { useLang } from '../i18n/context';
 import type { TranslationKey } from '../i18n/context';
+import WorkspaceContext from '../hooks/WorkspaceContext';
 
 type LogTab = 'agent' | 'access' | 'token' | 'system';
 type LogItem = AgentToolLogItem | AccessLogItem | TokenUsageItem | SystemEventItem;
@@ -11,6 +12,7 @@ interface TabDef { key: LogTab; label: string; icon: string }
 
 export function LogViewer() {
   const { t } = useLang();
+  const { workspaceId } = useContext(WorkspaceContext);
   const [tab, setTab] = useState<LogTab>('agent');
   const [page, setPage] = useState(1);
   const [pathFilter, setPathFilter] = useState('');
@@ -35,22 +37,22 @@ export function LogViewer() {
     try {
       switch (tab) {
         case 'agent': {
-          const r = await logsApi.agentTool(page, size);
+          const r = await logsApi.agentTool(workspaceId || '', page, size);
           setAgentData(r);
           break;
         }
         case 'access': {
-          const r = await logsApi.access(page, size, pathFilter || undefined);
+          const r = await logsApi.access(workspaceId || '', page, size, pathFilter || undefined);
           setAccessData(r);
           break;
         }
         case 'token': {
-          const r = await logsApi.tokenUsage(page, size);
+          const r = await logsApi.tokenUsage(workspaceId || '', page, size);
           setTokenData(r);
           break;
         }
         case 'system': {
-          const r = await logsApi.systemEvents(page, size);
+          const r = await logsApi.systemEvents(workspaceId || '', page, size);
           setSystemData(r);
           break;
         }

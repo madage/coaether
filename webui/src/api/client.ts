@@ -746,20 +746,20 @@ export const users = {
 
 export const logs = {
 
-  agentTool: (page = 1, size = 30) =>
-    request<PaginatedResp<AgentToolLogItem>>(`/logs/agent-tool?page=${page}&size=${size}`),
+  agentTool: (workspaceId: string, page = 1, size = 30) =>
+    request<PaginatedResp<AgentToolLogItem>>(`/logs/agent-tool?workspace_id=${workspaceId}&page=${page}&size=${size}`),
 
-  access: (page = 1, size = 30, path?: string) => {
-    const qs = new URLSearchParams({ page: String(page), size: String(size) });
+  access: (workspaceId: string, page = 1, size = 30, path?: string) => {
+    const qs = new URLSearchParams({ workspace_id: workspaceId, page: String(page), size: String(size) });
     if (path) qs.set('path', path);
     return request<PaginatedResp<AccessLogItem>>(`/logs/access?${qs}`);
   },
 
-  tokenUsage: (page = 1, size = 30) =>
-    request<PaginatedResp<TokenUsageItem>>(`/logs/token-usage?page=${page}&size=${size}`),
+  tokenUsage: (workspaceId: string, page = 1, size = 30) =>
+    request<PaginatedResp<TokenUsageItem>>(`/logs/token-usage?workspace_id=${workspaceId}&page=${page}&size=${size}`),
 
-  systemEvents: (page = 1, size = 30) =>
-    request<PaginatedResp<SystemEventItem>>(`/logs/system-events?page=${page}&size=${size}`),
+  systemEvents: (workspaceId: string, page = 1, size = 30) =>
+    request<PaginatedResp<SystemEventItem>>(`/logs/system-events?workspace_id=${workspaceId}&page=${page}&size=${size}`),
 
   ruleLogs: (ruleId: string) =>
     request<{ logs: TaskRuleLog[] }>(`/rules/${ruleId}/logs`),
