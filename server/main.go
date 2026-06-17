@@ -286,6 +286,10 @@ func main() {
 
 	r.POST("/api/auth/register", authH.Register)
 
+	r.POST("/api/auth/captcha", authH.SendCaptcha)
+
+	r.GET("/api/auth/captcha/status", authH.GetCaptchaStatus)
+
 	// Public invitation routes (no auth needed — info only)
 
 	r.GET("/api/invitations/:token", workspaceH.GetInvitationByToken)

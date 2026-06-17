@@ -1,3 +1,10 @@
+# === Admin ===
+adminCoa/
+
+# === Deploy ===
+deploy/
+.taskmaster/
+
 # === Vite ===
 .vite/
 

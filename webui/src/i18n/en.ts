@@ -20,6 +20,20 @@ export const en = {
 
   password: 'Password',
 
+  confirmPassword: 'Confirm Password',
+
+  captchaCode: 'Verification Code',
+
+  sendCaptcha: 'Send Code',
+
+  captchaSent: 'Code Sent',
+
+  captchaRetry: 's',
+
+  captchaDefault: 'Default code: ',
+
+  passwordMismatch: 'Passwords do not match',
+
   logout: 'Logout',
 
   alreadyHasAccount: 'Already have an account? Login',

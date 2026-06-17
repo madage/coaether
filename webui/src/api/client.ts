@@ -105,9 +105,9 @@ export const auth = {
 
 
 
-  register: (email: string, password: string, invitationToken?: string) => {
+  register: (email: string, password: string, confirmPassword: string, captchaCode: string, invitationToken?: string) => {
 
-    const body: Record<string, string> = { email, password };
+    const body: Record<string, string> = { email, password, confirm_password: confirmPassword, captcha_code: captchaCode };
 
     if (invitationToken) body.invitation_token = invitationToken;
 
@@ -120,6 +120,20 @@ export const auth = {
     });
 
   },
+
+  sendCaptcha: (email: string) =>
+
+    request<{ message: string; default_code: string; next_send_at: number; expires_at: number }>('/auth/captcha', {
+
+      method: 'POST',
+
+      body: JSON.stringify({ email }),
+
+    }),
+
+  getCaptchaStatus: (email: string) =>
+
+    request<{ next_send_at?: number; expires_at?: number }>('/auth/captcha/status?email=' + encodeURIComponent(email)),
 
 };
 

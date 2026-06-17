@@ -20,6 +20,20 @@ export const zh = {
 
   password: '密码',
 
+  confirmPassword: '确认密码',
+
+  captchaCode: '验证码',
+
+  sendCaptcha: '获取验证码',
+
+  captchaSent: '验证码已发送',
+
+  captchaRetry: '秒后重试',
+
+  captchaDefault: '默认验证码：',
+
+  passwordMismatch: '两次密码不一致',
+
   logout: '退出登录',
 
   alreadyHasAccount: '已有账号？去登录',

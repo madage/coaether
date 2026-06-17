@@ -49,6 +49,11 @@ function App() {
   });
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [captchaCode, setCaptchaCode] = useState('');
+  const [captchaCooldown, setCaptchaCooldown] = useState(0);
+  const [captchaSent, setCaptchaSent] = useState(false);
+  const [captchaDefaultCode, setCaptchaDefaultCode] = useState('');
   const [isRegister, setIsRegister] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const { nodes, sessions, connected: dashboardConnected, subscribeNotification } = useDashboardWSContext();
@@ -62,6 +67,36 @@ function App() {
   useEffect(() => {
     localStorage.setItem('page', page);
   }, [page]);
+
+  // Captcha countdown timer
+  useEffect(() => {
+    if (captchaCooldown <= 0) return;
+    const timer = setInterval(() => {
+      setCaptchaCooldown((prev) => {
+        if (prev <= 1) {
+          localStorage.removeItem('captcha_deadline');
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [captchaCooldown]);
+
+  // Restore captcha countdown on mount (survives refresh)
+  useEffect(() => {
+    const stored = localStorage.getItem('captcha_deadline');
+    if (stored) {
+      const deadline = parseInt(stored, 10);
+      const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+      if (remaining > 0) {
+        setCaptchaCooldown(remaining);
+        setCaptchaSent(true);
+      } else {
+        localStorage.removeItem('captcha_deadline');
+      }
+    }
+  }, []);
 
   // Invitation token from URL
   const [invitationToken, setInvitationToken] = useState<string | null>(null);
@@ -223,6 +258,20 @@ function App() {
   const handleSessionCreated = useCallback(async (sessionID: string) => {
     bus.joinSession(sessionID);
   }, [bus]);
+
+  const handleSendCaptcha = useCallback(async () => {
+    if (!email || captchaCooldown > 0) return;
+    try {
+      const res = await authApi.sendCaptcha(email);
+      const remaining = Math.max(0, Math.ceil((res.next_send_at * 1000 - Date.now()) / 1000));
+      setCaptchaCooldown(remaining);
+      setCaptchaSent(true);
+      setCaptchaDefaultCode(res.default_code || '8888');
+      localStorage.setItem('captcha_deadline', String(Date.now() + remaining * 1000));
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : 'Failed to send code');
+    }
+  }, [email, captchaCooldown]);
 
   const handleSendBlocks = useCallback((blocks: ContentBlock[]) => {
     if (!bus.sessionID) return false;
@@ -464,10 +513,9 @@ function App() {
             e.preventDefault();
             setAuthError(null);
             try {
-              const fn = isRegister
-                ? (email: string, password: string) => authApi.register(email, password, invitationToken || undefined)
-                : authApi.login;
-              const data = await fn(email, password);
+              const data = isRegister
+                ? await authApi.register(email, password, confirmPassword, captchaCode, invitationToken || undefined)
+                : await authApi.login(email, password);
               localStorage.setItem('token', data.token);
               localStorage.setItem('user', JSON.stringify(data.user));
               if (data.workspace_id) {
@@ -499,6 +547,61 @@ function App() {
               />
             </div>
 
+            {isRegister && (
+              <>
+                <div style={{ marginBottom: '16px' }}>
+                  <input
+                    type="password"
+                    placeholder={t('confirmPassword')}
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    style={inputStyle}
+                    required
+                  />
+                  {confirmPassword && password !== confirmPassword && (
+                    <div style={{ color: '#f44336', fontSize: '0.8em', marginTop: '4px' }}>{t('passwordMismatch')}</div>
+                  )}
+                </div>
+                <div style={{ marginBottom: '16px', display: 'flex', gap: '8px' }}>
+                  <input
+                    type="text"
+                    placeholder={t('captchaCode')}
+                    value={captchaCode}
+                    onChange={(e) => setCaptchaCode(e.target.value)}
+                    style={{ ...inputStyle, flex: 1 }}
+                    required
+                    maxLength={4}
+                    pattern="[0-9]{4}"
+                    inputMode="numeric"
+                    autoComplete="off"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSendCaptcha}
+                    disabled={captchaCooldown > 0 || !email}
+                    style={{
+                      padding: '10px 14px',
+                      borderRadius: '6px',
+                      border: '1px solid #1976d2',
+                      background: captchaCooldown > 0 ? '#f5f5f5' : '#fff',
+                      color: captchaCooldown > 0 ? '#999' : '#1976d2',
+                      cursor: captchaCooldown > 0 ? 'default' : 'pointer',
+                      fontSize: '0.85em',
+                      whiteSpace: 'nowrap',
+                      minWidth: '110px',
+                    }}
+                  >
+                    {captchaCooldown > 0 ? `${captchaCooldown}${t('captchaRetry')}` : captchaSent ? t('sendCaptcha') : t('sendCaptcha')}
+                  </button>
+                </div>
+                {captchaSent && (
+                  <div style={{ color: '#999', fontSize: '0.8em', marginBottom: '12px', marginTop: '-8px' }}>
+                    {t('captchaDefault')}{captchaDefaultCode || '8888'}
+                  </div>
+                )}
+              </>
+            )}
+
             {authError && (
               <div style={{ color: '#f44336', marginBottom: '12px', fontSize: '0.9em' }}>{authError}</div>
             )}
@@ -510,7 +613,12 @@ function App() {
             <div style={{ textAlign: 'center', marginTop: '16px' }}>
               <button
                 type="button"
-                onClick={() => setIsRegister(!isRegister)}
+                onClick={() => {
+                  setIsRegister(!isRegister);
+                  setConfirmPassword('');
+                  setCaptchaCode('');
+                  setAuthError(null);
+                }}
                 style={{
                   background: 'none',
                   border: 'none',
