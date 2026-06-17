@@ -264,6 +264,8 @@ func (b *ClaudeCLIBackend) startSession(sessionID, taskID, queueID, profileID, w
 			}
 			if err := WriteSessionState(wsDir, state); err != nil {
 				log.Printf("[ClaudeCLI] Failed to write session state: %v", err)
+			} else {
+				log.Printf("[ClaudeCLI] Wrote .session.json for workspace %s", wsKey)
 			}
 		}
 	}
