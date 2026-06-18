@@ -437,6 +437,11 @@ export const zh = {
   nodeVersion: '版本',
   nodePlatform: '平台',
 
+  // Agent export
+  agentExport: '导出',
+  agentExporting: '导出中...',
+  import: '导入',
+
 
 
   // Plugins

@@ -25,6 +25,7 @@ export function AgentList({ folderId }: { folderId?: string | null }) {
   const [deleteProfileId, setDeleteProfileId] = useState<string | null>(null);
   const [showHelp, setShowHelp] = useState(false);
   const [showAddToFolder, setShowAddToFolder] = useState(false);
+  const [folderMap, setFolderMap] = useState<Record<string, string[]>>({});
 
   const fetchProfiles = useCallback(async () => {
     try {
@@ -72,6 +73,23 @@ export function AgentList({ folderId }: { folderId?: string | null }) {
       setFolderAgentIds(new Set(res.items.map(i => i.agent_profile_id)));
     }).catch(() => setFolderAgentIds(null));
   }, [folderId]);
+
+  // Fetch all folder-to-agent mappings for folder tags on cards
+  useEffect(() => {
+    agentFolders.list().then(async (res) => {
+      const map: Record<string, string[]> = {};
+      await Promise.all(res.folders.map(async (f) => {
+        try {
+          const items = await agentFolders.listItems(f.id);
+          items.items.forEach(item => {
+            if (!map[item.agent_profile_id]) map[item.agent_profile_id] = [];
+            map[item.agent_profile_id].push(f.name);
+          });
+        } catch {}
+      }));
+      setFolderMap(map);
+    }).catch(() => {});
+  }, [profiles]);
 
   useResourceSync('agent_profiles', fetchProfiles);
 
@@ -352,6 +370,7 @@ Review Sample Rate: 1.0`}
             profile={profile}
             runtimeName={agentsMap[profile.agent_id] || profile.agent_id}
             nodeName={(profile.node_id && nodesMap[profile.node_id]) || ''}
+            folderNames={folderMap[profile.id]}
             onClick={() => setSelectedProfile(profile)}
             onToggle={handleToggle}
             onRemoveFromFolder={folderId ? handleRemoveFromFolder : undefined}

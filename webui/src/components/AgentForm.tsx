@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useLang } from '../i18n/context';
-import { agentProfiles, nodes, agents, tools } from '../api/client';
+import { agentProfiles, nodes, agents, tools, agentFolders } from '../api/client';
 import type { Node, Agent, SystemTool } from '../types';
 
 interface AgentFormProps {
@@ -21,9 +21,11 @@ const overlayStyle: React.CSSProperties = {
 const modalStyle: React.CSSProperties = {
   background: '#fff',
   borderRadius: '12px',
-  padding: '32px',
+  padding: '24px',
   width: '520px',
   maxWidth: '90vw',
+  maxHeight: '90vh',
+  overflow: 'auto',
   boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
 };
 
@@ -74,6 +76,48 @@ export function AgentForm({ onClose, onCreated }: AgentFormProps) {
   const [disabledTools, setDisabledTools] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Extra fields not in the form but importable and saved via update after create
+  const extraFieldsRef = useRef<Record<string, any>>({});
+
+  const handleImport = useCallback(() => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const data = JSON.parse(text);
+        if (data.name) setName(data.name);
+        if (data.description) setDescription(data.description);
+        if (data.system_prompt) setSystemPrompt(data.system_prompt);
+        if (data.instructions) setInstructions(data.instructions);
+        if (Array.isArray(data.tags)) setTags(data.tags.join(', '));
+        if (typeof data.max_concurrency === 'number') setMaxConcurrency(data.max_concurrency);
+        if (Array.isArray(data.capabilities)) {
+          setCapabilities(data.capabilities.filter((c: string) => c in capabilityNameKeys));
+        }
+        // Try to set node if it exists and is online
+        if (data.node_id && nodeList.some(n => n.id === data.node_id && (n.status === 'online' || n.status === 'busy'))) {
+          setSelectedNode(data.node_id);
+        }
+        // Store extra fields for post-create update
+        const extra: Record<string, any> = {};
+        if (Array.isArray(data.skills) && data.skills.length > 0) extra.skills = data.skills;
+        if (data.completion_behavior) extra.completion_behavior = data.completion_behavior;
+        if (typeof data.max_review_loops === 'number') extra.max_review_loops = data.max_review_loops;
+        if (typeof data.max_depth === 'number') extra.max_depth = data.max_depth;
+        if (typeof data.review_sample_rate === 'number') extra.review_sample_rate = data.review_sample_rate;
+        if (typeof data.review_timeout === 'number') extra.review_timeout = data.review_timeout;
+        if (Array.isArray(data.folders) && data.folders.length > 0) extra.folders = data.folders;
+        extraFieldsRef.current = extra;
+      } catch (err) {
+        setError(lang === 'zh' ? '导入失败：JSON 格式无效' : 'Import failed: invalid JSON');
+      }
+    };
+    input.click();
+  }, [nodeList, lang, capabilityNameKeys]);
 
   // Fetch global tool disabled state
   const fetchDisabledTools = useCallback(async () => {
@@ -126,7 +170,7 @@ export function AgentForm({ onClose, onCreated }: AgentFormProps) {
     setSaving(true);
     setError(null);
     try {
-      await agentProfiles.create({
+      const res = await agentProfiles.create({
         name: name.trim(),
         description: description.trim(),
         system_prompt: systemPrompt.trim(),
@@ -137,6 +181,26 @@ export function AgentForm({ onClose, onCreated }: AgentFormProps) {
         max_concurrency: maxConcurrency,
         capabilities: capabilities.length > 0 ? capabilities : undefined,
       });
+      // Apply extra imported fields via update
+      const extra = extraFieldsRef.current;
+      const { folders, ...updateFields } = extra;
+      if (res.id && Object.keys(updateFields).length > 0) {
+        await agentProfiles.update(res.id, updateFields).catch(() => {});
+      }
+      // Restore folder associations by matching folder names
+      if (res.id && Array.isArray(folders) && folders.length > 0) {
+        try {
+          const allFolders = await agentFolders.list();
+          for (const folderName of folders) {
+            let match: any = allFolders.folders.find((f: any) => f.name === folderName);
+            if (!match) {
+              const created = await agentFolders.create({ name: folderName });
+              match = { id: created.id };
+            }
+            await agentFolders.addItem(match.id, res.id).catch(() => {});
+          }
+        } catch {}
+      }
       onCreated();
       onClose();
     } catch (err) {
@@ -152,9 +216,9 @@ export function AgentForm({ onClose, onCreated }: AgentFormProps) {
   return (
     <div style={overlayStyle} onClick={onClose}>
       <div style={modalStyle} onClick={(e) => e.stopPropagation()}>
-        <h2 style={{ margin: '0 0 24px', color: '#1a1a2e' }}>{t('createAgent')}</h2>
+        <h2 style={{ margin: '0 0 16px', color: '#1a1a2e' }}>{t('createAgent')}</h2>
         <form onSubmit={handleSubmit}>
-          <div style={{ marginBottom: '16px' }}>
+          <div style={{ marginBottom: '12px' }}>
             <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
               {t('agentName')} <span style={{ color: '#f44336' }}>*</span>
             </label>
@@ -168,7 +232,7 @@ export function AgentForm({ onClose, onCreated }: AgentFormProps) {
             />
           </div>
 
-          <div style={{ marginBottom: '16px' }}>
+          <div style={{ marginBottom: '12px' }}>
             <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
               {t('agentNode')} <span style={{ color: '#f44336' }}>*</span>
             </label>
@@ -185,7 +249,7 @@ export function AgentForm({ onClose, onCreated }: AgentFormProps) {
             </select>
           </div>
 
-          <div style={{ marginBottom: '16px' }}>
+          <div style={{ marginBottom: '12px' }}>
             <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
               {t('agentRuntime')} <span style={{ color: '#f44336' }}>*</span>
             </label>
@@ -211,7 +275,7 @@ export function AgentForm({ onClose, onCreated }: AgentFormProps) {
             </select>
           </div>
 
-          <div style={{ marginBottom: '16px' }}>
+          <div style={{ marginBottom: '12px' }}>
             <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
               {t('agentDescription')}
             </label>
@@ -219,12 +283,12 @@ export function AgentForm({ onClose, onCreated }: AgentFormProps) {
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder={t('agentDescriptionPlaceholder')}
-              rows={6}
-              style={{ ...inputStyle, resize: 'vertical', minHeight: '140px' }}
+              rows={2}
+              style={{ ...inputStyle, resize: 'vertical', minHeight: '60px' }}
             />
           </div>
 
-          <div style={{ marginBottom: '16px' }}>
+          <div style={{ marginBottom: '12px' }}>
             <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
               {t('maxConcurrency')}
             </label>
@@ -238,17 +302,17 @@ export function AgentForm({ onClose, onCreated }: AgentFormProps) {
             />
           </div>
 
-          <div style={{ marginBottom: '16px' }}>
+          <div style={{ marginBottom: '12px' }}>
             <textarea
               value={systemPrompt}
               onChange={(e) => setSystemPrompt(e.target.value)}
               placeholder={t('systemPromptPlaceholder')}
-              rows={14}
-              style={{ ...inputStyle, resize: 'vertical', fontFamily: 'monospace', fontSize: '0.85em', minHeight: '260px' }}
+              rows={6}
+              style={{ ...inputStyle, resize: 'vertical', fontFamily: 'monospace', fontSize: '0.85em', minHeight: '100px' }}
             />
           </div>
 
-          <div style={{ marginBottom: '16px' }}>
+          <div style={{ marginBottom: '12px' }}>
             <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
               {t('instructions')}
             </label>
@@ -256,12 +320,12 @@ export function AgentForm({ onClose, onCreated }: AgentFormProps) {
               value={instructions}
               onChange={(e) => setInstructions(e.target.value)}
               placeholder={t('instructionsPlaceholder')}
-              rows={4}
-              style={{ ...inputStyle, resize: 'vertical', fontSize: '0.9em', minHeight: '100px' }}
+              rows={2}
+              style={{ ...inputStyle, resize: 'vertical', fontSize: '0.9em', minHeight: '60px' }}
             />
           </div>
 
-          <div style={{ marginBottom: '16px' }}>
+          <div style={{ marginBottom: '12px' }}>
             <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
               {t('abilityTags')} <span style={{ color: '#999', fontWeight: 400, fontSize: '0.85em' }}>({t('optional')})</span>
             </label>
@@ -273,7 +337,7 @@ export function AgentForm({ onClose, onCreated }: AgentFormProps) {
             />
           </div>
 
-          <div style={{ marginBottom: '16px' }}>
+          <div style={{ marginBottom: '12px' }}>
             <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
               {t('agentCapabilities')}
             </label>
@@ -321,24 +385,34 @@ export function AgentForm({ onClose, onCreated }: AgentFormProps) {
             <div style={{ color: '#f44336', marginBottom: '12px', fontSize: '0.9em' }}>{error}</div>
           )}
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleImport}
               style={{
-                padding: '10px 24px', background: '#f5f5f5', color: '#666',
-                border: '1px solid #ddd', borderRadius: '6px', cursor: 'pointer', fontSize: '0.95em',
+                padding: '10px 24px', background: '#fff', color: '#1976d2',
+                border: '1px solid #1976d2', borderRadius: '6px', cursor: 'pointer', fontSize: '0.95em',
               }}
-            >{t('cancel')}</button>
-            <button
-              type="submit"
-              disabled={saving}
-              style={{
-                padding: '10px 24px', background: '#1976d2', color: '#fff',
-                border: 'none', borderRadius: '6px', cursor: saving ? 'not-allowed' : 'pointer',
-                fontSize: '0.95em', fontWeight: 600, opacity: saving ? 0.7 : 1,
-              }}
-            >{saving ? '...' : t('saveAgent')}</button>
+            >📥 {t('import')}</button>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                type="button"
+                onClick={onClose}
+                style={{
+                  padding: '10px 24px', background: '#f5f5f5', color: '#666',
+                  border: '1px solid #ddd', borderRadius: '6px', cursor: 'pointer', fontSize: '0.95em',
+                }}
+              >{t('cancel')}</button>
+              <button
+                type="submit"
+                disabled={saving}
+                style={{
+                  padding: '10px 24px', background: '#1976d2', color: '#fff',
+                  border: 'none', borderRadius: '6px', cursor: saving ? 'not-allowed' : 'pointer',
+                  fontSize: '0.95em', fontWeight: 600, opacity: saving ? 0.7 : 1,
+                }}
+              >{saving ? '...' : t('saveAgent')}</button>
+            </div>
           </div>
         </form>
       </div>

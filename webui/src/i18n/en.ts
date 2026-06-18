@@ -437,6 +437,11 @@ export const en = {
   nodeVersion: 'Version',
   nodePlatform: 'Platform',
 
+  // Agent export
+  agentExport: 'Export',
+  agentExporting: 'Exporting...',
+  import: 'Import',
+
 
 
   // Plugins

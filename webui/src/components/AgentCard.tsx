@@ -1,9 +1,13 @@
+import { useCallback, useState } from 'react';
 import type { AgentProfile } from '../types';
+import { agentProfiles, agentFolders } from '../api/client';
+import { useLang } from '../i18n/context';
 
 interface AgentCardProps {
   profile: AgentProfile;
   runtimeName?: string;
   nodeName?: string;
+  folderNames?: string[];
   onClick: () => void;
   onToggle?: (id: string, enabled: boolean) => void;
   onRemoveFromFolder?: (id: string) => void;
@@ -18,8 +22,38 @@ const cardStyle: React.CSSProperties = {
   overflow: 'hidden',
 };
 
-export function AgentCard({ profile, runtimeName, nodeName, onClick, onToggle, onRemoveFromFolder }: AgentCardProps) {
+export function AgentCard({ profile, runtimeName, nodeName, folderNames, onClick, onToggle, onRemoveFromFolder }: AgentCardProps) {
+  const { t } = useLang();
   const disabled = !profile.enabled;
+  const [exporting, setExporting] = useState(false);
+
+  const handleExport = useCallback(async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setExporting(true);
+    try {
+      const [full, folderRes] = await Promise.all([
+        agentProfiles.get(profile.id),
+        agentFolders.getAgentFolders(profile.id).catch(() => ({ folders: [] })),
+      ]);
+      // Strip ephemeral / internal fields not useful for import
+      const { id, user_id, current_load, enabled, created_at, updated_at, last_active_at, protocol_version, version, model, backend, permissions, ...exportable } = full as any;
+      exportable.folders = (folderRes as any).folders?.map((f: any) => f.name) || [];
+      const json = JSON.stringify(exportable, null, 2);
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${full.name || profile.name}.agent.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Export failed:', err);
+    } finally {
+      setExporting(false);
+    }
+  }, [profile.id, profile.name]);
 
   return (
     <div
@@ -117,6 +151,20 @@ export function AgentCard({ profile, runtimeName, nodeName, onClick, onToggle, o
           margin: '0 0 8px', color: disabled ? '#bbb' : '#888', fontSize: '0.8em',
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
         }}>{profile.description}</p>
+        {folderNames && folderNames.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '4px', marginBottom: '6px' }}>
+            {folderNames.map(fn => (
+              <span key={fn} style={{
+                padding: '1px 8px',
+                background: '#f0f0ff',
+                color: '#6366f1',
+                borderRadius: '10px',
+                fontSize: '0.7em',
+                border: '1px solid #e0e0f8',
+              }}>📁 {fn}</span>
+            ))}
+          </div>
+        )}
         <div style={{ fontSize: '0.75em', color: '#aaa' }}>
           <span style={{ color: profile.enabled ? '#4caf50' : '#9e9e9e' }}>●</span>
           {' '}{runtimeName || profile.agent_id}
@@ -126,6 +174,25 @@ export function AgentCard({ profile, runtimeName, nodeName, onClick, onToggle, o
             {nodeName}
           </div>
         )}
+        <div
+          onClick={handleExport}
+          style={{
+            marginTop: '10px',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '4px',
+            padding: '4px 12px',
+            background: exporting ? '#e0e0e0' : '#f5f5f5',
+            color: exporting ? '#999' : '#666',
+            border: '1px solid #e0e0e0',
+            borderRadius: '6px',
+            cursor: exporting ? 'not-allowed' : 'pointer',
+            fontSize: '0.75em',
+          }}
+          title={t('agentExport')}
+        >
+          {exporting ? '⏳' : '📥'} {exporting ? t('agentExporting') : t('agentExport')}
+        </div>
       </div>
     </div>
   );
