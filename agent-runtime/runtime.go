@@ -652,6 +652,7 @@ type Backend interface {
 
 // saveNodeSecret persists the node_secret to ~/.coaether/env (and optionally node_id).
 func (r *Runtime) saveNodeSecret(secret string) {
+	r.Secret = secret
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		log.Printf("[Runtime] Cannot save node secret: %v", err)
