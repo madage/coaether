@@ -76,6 +76,10 @@ service-account.json
 # === Prompts ===
 prompt.md
 
+# === Config & Meta ===
+CLAUDE.md
+AGENTS.md
+
 # === Docs ===
 /doc/
 /documents/
