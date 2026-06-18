@@ -59,6 +59,8 @@ stop.ps1
 
 # === Scripts (Python etc.) ===
 *.py
+*.bat
+*.txt
 
 # === Environment & Secrets ===
 .env

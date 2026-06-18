@@ -1,3 +1,0 @@
-						reply = string([]rune(reply)[:2000]) + "
-
-...£¨¹ý³¤ÒÑ½Ø¶Ï£©"
