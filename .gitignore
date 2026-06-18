@@ -132,3 +132,4 @@ workspaces/
 
 # === Session workspaces ===
 agent-runtime/workspaces/
+settings.local.json
