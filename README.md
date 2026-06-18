@@ -172,6 +172,13 @@ The system uses a **dual WebSocket channel** architecture:
 - Chinese / English bilingual interface
 - Switch via `useLang()` hook
 
+### Log Management
+- **Agent Tool Logs** — Track every tool call made by agents (tool name, parameters, status, deny reason)
+- **Access Logs** — HTTP request history (method, path, status, latency, client IP)
+- **Token Usage** — Monitor API token consumption by workflow/task/agent/session
+- **System Events** — Aggregated view of workflow escalations, task reviews, and application events
+- **Workspace-scoped isolation** — All log endpoints filter by workspace, users only see logs belonging to their workspace
+
 ### User Management
 - Admins can view all users list
 - Supports user deletion
@@ -392,6 +399,12 @@ All communication is based on JSON `Envelope` format:
 ### User Management
 - `GET /api/users` — User list (admin/owner)
 - `DELETE /api/users/:id` — Delete user (admin/owner)
+
+### Log Management
+- `GET /api/logs/agent-tool?workspace_id=` — Agent tool call logs
+- `GET /api/logs/access?workspace_id=` — HTTP access logs
+- `GET /api/logs/token-usage?workspace_id=` — Token usage records
+- `GET /api/logs/system-events?workspace_id=` — System event stream
 
 > 完整的 API 接口文档请参阅 [Coaether项目API接口文档.md](Coaether项目API接口文档.md)
 

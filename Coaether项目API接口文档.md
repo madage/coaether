@@ -2344,15 +2344,25 @@ Authorization: Bearer coaether_<64-hex-chars>
 
 ## 13. 日志管理
 
-> 日志管理提供 Agent 工具调用、访问日志、Token 用量、系统事件的查询。所有端点支持分页查询。
+> 日志管理提供 Agent 工具调用、访问日志、Token 用量、系统事件的查询。所有端点支持分页查询。**所有日志端点均需要 `workspace_id` 查询参数**，后端基于工作区进行权限隔离，仅返回当前工作区成员的日志记录。
 
 ### 13.1 Agent 工具调用日志
 
 ```
-GET /api/logs/agent-tool?page=1&size=30
+GET /api/logs/agent-tool?workspace_id=xxx&page=1&size=30
 ```
 
 **认证：** JWT
+
+**查询参数：**
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `workspace_id` | string | **是** | 工作区 ID，仅返回该工作区下智能体配置关联的工具调用日志 |
+| `page` | int | 否 | 页码，默认 1 |
+| `size` | int | 否 | 每页条数，默认 30，最大 200 |
+
+**说明：** 该端点通过 JOIN `agent_profiles` 表过滤工作区，仅返回 `agent_profiles.workspace_id` 匹配的日志。
 
 **响应：**
 
@@ -2383,7 +2393,7 @@ GET /api/logs/agent-tool?page=1&size=30
 ### 13.2 访问日志
 
 ```
-GET /api/logs/access?page=1&size=30&path=/api/tasks
+GET /api/logs/access?workspace_id=xxx&page=1&size=30&path=/api/tasks
 ```
 
 **认证：** JWT
@@ -2392,9 +2402,12 @@ GET /api/logs/access?page=1&size=30&path=/api/tasks
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
+| `workspace_id` | string | **是** | 工作区 ID，仅返回该工作区成员的访问日志 |
 | `page` | int | 否 | 页码，默认 1 |
 | `size` | int | 否 | 每页条数，默认 30 |
 | `path` | string | 否 | 按路径前缀过滤（ILIKE 模糊匹配） |
+
+**说明：** 该端点通过 `user_id IN (SELECT user_id FROM workspace_members WHERE workspace_id = $1)` 过滤工作区，仅返回当前工作区成员产生的访问记录。
 
 **响应：**
 
@@ -2424,10 +2437,20 @@ GET /api/logs/access?page=1&size=30&path=/api/tasks
 ### 13.3 Token 用量日志
 
 ```
-GET /api/logs/token-usage?page=1&size=30
+GET /api/logs/token-usage?workspace_id=xxx&page=1&size=30
 ```
 
 **认证：** JWT
+
+**查询参数：**
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `workspace_id` | string | **是** | 工作区 ID，仅返回该工作区下工作流关联的 Token 用量 |
+| `page` | int | 否 | 页码，默认 1 |
+| `size` | int | 否 | 每页条数，默认 30，最大 200 |
+
+**说明：** 该端点通过 JOIN `workflows` 表过滤工作区（`workflows.workspace_id`），仅返回属于当前工作区工作流的 Token 消耗记录。无关联工作流的记录不会被包含。
 
 **响应：**
 
@@ -2461,10 +2484,18 @@ GET /api/logs/token-usage?page=1&size=30
 ### 13.4 系统事件日志
 
 ```
-GET /api/logs/system-events?page=1&size=30
+GET /api/logs/system-events?workspace_id=xxx&page=1&size=30
 ```
 
 **认证：** JWT
+
+**查询参数：**
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `workspace_id` | string | **是** | 工作区 ID，过滤三个子数据源（熔断/审核/事件） |
+| `page` | int | 否 | 页码，默认 1 |
+| `size` | int | 否 | 每页条数，默认 30，最大 200 |
 
 **响应：**
 
@@ -2486,7 +2517,10 @@ GET /api/logs/system-events?page=1&size=30
 }
 ```
 
-**说明：** 系统事件聚合了工作流熔断记录、任务审核记录和应用事件三类数据源。
+**说明：** 系统事件聚合了工作流熔断记录、任务审核记录和应用事件三类数据源。所有三个数据源均按工作区过滤：
+- `workflow_escalations` — JOIN `workflows` 按 `workflows.workspace_id` 过滤
+- `task_reviews` — JOIN `tasks` 按 `tasks.workspace_id` 过滤
+- `app_events` — LEFT JOIN `tasks`/`agent_profiles` 按 `tasks.workspace_id` 或 `agent_profiles.workspace_id` 过滤
 
 ---
 
@@ -3445,10 +3479,10 @@ GET /api/nodes/bin/:os/:arch
 | 12.2 | 列出 Token | `GET` | `/api/tokens` | JWT（admin/owner） |
 | 12.3 | 创建 Token | `POST` | `/api/tokens` | JWT（admin/owner） |
 | 12.4 | 吊销 Token | `DELETE` | `/api/tokens/:id` | JWT（admin/owner） |
-| 13.1 | Agent 工具调用日志 | `GET` | `/api/logs/agent-tool` | JWT |
-| 13.2 | 访问日志 | `GET` | `/api/logs/access` | JWT |
-| 13.3 | Token 用量日志 | `GET` | `/api/logs/token-usage` | JWT |
-| 13.4 | 系统事件日志 | `GET` | `/api/logs/system-events` | JWT |
+| 13.1 | Agent 工具调用日志 | `GET` | `/api/logs/agent-tool?workspace_id=` | JWT |
+| 13.2 | 访问日志 | `GET` | `/api/logs/access?workspace_id=` | JWT |
+| 13.3 | Token 用量日志 | `GET` | `/api/logs/token-usage?workspace_id=` | JWT |
+| 13.4 | 系统事件日志 | `GET` | `/api/logs/system-events?workspace_id=` | JWT |
 | 14.2 | 创建会话 | `POST` | `/api/sessions` | JWT |
 | 14.3 | 列出会话 | `GET` | `/api/sessions` | JWT |
 | 14.4 | 获取会话 | `GET` | `/api/sessions/:id` | JWT |

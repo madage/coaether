@@ -65,8 +65,10 @@ stop.ps1
 # === Environment & Secrets ===
 .env
 .env.local
+.env.prod
 .env.production
 .env.development
+switch-env.sh
 *.pem
 *.key
 *.cert

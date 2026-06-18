@@ -165,6 +165,13 @@
 - 中文 / English 双语界面
 - 通过 `useLang()` hook 切换
 
+### 日志管理
+- **Agent 工具调用日志** — 追踪每次智能体工具调用（工具名、参数、状态、拒绝原因）
+- **访问日志** — HTTP 请求历史（方法、路径、状态码、延迟、客户端 IP）
+- **Token 用量** — 按工作流/任务/智能体/会话监控 API Token 消耗
+- **系统事件** — 聚合工作流熔断、任务审核、应用事件三类数据源
+- **工作区级权限隔离** — 所有日志端点按工作区过滤，用户只能看到所属工作区的日志记录
+
 ### 用户管理
 - 管理员可查看所有用户列表
 - 支持删除用户
@@ -370,6 +377,12 @@
 ### 用户管理
 - `GET /api/users` — 用户列表（admin/owner）
 - `DELETE /api/users/:id` — 删除用户（admin/owner）
+
+### 日志管理
+- `GET /api/logs/agent-tool?workspace_id=` — Agent 工具调用日志
+- `GET /api/logs/access?workspace_id=` — HTTP 访问日志
+- `GET /api/logs/token-usage?workspace_id=` — Token 用量记录
+- `GET /api/logs/system-events?workspace_id=` — 系统事件流
 
 ---
 
