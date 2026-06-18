@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -347,6 +348,12 @@ func (h *BusHandler) handleEnvelope(from string, env *protocol.Envelope) {
 		}
 		log.Printf("[Bus] Hello from %s", from)
 
+		// Reconnect compensation: push queued tasks to the runtime that just came online
+		if strings.HasPrefix(from, "runtime://") {
+			nodeID := from[len("runtime://"):]
+			h.pushQueuedTasks(nodeID)
+		}
+
 	case protocol.MsgPing:
 		pong := protocol.NewEnvelope("system://bus", from, protocol.MsgPong, nil)
 		h.Bus.Deliver(pong)
@@ -520,4 +527,27 @@ func itoa(n int64) string {
 		n /= 10
 	}
 	return string(buf[i:])
+}
+
+// pushQueuedTasks pushes queued tasks to a runtime that just reconnected.
+func (h *BusHandler) pushQueuedTasks(nodeID string) {
+	rows, err := h.DB.Query(`
+		SELECT q.id, q.task_id, q.agent_profile_id
+		FROM task_agent_queue q
+		JOIN agent_profiles ap ON ap.id = q.agent_profile_id
+		WHERE ap.node_id = $1 AND q.status = 'queued'
+		ORDER BY q.created_at ASC
+	`, nodeID)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var queueID, taskID, agentID string
+		if err := rows.Scan(&queueID, &taskID, &agentID); err != nil {
+			continue
+		}
+		go autoProcessTask(h.DB, h.Bus, taskID, agentID, queueID)
+	}
 }

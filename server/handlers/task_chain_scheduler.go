@@ -257,9 +257,13 @@ func (s *TaskChainScheduler) dispatchToTask(taskID string, req TriggerRequest) {
 		s.Hub.SignalChange("task_agent_queue")
 	}
 
-	// Send MessageBus event for instant notification (mention scenarios)
-	if s.Bus != nil && req.Source == TriggerMention {
-		s.sendMentionEvent(taskID, assigneeID, queueID, req)
+	// Push task to agent runtime via WebSocket
+	if s.Bus != nil {
+		if req.Source == TriggerMention {
+			s.sendMentionEvent(taskID, assigneeID, queueID, req)
+		} else {
+			autoProcessTask(s.DB, s.Bus, taskID, assigneeID, queueID)
+		}
 	}
 }
 
