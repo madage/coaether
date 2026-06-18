@@ -185,9 +185,11 @@ func (h *AgentScheduler) AutoAssign(c *gin.Context) {
 		h.Hub.SignalChange("task_agent_queue")
 	}
 
-	// Queue entry created; runtime queue poller will pick it up naturally.
-	// No need to auto-create a session — the poller runs every 15s.
-}
+		// Push task to agent runtime via WebSocket
+		if h.MessageBus != nil {
+			go autoProcessTask(h.DB, h.MessageBus, taskID, agentID, queueID)
+		}
+	}
 
 // Claim marks a queue item as claimed by an agent.
 func (h *AgentScheduler) Claim(c *gin.Context) {

@@ -6,7 +6,7 @@ interface AddNodeDialogProps {
   onClose: () => void;
 }
 
-type Platform = 'mac' | 'windows';
+type Platform = 'mac' | 'linux' | 'windows';
 
 export function AddNodeDialog({ onClose }: AddNodeDialogProps) {
   const { t } = useLang();
@@ -71,7 +71,7 @@ export function AddNodeDialog({ onClose }: AddNodeDialogProps) {
     }
   }, [nodeName, t]);
 
-  const currentCommand = platform === 'mac' ? command : (commandPS1 || command);
+  const currentCommand = (platform === 'mac' || platform === 'linux') ? command : (commandPS1 || command);
 
   const handleCopy = useCallback(async () => {
     if (!currentCommand) return;
@@ -187,6 +187,17 @@ export function AddNodeDialog({ onClose }: AddNodeDialogProps) {
                 }}
               >
                 {t('runOnMac')}
+              </button>
+              <button
+                onClick={() => { setPlatform('linux'); setCopied(false); }}
+                style={{
+                  padding: '6px 16px', border: 'none', borderRadius: '6px 6px 0 0',
+                  background: platform === 'linux' ? '#1a1a2e' : '#e0e0e0',
+                  color: platform === 'linux' ? '#fff' : '#666',
+                  cursor: 'pointer', fontSize: '0.85em', fontWeight: 500,
+                }}
+              >
+                {t('runOnLinux')}
               </button>
               <button
                 onClick={() => { setPlatform('windows'); setCopied(false); }}

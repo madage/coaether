@@ -512,6 +512,8 @@ export const en = {
 
   runOnMac: 'macOS (bash)',
 
+  runOnLinux: 'Linux (bash)',
+
   runOnWindows: 'Windows (PowerShell)',
 
   copyCommand: 'Copy',

@@ -512,6 +512,8 @@ export const zh = {
 
   runOnMac: 'macOS（bash）',
 
+  runOnLinux: 'Linux（bash）',
+
   runOnWindows: 'Windows（PowerShell）',
 
   copyCommand: '复制',
