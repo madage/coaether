@@ -932,6 +932,166 @@ func (h *NodeHandler) StopNode(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "stopped"})
 }
 
+// UpdateNode sends a node.update message to trigger self-update of the agent-runtime binary.
+func (h *NodeHandler) UpdateNode(c *gin.Context) {
+	nodeID := c.Param("id")
+
+	if ok, msg := h.canControlNode(c, nodeID); !ok {
+		c.JSON(http.StatusForbidden, gin.H{"error": msg})
+		return
+	}
+
+	// Read os/arch from endpoint metadata (runtime sends in MsgHello)
+	osName := "linux"
+	arch := "amd64"
+	if h.Bus != nil {
+		if ep := h.Bus.GetEndpoint("runtime://" + nodeID); ep != nil {
+			if v, ok := ep.Metadata["os"].(string); ok && v != "" {
+				osName = v
+			}
+			if v, ok := ep.Metadata["arch"].(string); ok && v != "" {
+				arch = v
+			}
+		}
+	}
+	// Also check DB if bus metadata is missing
+	if osName == "linux" && arch == "amd64" {
+		var dbOS, dbArch string
+		if err := h.DB.QueryRow(`SELECT os, arch FROM nodes WHERE id = $1`, nodeID).Scan(&dbOS, &dbArch); err == nil {
+			if dbOS != "" {
+				osName = dbOS
+			}
+			if dbArch != "" {
+				arch = dbArch
+			}
+		}
+	}
+
+	ip := getServerIP()
+	_, port, _ := net.SplitHostPort(c.Request.Host)
+	if port == "" {
+		port = "8088"
+	}
+	serverAddr := net.JoinHostPort(ip, port)
+	scheme := "http"
+	if c.Request.TLS != nil {
+		scheme = "https"
+	}
+
+	downloadURL := fmt.Sprintf("%s://%s/api/nodes/bin/agent-runtime/%s/%s", scheme, serverAddr, osName, arch)
+
+	if h.Bus == nil {
+		c.JSON(http.StatusOK, gin.H{"status": "update_dispatched", "download_url": downloadURL})
+		return
+	}
+
+	env := protocol.NewEnvelope("system://bus", "runtime://"+nodeID, protocol.MsgNodeUpdate,
+		&protocol.Payload{
+			Metadata: map[string]any{
+				"download_url": downloadURL,
+				"version":      "0.1.0",
+			},
+		})
+	delivered := h.Bus.Deliver(env)
+	if delivered == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "node is not connected (offline)"})
+		return
+	}
+
+	log.Printf("[NodeHandler] Update dispatched to %s → %s", nodeID[:8], downloadURL)
+	c.JSON(http.StatusOK, gin.H{"status": "update_dispatched"})
+}
+
+// GetNodeConfig returns the current node configuration (server info, version, platform).
+func (h *NodeHandler) GetNodeConfig(c *gin.Context) {
+	nodeID := c.Param("id")
+
+	if ok, msg := h.canControlNode(c, nodeID); !ok {
+		c.JSON(http.StatusForbidden, gin.H{"error": msg})
+		return
+	}
+
+	var osName, arch, version, status string
+	h.DB.QueryRow(`SELECT os, arch, version, status FROM nodes WHERE id = $1`, nodeID).Scan(&osName, &arch, &version, &status)
+
+	connectedServer := ""
+	backupServerURL := ""
+	if h.Bus != nil {
+		if ep := h.Bus.GetEndpoint("runtime://" + nodeID); ep != nil {
+			if v, ok := ep.Metadata["server_url"].(string); ok {
+				connectedServer = v
+			}
+			if v, ok := ep.Metadata["backup_server_url"].(string); ok {
+				backupServerURL = v
+			}
+			if osName == "" {
+				if v, ok := ep.Metadata["os"].(string); ok {
+					osName = v
+				}
+			}
+			if arch == "" {
+				if v, ok := ep.Metadata["arch"].(string); ok {
+					arch = v
+				}
+			}
+			if version == "" {
+				if v, ok := ep.Metadata["version"].(string); ok {
+					version = v
+				}
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"os":                osName,
+		"arch":              arch,
+		"version":           version,
+		"status":            status,
+		"connected_server":  connectedServer,
+		"backup_server_url": backupServerURL,
+	})
+}
+
+// UpdateNodeConfig sends updated server connection config to the node runtime.
+func (h *NodeHandler) UpdateNodeConfig(c *gin.Context) {
+	nodeID := c.Param("id")
+
+	if ok, msg := h.canControlNode(c, nodeID); !ok {
+		c.JSON(http.StatusForbidden, gin.H{"error": msg})
+		return
+	}
+
+	var req struct {
+		ServerURL       string `json:"server_url"`
+		BackupServerURL string `json:"backup_server_url"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if h.Bus == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "message bus not available"})
+		return
+	}
+
+	env := protocol.NewEnvelope("system://bus", "runtime://"+nodeID, protocol.MsgNodeConfigUpdate,
+		&protocol.Payload{
+			Metadata: map[string]any{
+				"server_url":        req.ServerURL,
+				"backup_server_url": req.BackupServerURL,
+			},
+		})
+	delivered := h.Bus.Deliver(env)
+	if delivered == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "node is not connected (offline)"})
+		return
+	}
+
+	log.Printf("[NodeHandler] Config update dispatched to %s", nodeID[:8])
+	c.JSON(http.StatusOK, gin.H{"status": "config_update_dispatched"})
+}
+
 func (h *NodeHandler) canControlNode(c *gin.Context, nodeID string) (bool, string) {
 	userID, _ := c.Get("user_id")
 

@@ -202,6 +202,15 @@ export const nodes = {
 
   stop: (id: string) =>
     request<{ status: string }>(`/nodes/${id}/stop`, { method: 'POST' }),
+
+  update: (id: string) =>
+    request<{ status: string }>(`/nodes/${id}/update`, { method: 'PUT' }),
+
+  getConfig: (id: string) =>
+    request<{ os: string; arch: string; version: string; status: string; connected_server: string; backup_server_url: string }>(`/nodes/${id}/config`),
+
+  updateConfig: (id: string, data: { server_url?: string; backup_server_url?: string }) =>
+    request<{ status: string }>(`/nodes/${id}/config`, { method: 'PUT', body: JSON.stringify(data) }),
 };
 
 

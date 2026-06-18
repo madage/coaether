@@ -422,6 +422,21 @@ export const zh = {
 
   switchLang: 'English',
 
+  // Node Settings
+  nodeSettings: '节点设置',
+  nodeUpdate: '更新',
+  nodeUpdating: '更新中...',
+  nodeUpdateSuccess: '更新指令已发送',
+  currentServer: '当前服务器',
+  backupServer: '备用服务器',
+  backupServerPlaceholder: '输入备用服务器地址...',
+  switchServer: '切换服务器',
+  switchServerConfirm: '确定要切换到备用服务器吗？节点将断开并重连。',
+  serverSaved: '服务器设置已保存',
+  nodeStatus: '状态',
+  nodeVersion: '版本',
+  nodePlatform: '平台',
+
 
 
   // Plugins

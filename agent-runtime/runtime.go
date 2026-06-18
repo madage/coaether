@@ -12,8 +12,10 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -145,8 +147,11 @@ func (r *Runtime) sendHello() {
 	r.send(protocol.NewEnvelope(r.endpoint, "system://bus", protocol.MsgHello,
 		&protocol.Payload{Capabilities: caps, EndpointType: "runtime",
 			Metadata: map[string]any{
-				"name":    r.Name,
-				"version": "0.1.0",
+				"name":       r.Name,
+				"version":    "0.1.0",
+				"os":         runtime.GOOS,
+				"arch":       runtime.GOARCH,
+				"server_url": r.ServerURL,
 			},
 		}))
 }
@@ -236,6 +241,12 @@ func (r *Runtime) handleMessage(env *protocol.Envelope) {
 
 	case protocol.MsgAgentMention:
 		r.handleAgentMention(env)
+
+	case protocol.MsgNodeUpdate:
+		r.handleNodeUpdate(env)
+
+	case protocol.MsgNodeConfigUpdate:
+		r.handleConfigUpdate(env)
 
 	default:
 		log.Printf("[Runtime] Unhandled type: %s", env.Type)
@@ -1179,6 +1190,157 @@ func (r *Runtime) updateQueueStatus(queueID, status, resultSummary string) {
 	}
 	resp.Body.Close()
 	log.Printf("[Runtime] Queue %s → %s (status: %d)", queueID[:8], status, resp.StatusCode)
+}
+
+// handleNodeUpdate downloads and replaces the agent-runtime binary, then restarts.
+func (r *Runtime) handleNodeUpdate(env *protocol.Envelope) {
+	if env.Payload == nil || env.Payload.Metadata == nil {
+		return
+	}
+	downloadURL, _ := env.Payload.Metadata["download_url"].(string)
+	if downloadURL == "" {
+		log.Printf("[Runtime] node.update missing download_url")
+		return
+	}
+
+	log.Printf("[Runtime] Self-update: downloading %s", downloadURL)
+
+	exePath, err := os.Executable()
+	if err != nil {
+		log.Printf("[Runtime] Self-update: cannot find executable: %v", err)
+		return
+	}
+
+	// Download new binary to temp file
+	tmpFile := exePath + ".new"
+	resp, err := http.Get(downloadURL)
+	if err != nil {
+		log.Printf("[Runtime] Self-update: download failed: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	f, err := os.Create(tmpFile)
+	if err != nil {
+		log.Printf("[Runtime] Self-update: cannot create temp file: %v", err)
+		return
+	}
+	if _, err := io.Copy(f, resp.Body); err != nil {
+		f.Close()
+		os.Remove(tmpFile)
+		log.Printf("[Runtime] Self-update: write failed: %v", err)
+		return
+	}
+	f.Close()
+
+	// Make executable on Unix
+	if runtime.GOOS != "windows" {
+		os.Chmod(tmpFile, 0755)
+	}
+
+	log.Printf("[Runtime] Self-update: downloaded to %s, preparing restart", tmpFile)
+
+	homeDir, _ := os.UserHomeDir()
+	pid := os.Getpid()
+
+	var scriptPath string
+	if runtime.GOOS == "windows" {
+		scriptPath = filepath.Join(homeDir, ".coaether", "update.ps1")
+		script := fmt.Sprintf(`$pid = %d
+$tmp = "%s"
+$target = "%s"
+Start-Sleep -Seconds 2
+try {
+    Wait-Process -Id $pid -ErrorAction SilentlyContinue
+} catch {}
+Start-Sleep -Seconds 1
+try {
+    Move-Item -Force -Path $tmp -Destination $target
+} catch {
+    Start-Sleep -Seconds 2
+    Move-Item -Force -Path $tmp -Destination $target
+}
+Start-Process -WindowStyle Hidden -FilePath $target
+`, pid, tmpFile, exePath)
+		os.WriteFile(scriptPath, []byte(script), 0644)
+	} else {
+		scriptPath = filepath.Join(homeDir, ".coaether", "update.sh")
+		script := fmt.Sprintf(`#!/bin/bash
+PID=%d
+TMP="%s"
+TARGET="%s"
+sleep 2
+while kill -0 $PID 2>/dev/null; do sleep 0.5; done
+sleep 1
+mv -f "$TMP" "$TARGET"
+nohup "$TARGET" > /dev/null 2>&1 &
+`, pid, tmpFile, exePath)
+		os.WriteFile(scriptPath, []byte(script), 0755)
+	}
+
+	// Start the helper script detached
+	if runtime.GOOS == "windows" {
+		exec.Command("powershell", "-WindowStyle", "Hidden", "-File", scriptPath).Start()
+	} else {
+		exec.Command("bash", scriptPath).Start()
+	}
+
+	log.Printf("[Runtime] Self-update: helper script started, exiting")
+	r.Shutdown()
+	os.Exit(0)
+}
+
+// handleConfigUpdate updates the server connection config and triggers reconnection.
+func (r *Runtime) handleConfigUpdate(env *protocol.Envelope) {
+	if env.Payload == nil || env.Payload.Metadata == nil {
+		return
+	}
+	serverURL, _ := env.Payload.Metadata["server_url"].(string)
+	backupURL, _ := env.Payload.Metadata["backup_server_url"].(string)
+
+	log.Printf("[Runtime] Config update: server=%s backup=%s", serverURL, backupURL)
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		log.Printf("[Runtime] Config update: cannot find home dir: %v", err)
+		return
+	}
+	envPath := filepath.Join(homeDir, ".coaether", "env")
+
+	data, err := os.ReadFile(envPath)
+	if err != nil {
+		data = []byte("SERVER_URL=\nBACKUP_SERVER_URL=\n")
+	}
+	lines := strings.Split(string(data), "\n")
+
+	updateLine := func(prefix, value string) {
+		for i, line := range lines {
+			if strings.HasPrefix(line, prefix) {
+				lines[i] = prefix + value
+				return
+			}
+		}
+		lines = append(lines, prefix+value)
+	}
+
+	if serverURL != "" {
+		updateLine("SERVER_URL=", serverURL)
+		r.ServerURL = serverURL
+	}
+	if backupURL != "" {
+		updateLine("BACKUP_SERVER_URL=", backupURL)
+	}
+
+	os.WriteFile(envPath, []byte(strings.Join(lines, "\n")), 0644)
+	log.Printf("[Runtime] Config updated in %s, reconnecting...", envPath)
+
+	// Close connection to trigger reconnection to new server
+	r.connMu.Lock()
+	if r.conn != nil {
+		r.conn.Close()
+		r.conn = nil
+	}
+	r.connMu.Unlock()
 }
 
 // truncateStr truncates a string for logging.

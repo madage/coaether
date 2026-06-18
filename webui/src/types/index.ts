@@ -104,6 +104,8 @@ export interface Node {
   created_at: string;
   agents?: Agent[];
   can_manage?: boolean;
+  connected_server?: string;
+  backup_server_url?: string;
 }
 
 // === Session Types ===

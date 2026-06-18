@@ -36,7 +36,9 @@ const (
 	MsgPermissionResponse = "permission.response"
 
 	// Node management
-	MsgNodeStop = "node.stop"
+	MsgNodeStop         = "node.stop"
+	MsgNodeUpdate       = "node.update"
+	MsgNodeConfigUpdate = "node.config_update"
 
 	// Agent task events (server → runtime)
 	MsgAgentTaskTrigger = "agent.task_trigger"

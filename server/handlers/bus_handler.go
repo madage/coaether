@@ -352,6 +352,17 @@ func (h *BusHandler) handleEnvelope(from string, env *protocol.Envelope) {
 		if strings.HasPrefix(from, "runtime://") {
 			nodeID := from[len("runtime://"):]
 			h.pushQueuedTasks(nodeID)
+
+			// Update node os/arch/version from runtime hello metadata
+			if env.Payload != nil && env.Payload.Metadata != nil {
+				os, _ := env.Payload.Metadata["os"].(string)
+				arch, _ := env.Payload.Metadata["arch"].(string)
+				version, _ := env.Payload.Metadata["version"].(string)
+				if os != "" && arch != "" {
+					h.DB.Exec(`UPDATE nodes SET os = COALESCE(NULLIF($1, ''), os), arch = COALESCE(NULLIF($2, ''), arch), version = COALESCE(NULLIF($3, ''), version) WHERE id = $4`,
+						os, arch, version, nodeID)
+				}
+			}
 		}
 
 	case protocol.MsgPing:

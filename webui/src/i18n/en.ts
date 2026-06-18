@@ -422,6 +422,21 @@ export const en = {
 
   switchLang: '中文',
 
+  // Node Settings
+  nodeSettings: 'Node Settings',
+  nodeUpdate: 'Update',
+  nodeUpdating: 'Updating...',
+  nodeUpdateSuccess: 'Update dispatched',
+  currentServer: 'Current Server',
+  backupServer: 'Backup Server',
+  backupServerPlaceholder: 'Enter backup server address...',
+  switchServer: 'Switch Server',
+  switchServerConfirm: 'Switch to backup server? Node will disconnect and reconnect.',
+  serverSaved: 'Server settings saved',
+  nodeStatus: 'Status',
+  nodeVersion: 'Version',
+  nodePlatform: 'Platform',
+
 
 
   // Plugins

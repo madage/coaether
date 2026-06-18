@@ -359,6 +359,9 @@ func main() {
 		api.POST("/nodes/:id/start", nodeH.StartNode)
 
 		api.POST("/nodes/:id/stop", nodeH.StopNode)
+		api.PUT("/nodes/:id/update", nodeH.UpdateNode)
+		api.GET("/nodes/:id/config", nodeH.GetNodeConfig)
+		api.PUT("/nodes/:id/config", nodeH.UpdateNodeConfig)
 
 		api.PATCH("/agents/:id", nodeH.UpdateAgent)
 

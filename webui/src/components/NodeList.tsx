@@ -4,6 +4,7 @@ import { agents as agentsApi, nodes as nodesApi, agentQueue as agentQueueApi, ag
 import { useResourceSync } from '../hooks/useResourceSync';
 import type { Node, Agent, AgentProfile } from '../types';
 import { MathConfirmDialog } from './MathConfirmDialog';
+import { NodeSettingsDialog } from './NodeSettingsDialog';
 
 interface NodeListProps {
   nodes: Node[];
@@ -23,6 +24,8 @@ export function NodeList({ nodes, onSelect }: NodeListProps) {
   const [commandDialog, setCommandDialog] = useState<{command: string; command_ps1: string} | null>(null);
   const [mathConfirmAction, setMathConfirmAction] = useState<{ type: 'stop' | 'remove'; nodeID: string } | null>(null);
   const [workingAgentIds, setWorkingAgentIds] = useState<Set<string>>(new Set());
+  const [settingsNode, setSettingsNode] = useState<Node | null>(null);
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
 
   const fetchWorkingAgents = useCallback(async () => {
     try {
@@ -143,6 +146,23 @@ export function NodeList({ nodes, onSelect }: NodeListProps) {
       }
     }
   }, [mathConfirmAction, t]);
+
+  const handleSettings = useCallback((node: Node, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSettingsNode(node);
+  }, []);
+
+  const handleUpdate = useCallback(async (nodeID: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setUpdatingId(nodeID);
+    try {
+      await nodesApi.update(nodeID);
+    } catch (err) {
+      setErrorDialog(err instanceof Error ? err.message : 'Update failed');
+    } finally {
+      setUpdatingId(null);
+    }
+  }, []);
 
   const handleToggleAgent = useCallback(async (agent: Agent, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -298,6 +318,13 @@ export function NodeList({ nodes, onSelect }: NodeListProps) {
           </div>
         </div>
       )}
+      {/* Node Settings dialog */}
+      {settingsNode && (
+        <NodeSettingsDialog
+          node={settingsNode}
+          onClose={() => setSettingsNode(null)}
+        />
+      )}
       {/* Math confirm dialog */}
       <MathConfirmDialog
         open={mathConfirmAction !== null}
@@ -391,6 +418,21 @@ export function NodeList({ nodes, onSelect }: NodeListProps) {
                     </button>
                     )}
                     <button
+                      onClick={(e) => handleSettings(node, e)}
+                      title={t('nodeSettings')}
+                      style={{
+                        padding: '3px 8px',
+                        background: '#fff',
+                        color: '#666',
+                        border: '1px solid #ddd',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        fontSize: '0.85em',
+                      }}
+                    >
+                      ⚙
+                    </button>
+                    <button
                       onClick={(e) => handleRemove(node.id, node.name, e)}
                       disabled={removing === node.id}
                       style={{
@@ -451,22 +493,40 @@ export function NodeList({ nodes, onSelect }: NodeListProps) {
                       {managing === `start:${node.id}` ? t('nodeStarting') : t('nodeStart')}
                     </button>
                   ) : (
-                    <button
-                      onClick={(e) => handleStop(node.id, e)}
-                      disabled={managing === `stop:${node.id}`}
-                      style={{
-                        padding: '10px 28px',
-                        background: managing === `stop:${node.id}` ? '#ef9a9a' : '#e53935',
-                        color: '#fff',
-                        border: 'none',
-                        borderRadius: '8px',
-                        cursor: managing === `stop:${node.id}` ? 'not-allowed' : 'pointer',
-                        fontSize: '0.95em',
-                        fontWeight: 600,
-                      }}
-                    >
-                      {managing === `stop:${node.id}` ? t('nodeStopping') : t('nodeStop')}
-                    </button>
+                    <>
+                      <button
+                        onClick={(e) => handleUpdate(node.id, e)}
+                        disabled={updatingId === node.id}
+                        style={{
+                          padding: '10px 28px',
+                          background: updatingId === node.id ? '#90caf9' : '#1976d2',
+                          color: '#fff',
+                          border: 'none',
+                          borderRadius: '8px',
+                          cursor: updatingId === node.id ? 'not-allowed' : 'pointer',
+                          fontSize: '0.95em',
+                          fontWeight: 600,
+                        }}
+                      >
+                        {updatingId === node.id ? t('nodeUpdating') : t('nodeUpdate')}
+                      </button>
+                      <button
+                        onClick={(e) => handleStop(node.id, e)}
+                        disabled={managing === `stop:${node.id}`}
+                        style={{
+                          padding: '10px 28px',
+                          background: managing === `stop:${node.id}` ? '#ef9a9a' : '#e53935',
+                          color: '#fff',
+                          border: 'none',
+                          borderRadius: '8px',
+                          cursor: managing === `stop:${node.id}` ? 'not-allowed' : 'pointer',
+                          fontSize: '0.95em',
+                          fontWeight: 600,
+                        }}
+                      >
+                        {managing === `stop:${node.id}` ? t('nodeStopping') : t('nodeStop')}
+                      </button>
+                    </>
                   )}
                 </div>
               </div>
