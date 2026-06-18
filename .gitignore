@@ -39,11 +39,7 @@ webui/build/
 *.tsbuildinfo
 
 # === Claude Code ===
-.claude/settings.json
-.claude/settings.local.json
-.claude/skills/@codragraph/
-.claude/worktrees/
-.sessions/
+.claude/
 
 # === IDE & Editor ===
 .obsidian/
@@ -117,10 +113,16 @@ dev-debug.log
 *.sw?
 # OS specific
 
-# Task files
-# tasks.json
-# tasks/ 
+# === Python Cache ===
+__pycache__/
+.pytest_cache/
+
+# === Workspaces ===
+workspaces/
+
+# === Code Intelligence ===
+.codegraph/
 .codragraph
 
-# Session workspaces
+# === Session workspaces ===
 agent-runtime/workspaces/
