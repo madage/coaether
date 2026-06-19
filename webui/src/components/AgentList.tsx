@@ -6,9 +6,11 @@ import { AgentCreateCard } from './AgentCreateCard';
 import { AgentForm } from './AgentForm';
 import { AgentDetailModal } from './AgentDetailModal';
 import { MathConfirmDialog } from './MathConfirmDialog';
+import { BatchImportDialog } from './BatchImportDialog';
 import { useResourceSync } from '../hooks/useResourceSync';
 import type { AgentProfile, Node } from '../types';
 import { useWorkspace } from '../hooks/WorkspaceContext';
+import JSZip from 'jszip';
 
 export function AgentList({ folderId }: { folderId?: string | null }) {
   const { t, lang } = useLang();
@@ -26,6 +28,8 @@ export function AgentList({ folderId }: { folderId?: string | null }) {
   const [showHelp, setShowHelp] = useState(false);
   const [showAddToFolder, setShowAddToFolder] = useState(false);
   const [folderMap, setFolderMap] = useState<Record<string, string[]>>({});
+  const [showBatchImport, setShowBatchImport] = useState(false);
+  const [batchExporting, setBatchExporting] = useState(false);
 
   const fetchProfiles = useCallback(async () => {
     try {
@@ -155,6 +159,42 @@ export function AgentList({ folderId }: { folderId?: string | null }) {
     ? profiles.filter(p => folderAgentIds.has(p.id))
     : profiles;
 
+  const handleBatchExport = useCallback(async () => {
+    setBatchExporting(true);
+    try {
+      const zip = new JSZip();
+      for (const profile of filteredProfiles) {
+        try {
+          const [full, folderRes] = await Promise.all([
+            agentProfiles.get(profile.id),
+            agentFolders.getAgentFolders(profile.id).catch(() => ({ folders: [] })),
+          ]);
+          const { id, user_id, current_load, enabled, created_at, updated_at, last_active_at, protocol_version, version, model, backend, permissions, ...exportable } = full as any;
+          exportable.folders = (folderRes as any).folders?.map((f: any) => f.name) || [];
+          const json = JSON.stringify(exportable, null, 2);
+          const safeName = (full.name || profile.name || 'agent').replace(/[\\/:*?"<>|]/g, '_');
+          zip.file(`${safeName}.agent.json`, json);
+        } catch {
+          // skip failed ones
+        }
+      }
+      const blob = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const label = folderId ? 'folder-agents' : 'all-agents';
+      a.download = `${label}-${new Date().toISOString().slice(0, 10)}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Batch export failed:', err);
+    } finally {
+      setBatchExporting(false);
+    }
+  }, [filteredProfiles, folderId]);
+
   if (loading) {
     return (
       <div style={{ padding: '24px', color: '#999', textAlign: 'center' }}>
@@ -175,62 +215,26 @@ export function AgentList({ folderId }: { folderId?: string | null }) {
           )}
         </h3>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-          {/* Add agents to folder button */}
-          {folderId && folderAgentIds && (
-            <div style={{ position: 'relative' }}>
+          {/* Batch import/export buttons */}
+          {!isObserver && (
+            <>
               <button
-                onClick={() => setShowAddToFolder(!showAddToFolder)}
+                onClick={() => setShowBatchImport(true)}
                 style={{
-                  padding: '4px 12px', border: '1px dashed #ccc', borderRadius: '6px',
-                  background: '#fff', cursor: 'pointer', fontSize: '0.8em', color: '#666',
+                  padding: '4px 12px', border: '1px dashed #1976d2', borderRadius: '6px',
+                  background: '#fff', cursor: 'pointer', fontSize: '0.8em', color: '#1976d2',
                 }}
-              >+ {t('folderAddAgent') || 'Add Agents'}</button>
-              {showAddToFolder && (
-                <>
-                  <div
-                    onClick={() => setShowAddToFolder(false)}
-                    style={{ position: 'fixed', inset: 0, zIndex: 1050 }}
-                  />
-                  <div style={{
-                    position: 'absolute', top: '100%', right: 0, zIndex: 1060,
-                    background: '#fff', border: '1px solid #eee', borderRadius: '8px',
-                    boxShadow: '0 4px 16px rgba(0,0,0,0.12)', minWidth: '220px',
-                    maxHeight: '300px', overflowY: 'auto', marginTop: '4px',
-                  }}>
-                    {profiles.filter(p => !folderAgentIds.has(p.id)).length === 0 ? (
-                      <div style={{ padding: '12px 16px', color: '#aaa', fontSize: '0.8em', textAlign: 'center' }}>
-                        {lang === 'zh' ? '所有智能体已添加' : 'All agents added'}
-                      </div>
-                    ) : (
-                      profiles.filter(p => !folderAgentIds.has(p.id)).map(p => (
-                        <button
-                          key={p.id}
-                          onClick={async () => {
-                            try {
-                              await agentFolders.addItem(folderId!, p.id);
-                              setFolderAgentIds(prev => prev ? new Set([...prev, p.id]) : new Set([p.id]));
-                            } catch {}
-                          }}
-                          style={{
-                            display: 'flex', alignItems: 'center', gap: '8px',
-                            width: '100%', padding: '8px 16px', border: 'none',
-                            background: 'transparent', cursor: 'pointer',
-                            fontSize: '0.82em', color: '#444', textAlign: 'left',
-                          }}
-                          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = '#f5f7fa'; }}
-                          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
-                        >
-                          <span>{p.avatar || '🤖'}</span>
-                          <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {p.name}
-                          </span>
-                        </button>
-                      ))
-                    )}
-                  </div>
-                </>
-              )}
-            </div>
+              >📥 {lang === 'zh' ? '一键导入' : 'Batch Import'}</button>
+              <button
+                onClick={handleBatchExport}
+                disabled={batchExporting || filteredProfiles.length === 0}
+                style={{
+                  padding: '4px 12px', border: '1px dashed #1976d2', borderRadius: '6px',
+                  background: '#fff', cursor: (batchExporting || filteredProfiles.length === 0) ? 'not-allowed' : 'pointer',
+                  fontSize: '0.8em', color: '#1976d2', opacity: (batchExporting || filteredProfiles.length === 0) ? 0.5 : 1,
+                }}
+              >📤 {batchExporting ? (lang === 'zh' ? '导出中...' : 'Exporting...') : (lang === 'zh' ? '一键导出' : 'Batch Export')}</button>
+            </>
           )}
           <button
             onClick={() => setShowHelp(true)}
@@ -359,6 +363,66 @@ Review Sample Rate: 1.0`}
         </div>
       )}
 
+      {/* Add to folder modal */}
+      {showAddToFolder && folderId && folderAgentIds && (
+        <div onClick={() => setShowAddToFolder(false)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
+            display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1200,
+          }}
+        >
+          <div onClick={e => e.stopPropagation()}
+            style={{
+              background: '#fff', borderRadius: '12px', padding: '24px',
+              width: '480px', maxWidth: '90vw', maxHeight: '70vh',
+              overflow: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.2)',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h3 style={{ margin: 0, fontSize: '1.05em', color: '#1a1a2e' }}>
+                {lang === 'zh' ? '添加智能体到文件夹' : 'Add Agents to Folder'}
+              </h3>
+              <button onClick={() => setShowAddToFolder(false)}
+                style={{ width: '28px', height: '28px', borderRadius: '50%', border: 'none', background: '#f5f5f5', cursor: 'pointer', fontSize: '0.9em', color: '#666' }}
+              >✕</button>
+            </div>
+            {profiles.filter(p => !folderAgentIds.has(p.id)).length === 0 ? (
+              <div style={{ padding: '20px', color: '#aaa', fontSize: '0.9em', textAlign: 'center' }}>
+                {lang === 'zh' ? '所有智能体已添加到此文件夹' : 'All agents have been added to this folder'}
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '360px', overflowY: 'auto' }}>
+                {profiles.filter(p => !folderAgentIds.has(p.id)).map(p => (
+                  <button
+                    key={p.id}
+                    onClick={async () => {
+                      try {
+                        await agentFolders.addItem(folderId!, p.id);
+                        setFolderAgentIds(prev => prev ? new Set([...prev, p.id]) : new Set([p.id]));
+                      } catch {}
+                    }}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '10px',
+                      width: '100%', padding: '10px 14px', border: '1px solid #f0f0f0',
+                      borderRadius: '8px', background: '#fff', cursor: 'pointer',
+                      fontSize: '0.88em', color: '#444', textAlign: 'left',
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.background = '#f5f7fa'; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = '#fff'; }}
+                  >
+                    <span style={{ fontSize: '1.5em' }}>{p.avatar || '🤖'}</span>
+                    <div>
+                      <div style={{ fontWeight: 600, color: '#333' }}>{p.name}</div>
+                      <div style={{ fontSize: '0.8em', color: '#999', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '300px' }}>{p.description}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       <div style={{
         display: 'grid',
         gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
@@ -376,7 +440,12 @@ Review Sample Rate: 1.0`}
             onRemoveFromFolder={folderId ? handleRemoveFromFolder : undefined}
           />
         ))}
-        {!isObserver && <AgentCreateCard onClick={() => setShowCreate(true)} />}
+        {!isObserver && (
+          <AgentCreateCard
+            label={folderId ? (lang === 'zh' ? '添加智能体到此文件夹' : 'Add Agent to Folder') : undefined}
+            onClick={() => folderId ? setShowAddToFolder(true) : setShowCreate(true)}
+          />
+        )}
       </div>
 
       {filteredProfiles.length === 0 && (
@@ -389,6 +458,13 @@ Review Sample Rate: 1.0`}
         <AgentForm
           onClose={() => setShowCreate(false)}
           onCreated={fetchProfiles}
+        />
+      )}
+
+      {showBatchImport && (
+        <BatchImportDialog
+          onClose={() => setShowBatchImport(false)}
+          onImported={fetchProfiles}
         />
       )}
 

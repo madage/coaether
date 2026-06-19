@@ -2,6 +2,7 @@ import React from 'react';
 
 interface AgentCreateCardProps {
   onClick: () => void;
+  label?: string;
 }
 
 const cardStyle: React.CSSProperties = {
@@ -17,7 +18,7 @@ const cardStyle: React.CSSProperties = {
   minHeight: '200px',
 };
 
-export function AgentCreateCard({ onClick }: AgentCreateCardProps) {
+export function AgentCreateCard({ onClick, label }: AgentCreateCardProps) {
   return (
     <div
       style={cardStyle}
@@ -35,7 +36,7 @@ export function AgentCreateCard({ onClick }: AgentCreateCardProps) {
     >
       <div style={{ textAlign: 'center', color: '#bbb' }}>
         <div style={{ fontSize: '4em', lineHeight: 1, marginBottom: '12px' }}>+</div>
-        <div style={{ fontSize: '0.95em' }}>添加新的智能体</div>
+        <div style={{ fontSize: '0.95em' }}>{label || '添加新的智能体'}</div>
       </div>
     </div>
   );

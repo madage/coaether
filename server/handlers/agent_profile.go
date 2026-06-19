@@ -129,8 +129,8 @@ func (h *AgentProfileHandler) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if req.Name == "" || req.AgentID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "name and agent_id are required"})
+	if req.Name == "" || false {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name is required"})
 		return
 	}
 
