@@ -23,12 +23,11 @@
 13. [API Token 管理](#12-api-token-管理)
 14. [日志管理](#13-日志管理)
 15. [会话管理](#14-会话管理)
-16. [插件管理](#15-插件管理)
-17. [工作流管理](#16-工作流管理)
-18. [Harness 智能体工具调用](#17-harness-智能体工具调用)
-19. [工具集管理](#18-工具集管理)
-20. [辅助接口](#19-辅助接口)
-21. [接口一览表](#20-接口一览表)
+16. [工作流管理](#15-工作流管理)
+17. [Harness 智能体工具调用](#16-harness-智能体工具调用)
+18. [工具集管理](#17-工具集管理)
+19. [辅助接口](#18-辅助接口)
+20. [接口一览表](#19-接口一览表)
 
 ---
 
@@ -2636,212 +2635,7 @@ GET /api/sessions/:id/messages
 
 ---
 
-## 15. 插件管理
-
-### 15.1 插件模型
-
-```json
-{
-  "name": "plugin-name",
-  "version": "1.0.0",
-  "type": "builtin | external",
-  "state": "registered | running | stopped | error",
-  "label": { "zh_CN": "插件名称", "en_US": "Plugin Name" },
-  "description": { "zh_CN": "插件描述", "en_US": "Plugin Description" },
-  "author": "author-name",
-  "pid": 12345,
-  "port": 9090,
-  "error": "错误信息（如有）",
-  "permissions": ["read_tasks", "write_tasks"],
-  "hooks": ["on_task_create", "on_comment"],
-  "api_routes": ["/api/plugin/xx"],
-  "frontend_slots": { "slot_name": "ComponentName" },
-  "uptime_seconds": 3600
-}
-```
-
-### 15.2 列出插件
-
-```
-GET /api/plugins
-```
-
-**认证：** JWT
-
-**响应：**
-
-```json
-{ "plugins": [ /* PluginView 对象数组 */ ] }
-```
-
----
-
-### 15.3 获取插件详情
-
-```
-GET /api/plugins/:name
-```
-
-**认证：** JWT
-
-**响应：**
-
-```json
-{ "plugin": { /* Plugin 完整信息 */ } }
-```
-
----
-
-### 15.4 启动插件
-
-```
-POST /api/plugins/:name/start
-```
-
-**认证：** JWT
-
-**响应：**
-
-```json
-{ "status": "started", "plugin": "plugin-name" }
-```
-
----
-
-### 15.5 停止插件
-
-```
-POST /api/plugins/:name/stop
-```
-
-**认证：** JWT
-
-**响应：**
-
-```json
-{ "status": "stopped", "plugin": "plugin-name" }
-```
-
----
-
-### 15.6 移除插件
-
-```
-POST /api/plugins/:name/remove
-```
-
-**认证：** JWT
-
-**说明：** 从插件管理器和磁盘上删除插件。
-
-**响应：**
-
-```json
-{ "status": "removed", "plugin": "plugin-name" }
-```
-
----
-
-### 15.7 重新加载插件
-
-```
-POST /api/plugins/:name/reload
-```
-
-**认证：** JWT
-
-**说明：** 停止并重新注册启动插件。
-
-**响应：**
-
-```json
-{ "status": "reloaded", "plugin": "plugin-name" }
-```
-
----
-
-### 15.8 插件健康检查
-
-```
-GET /api/plugins/:name/health
-```
-
-**认证：** JWT
-
-**响应：**
-
-```json
-{ "health": { "status": "ok", "uptime_seconds": 3600 } }
-```
-
----
-
-### 15.9 上传安装插件
-
-```
-POST /api/plugins/install/upload
-```
-
-**认证：** JWT
-
-**说明：** 通过上传 ZIP 包安装插件。
-
-**请求体：** `multipart/form-data`，包含插件 ZIP 文件。
-
-**响应（201）：**
-
-```json
-{ "status": "installed", "plugin": "plugin-name" }
-```
-
----
-
-### 15.10 从 Git 安装插件
-
-```
-POST /api/plugins/install/git
-```
-
-**认证：** JWT
-
-**请求体：**
-
-```json
-{
-  "url": "https://github.com/user/plugin-repo.git",
-  "branch": "main（可选）"
-}
-```
-
-**响应（201）：**
-
-```json
-{ "status": "installed", "plugin": "plugin-name" }
-```
-
----
-
-### 15.11 插件宿主内部 API（供插件内部使用）
-
-> 这些接口仅供插件运行时内部调用，端点位于 `/api/__plugin_host/*`。
-
-| 操作 | 方法 | 路径 | 说明 |
-|------|------|------|------|
-| 查询任务 | `GET` | `/api/__plugin_host/tasks` | 查询任务列表 |
-| 查询项目 | `GET` | `/api/__plugin_host/projects` | 查询项目列表 |
-| 创建任务 | `POST` | `/api/__plugin_host/tasks` | 创建新任务 |
-| 更新任务 | `PUT` | `/api/__plugin_host/tasks/:id` | 更新任务 |
-| 删除任务 | `DELETE` | `/api/__plugin_host/tasks/:id` | 删除任务 |
-| 发送消息 | `POST` | `/api/__plugin_host/message` | 发送系统消息 |
-| 检查权限 | `GET` | `/api/__plugin_host/permission` | 检查操作权限 |
-| 写入日志 | `POST` | `/api/__plugin_host/log` | 写入日志 |
-| 读取 KV | `GET` | `/api/__plugin_host/kv/:key` | 读取键值存储 |
-| 写入 KV | `POST` | `/api/__plugin_host/kv/:key` | 写入键值存储 |
-| 删除 KV | `DELETE` | `/api/__plugin_host/kv/:key` | 删除键值存储 |
-
----
-
-## 16. 工作流管理
+## 15. 工作流管理
 
 ### 16.1 工作流模型
 
@@ -3028,7 +2822,7 @@ DAGEngine 在工作流执行过程中自动管理任务依赖：
 
 ---
 
-## 17. Harness 智能体工具调用
+## 16. Harness 智能体工具调用
 
 > Harness 是智能体在工作流中调用系统功能的权限安全层。智能体通过在回复中嵌入 JSON 格式的 `tool_call` 来调用以下工具。
 
@@ -3235,7 +3029,7 @@ DAGEngine 在工作流执行过程中自动管理任务依赖：
 
 ---
 
-## 18. 工具集管理
+## 17. 工具集管理
 
 > 工具集页面展示所有 Harness 工具，支持全局启用/禁用控制。
 
@@ -3299,7 +3093,7 @@ POST /api/tools/:toolName/toggle
 
 ---
 
-## 19. 辅助接口
+## 18. 辅助接口
 
 ### 19.1 健康检查
 
@@ -3377,7 +3171,7 @@ GET /api/nodes/bin/:os/:arch
 
 ---
 
-## 20. 接口一览表
+## 19. 接口一览表
 
 | # | 操作 | 方法 | 路径 | 认证 |
 |---|------|------|------|------|
@@ -3487,27 +3281,17 @@ GET /api/nodes/bin/:os/:arch
 | 14.3 | 列出会话 | `GET` | `/api/sessions` | JWT |
 | 14.4 | 获取会话 | `GET` | `/api/sessions/:id` | JWT |
 | 14.5 | 获取会话消息 | `GET` | `/api/sessions/:id/messages` | JWT |
-| 15.2 | 列出插件 | `GET` | `/api/plugins` | JWT |
-| 15.3 | 获取插件详情 | `GET` | `/api/plugins/:name` | JWT |
-| 15.4 | 启动插件 | `POST` | `/api/plugins/:name/start` | JWT |
-| 15.5 | 停止插件 | `POST` | `/api/plugins/:name/stop` | JWT |
-| 15.6 | 移除插件 | `POST` | `/api/plugins/:name/remove` | JWT |
-| 15.7 | 重新加载插件 | `POST` | `/api/plugins/:name/reload` | JWT |
-| 15.8 | 插件健康检查 | `GET` | `/api/plugins/:name/health` | JWT |
-| 15.9 | 上传安装插件 | `POST` | `/api/plugins/install/upload` | JWT |
-| 15.10 | 从 Git 安装插件 | `POST` | `/api/plugins/install/git` | JWT |
-| 15.11 | 插件宿主 API 列表 | `GET/POST/PUT/DELETE` | `/api/__plugin_host/*` | 内部使用 |
-| 16.1 | 列出工作流 | `GET` | `/api/workflows` | JWT |
-| 16.2 | 创建工作流 | `POST` | `/api/workflows` | JWT |
-| 16.3 | 获取工作流 | `GET` | `/api/workflows/:id` | JWT |
-| 16.4 | 更新工作流状态 | `PATCH` | `/api/workflows/:id/status` | JWT |
-| 16.5 | 列出工作流任务 | `GET` | `/api/workflows/:id/tasks` | JWT |
-| 16.6 | 附加任务到工作流 | `POST` | `/api/workflows/attach` | JWT |
-| 18.1 | 列出所有工具 | `GET` | `/api/tools` | JWT |
-| 18.2 | 切换工具开关 | `POST` | `/api/tools/:toolName/toggle` | JWT |
-| 19.1 | 健康检查 | `GET` | `/api/health` | 公开 |
-| 19.2 | WebSocket 仪表盘 | `GET` | `/ws/dashboard` | 公开 |
-| 19.3 | WebSocket 消息总线 | `GET` | `/ws/bus` | 公开 |
-| 19.4 | 安装脚本（Linux） | `GET` | `/api/nodes/install.sh` | 公开 |
-| 19.5 | 安装脚本（Windows） | `GET` | `/api/nodes/install.ps1` | 公开 |
-| 19.6 | 下载节点二进制 | `GET` | `/api/nodes/bin/:os/:arch` | 公开 |
+| 15.1 | 列出工作流 | `GET` | `/api/workflows` | JWT |
+| 15.2 | 创建工作流 | `POST` | `/api/workflows` | JWT |
+| 15.3 | 获取工作流 | `GET` | `/api/workflows/:id` | JWT |
+| 15.4 | 更新工作流状态 | `PATCH` | `/api/workflows/:id/status` | JWT |
+| 15.5 | 列出工作流任务 | `GET` | `/api/workflows/:id/tasks` | JWT |
+| 15.6 | 附加任务到工作流 | `POST` | `/api/workflows/attach` | JWT |
+| 17.1 | 列出所有工具 | `GET` | `/api/tools` | JWT |
+| 17.2 | 切换工具开关 | `POST` | `/api/tools/:toolName/toggle` | JWT |
+| 18.1 | 健康检查 | `GET` | `/api/health` | 公开 |
+| 18.2 | WebSocket 仪表盘 | `GET` | `/ws/dashboard` | 公开 |
+| 18.3 | WebSocket 消息总线 | `GET` | `/ws/bus` | 公开 |
+| 18.4 | 安装脚本（Linux） | `GET` | `/api/nodes/install.sh` | 公开 |
+| 18.5 | 安装脚本（Windows） | `GET` | `/api/nodes/install.ps1` | 公开 |
+| 18.6 | 下载节点二进制 | `GET` | `/api/nodes/bin/:os/:arch` | 公开 |

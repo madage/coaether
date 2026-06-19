@@ -1,1 +1,0 @@
-export { AnnotationTab } from './AnnotationTab';
