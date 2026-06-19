@@ -833,11 +833,15 @@ func (r *Runtime) registerBackends() {
 			r.reportAndCheckTokens(sessionID, input, output)
 		})
 		// Configure MCP server path so .mcp.json is written for each session
-		mcpServerPath := "mcp-server.exe"
+		mcpServerName := "mcp-server"
+		if runtime.GOOS == "windows" {
+			mcpServerName = "mcp-server.exe"
+		}
+		mcpServerPath := mcpServerName
 		if exe, err := os.Executable(); err == nil {
 			exeDir := filepath.Dir(exe)
 			backends.WorkspaceBaseDir = exeDir
-			exePath := filepath.Join(exeDir, "mcp-server.exe")
+			exePath := filepath.Join(exeDir, mcpServerName)
 			if _, err := os.Stat(exePath); err == nil {
 				mcpServerPath = exePath
 			}
@@ -961,17 +965,18 @@ func (r *Runtime) scanWorkspaces() {
 				continue
 			}
 			// Recent completion — rebuild resume mapping for pending review/rework
+			// Use the directory name as wsKey (works for both task-based and session-based dirs)
+			diskWsKey := filepath.Base(wsDir)
 			if cli != nil && state.ClaudeSessionID != "" {
-				wsKey := backends.WorkspaceKey(state.TaskID, state.AgentProfileID)
-				if wsKey != "" {
-					cli.RestoreResumeSession(wsKey, state.ClaudeSessionID)
-					log.Printf("[Runtime] Recovery: resume session %s → %s", wsKey, state.ClaudeSessionID[:8])
-				}
+				cli.RestoreResumeSession(diskWsKey, state.ClaudeSessionID)
+				log.Printf("[Runtime] Recovery: resume session %s → %s", diskWsKey, state.ClaudeSessionID[:8])
 			}
 			// Rebuild recentlyCompleted to suppress duplicate @mention triggers
-			r.connMu.Lock()
-			r.recentlyCompleted[state.TaskID+":"+state.AgentProfileID] = updatedAt
-			r.connMu.Unlock()
+			if state.TaskID != "" {
+				r.connMu.Lock()
+				r.recentlyCompleted[state.TaskID+":"+state.AgentProfileID] = updatedAt
+				r.connMu.Unlock()
+			}
 			recovered++
 		}
 	}

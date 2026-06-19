@@ -71,6 +71,7 @@ type claudeSession struct {
 	taskID    string
 	queueID   string
 	profileID string
+	wsKey          string // workspace directory key for session persistence
 	claudeSessionID string // Claude's native session_id for --resume across rounds
 }
 
@@ -262,7 +263,7 @@ func (b *ClaudeCLIBackend) startSession(sessionID, taskID, queueID, profileID, w
 		}
 
 		// Persist session state so agent-runtime can recover after restart
-		if taskID != "" && profileID != "" {
+		{
 			state := &SessionState{
 				SessionID:      sessionID,
 				TaskID:         taskID,
@@ -320,6 +321,7 @@ func (b *ClaudeCLIBackend) startSession(sessionID, taskID, queueID, profileID, w
 		taskID:       taskID,
 		queueID:      queueID,
 		profileID:    profileID,
+		wsKey:        wsKey,
 	}
 
 	// Stderr logging
@@ -424,14 +426,12 @@ func (b *ClaudeCLIBackend) handleSystemEvent(sess *claudeSession, rawJSON string
 	sess.mu.Unlock()
 
 	// Store Claude session_id for --resume on next round (same task+agent)
-	if sess.taskID != "" && sess.profileID != "" {
-		wsKey := sess.taskID[:8] + "-" + sess.profileID[:8]
+	{
 		b.mu.Lock()
-		b.resumeSessions[wsKey] = raw.SessionID
+		b.resumeSessions[sess.wsKey] = raw.SessionID
 		b.mu.Unlock()
 
-		// Update on-disk session state with claude native session id
-		wsDir := WorkspaceDir(sess.taskID, sess.profileID)
+		wsDir := filepath.Join(WorkspaceBaseDir, "workspaces", sess.wsKey)
 		if state, err := ReadSessionState(wsDir); err == nil {
 			state.ClaudeSessionID = raw.SessionID
 			if err := WriteSessionState(wsDir, state); err != nil {
@@ -552,8 +552,8 @@ func (b *ClaudeCLIBackend) handleResultEvent(sess *claudeSession, evt *streamJSO
 	sess.setCompleted()
 
 	// Mark session state as completed on disk
-	if sess.taskID != "" && sess.profileID != "" {
-		wsDir := WorkspaceDir(sess.taskID, sess.profileID)
+	{
+		wsDir := filepath.Join(WorkspaceBaseDir, "workspaces", sess.wsKey)
 		if state, err := ReadSessionState(wsDir); err == nil {
 			state.Status = "completed"
 			if err := WriteSessionState(wsDir, state); err != nil {
