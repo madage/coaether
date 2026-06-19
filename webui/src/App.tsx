@@ -7,7 +7,6 @@ import { AgentFolderPanel } from './components/AgentFolderPanel';
 import { TaskBoard } from './components/TaskBoard';
 import { ProjectList } from './components/ProjectList';
 import { TrashView } from './components/TrashView';
-import { PluginList } from './components/PluginList';
 import { RuleList } from './components/RuleList';
 import { SkillList } from './components/SkillList';
 import { ToolSet } from './components/ToolSet';
@@ -24,9 +23,8 @@ import { useLang } from './i18n/context';
 import { auth as authApi, workspaces as workspacesApi, workspaceMembers as workspaceMembersApi, invitations as invitationsApi, users as usersApi, tokens as tokensApi } from './api/client';
 import type { Node, Session, AuthState, Workspace, WorkspaceRole, WorkspaceMember, UserSummary, ApiToken } from './types';
 import WorkspaceContext from './hooks/WorkspaceContext';
-import { pluginClient } from './plugin/PluginClient';
 
-type Page = 'nodes' | 'tasks' | 'rules' | 'projects' | 'agents' | 'tools' | 'skills' | 'agent-queue' | 'workflows' | 'plugins' | 'logs' | 'trash';
+type Page = 'nodes' | 'tasks' | 'rules' | 'projects' | 'agents' | 'tools' | 'skills' | 'agent-queue' | 'workflows' | 'logs' | 'trash';
 
 function App() {
   const { t, lang } = useLang();
@@ -313,13 +311,6 @@ function App() {
     });
     return unsub;
   }, [auth.token, subscribeNotification]);
-
-  // Initialize plugin client on auth
-  useEffect(() => {
-    if (auth.token) {
-      pluginClient.init('/api');
-    }
-  }, [auth.token]);
 
   const handleCreateWorkspace = useCallback(async () => {
     if (!newWsName.trim()) return;
@@ -723,9 +714,9 @@ function App() {
 
         {/* Navigation */}
         <nav style={{ display: 'flex', flexDirection: 'column', padding: sidebarCollapsed ? '4px' : '8px', flex: 1 }}>
-          {(['nodes', 'tasks', 'rules', 'projects', 'agents', 'tools', 'skills', 'agent-queue', 'workflows', ...(auth.workspace_role === 'owner' || auth.workspace_role === 'admin' ? ['plugins'] : []), 'logs', 'trash'] as Page[]).map((p) => {
-            const icon = p === 'nodes' ? '📡' : p === 'tasks' ? '📋' : p === 'projects' ? '📁' : p === 'agents' ? '🤖' : p === 'rules' ? '⚡' : p === 'tools' ? '🔧' : p === 'skills' ? '📚' : p === 'agent-queue' ? '⏳' : p === 'workflows' ? '🔗' : p === 'plugins' ? '🧩' : p === 'logs' ? '📜' : '🗑';
-            const label = p === 'nodes' ? t('navNodes') : p === 'tasks' ? t('navTasks') : p === 'projects' ? t('navProjects') : p === 'agents' ? t('agents') : p === 'rules' ? t('navAutomation') : p === 'tools' ? t('navTools') : p === 'skills' ? t('navSkills') : p === 'agent-queue' ? t('navAgentQueue') || 'Queue' : p === 'workflows' ? (t('taskWorkflow') || 'Workflows') : p === 'plugins' ? t('navPlugins') : p === 'logs' ? t('navLogs') : t('navTrash');
+          {(['nodes', 'tasks', 'rules', 'projects', 'agents', 'tools', 'skills', 'agent-queue', 'workflows', 'logs', 'trash'] as Page[]).map((p) => {
+            const icon = p === 'nodes' ? '📡' : p === 'tasks' ? '📋' : p === 'projects' ? '📁' : p === 'agents' ? '🤖' : p === 'rules' ? '⚡' : p === 'tools' ? '🔧' : p === 'skills' ? '📚' : p === 'agent-queue' ? '⏳' : p === 'workflows' ? '🔗' : p === 'logs' ? '📜' : '🗑';
+            const label = p === 'nodes' ? t('navNodes') : p === 'tasks' ? t('navTasks') : p === 'projects' ? t('navProjects') : p === 'agents' ? t('agents') : p === 'rules' ? t('navAutomation') : p === 'tools' ? t('navTools') : p === 'skills' ? t('navSkills') : p === 'agent-queue' ? t('navAgentQueue') || 'Queue' : p === 'workflows' ? (t('taskWorkflow') || 'Workflows') : p === 'logs' ? t('navLogs') : t('navTrash');
             return (
               <button
                 key={p}
@@ -946,10 +937,6 @@ function App() {
           <WorkflowList key={workspaceKey} />
         </div>
 
-        {/* Plugins page */}
-        <div style={{ display: page === 'plugins' ? 'block' : 'none', height: '100%', overflow: 'auto' }}>
-          <PluginList key={workspaceKey} />
-        </div>
 
         {/* Logs page */}
         <div style={{ display: page === 'logs' ? 'block' : 'none', height: '100%', overflow: 'auto' }}>

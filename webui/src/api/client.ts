@@ -1,4 +1,4 @@
-import type { Node, Session, CreateSessionReq, Agent, AgentProfile, AgentFolder, FolderItem, RuntimeEntity, Task, CreateTaskReq, UpdateTaskReq, TaskStatus, TaskAssignee, AddAssigneeReq, Priority, Project, CreateProjectReq, UpdateProjectReq, ProjectStatus, Workspace, CreateWorkspaceReq, UpdateWorkspaceReq, WorkspaceMember, AddMemberReq, UpdateMemberRoleReq, PendingInvitation, InviteMemberReq, UserSummary, Comment, CreateCommentReq, PluginInfo, AppNotification, TaskRule, TaskRuleLog, CreateRuleReq, UpdateRuleReq, Skill, CreateSkillReq, ExtractSkillReq, AgentQueueItem, AgentLoadInfo, ReviewTaskReq, Workflow, CreateWorkflowReq, AttachToWorkflowReq, DecompositionPlan, DecompositionPlanItem, ApprovePlanReq, SystemTool, ApiToken, CreateTokenReq, CreateTokenRes, AgentToolLogItem, AccessLogItem, TokenUsageItem, SystemEventItem, PaginatedResp } from '../types';
+import type { Node, Session, CreateSessionReq, Agent, AgentProfile, AgentFolder, FolderItem, RuntimeEntity, Task, CreateTaskReq, UpdateTaskReq, TaskStatus, TaskAssignee, AddAssigneeReq, Priority, Project, CreateProjectReq, UpdateProjectReq, ProjectStatus, Workspace, CreateWorkspaceReq, UpdateWorkspaceReq, WorkspaceMember, AddMemberReq, UpdateMemberRoleReq, PendingInvitation, InviteMemberReq, UserSummary, Comment, CreateCommentReq, AppNotification, TaskRule, TaskRuleLog, CreateRuleReq, UpdateRuleReq, Skill, CreateSkillReq, ExtractSkillReq, AgentQueueItem, AgentLoadInfo, ReviewTaskReq, Workflow, CreateWorkflowReq, AttachToWorkflowReq, DecompositionPlan, DecompositionPlanItem, ApprovePlanReq, SystemTool, ApiToken, CreateTokenReq, CreateTokenRes, AgentToolLogItem, AccessLogItem, TokenUsageItem, SystemEventItem, PaginatedResp } from '../types';
 
 
 
@@ -625,55 +625,6 @@ export const rules = {
     request<{ status: string }>(`/rules/${id}`, { method: 'DELETE' }),
   listLogs: (id: string) =>
     request<{ logs: TaskRuleLog[] }>(`/rules/${id}/logs`),
-};
-
-// Plugins
-
-export const plugins = {
-  list: () => request<{ plugins: PluginInfo[] }>('/plugins'),
-  get: (id: string) => request<{ plugin: PluginInfo }>(`/plugins/${id}`),
-  start: (id: string) => request<{ status: string; plugin: string }>(`/plugins/${id}/start`, { method: 'POST' }),
-  stop: (id: string) => request<{ status: string; plugin: string }>(`/plugins/${id}/stop`, { method: 'POST' }),
-  reload: (id: string) => request<{ status: string; plugin: string }>(`/plugins/${id}/reload`, { method: 'POST' }),
-  remove: (id: string) => request<{ status: string; plugin: string }>(`/plugins/${id}/remove`, { method: 'POST' }),
-
-  installUpload: async (file: File) => {
-    const token = getToken();
-    const wsId = localStorage.getItem('workspace_id');
-    const formData = new FormData();
-    formData.append('plugin', file);
-
-    let url = `${BASE}/plugins/install/upload`;
-    if (wsId) url += `?workspace_id=${encodeURIComponent(wsId)}`;
-
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: formData,
-    });
-
-    if (res.status === 401) {
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      localStorage.removeItem('workspace_id');
-      localStorage.removeItem('activeSessionID');
-      window.location.reload();
-      throw new Error('Session expired');
-    }
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(err.error || 'Request failed');
-    }
-    return res.json() as Promise<{ status: string; plugin: string; version: string }>;
-  },
-
-  installGit: (url: string, branch?: string) =>
-    request<{ status: string; plugin: string; version: string }>('/plugins/install/git', {
-      method: 'POST',
-      body: JSON.stringify({ url, branch }),
-    }),
 };
 
 // Tools (system harness tool management)

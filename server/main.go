@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"log"
 	"net/http"
 	"os"
@@ -24,8 +23,6 @@ import (
 	"github.com/coaether/server/protocol"
 
 	"github.com/coaether/server/store"
-
-	"github.com/coaether/server/plugin"
 )
 
 func main() {
@@ -167,24 +164,6 @@ func main() {
 	userH := handlers.NewUserHandler(database.DB)
 
 	busH.Hub = dashHub // link for dashboard broadcasting
-
-	// ===== Plugin System =====
-
-	pluginDir := "."
-	pluginMgr := plugin.NewManager(pluginDir, ".")
-
-	loaded, err := pluginMgr.LoadAndRegister()
-	if err != nil {
-		log.Printf("[Server] Plugin scan warning: %v", err)
-	}
-	if len(loaded) > 0 {
-		log.Printf("[Server] Registered plugins: %v", loaded)
-	} else {
-		log.Println("[Server] No plugins registered")
-	}
-
-	hostSvc := plugin.NewHostService(messageBus, pluginMgr)
-	pluginH := handlers.NewPluginHandler(pluginMgr)
 
 	nodeAgentH := handlers.NewNodeAgentHandler(database.DB, messageBus)
 	nodeAgentH.Hub = dashHub
@@ -554,8 +533,6 @@ func main() {
 			c.JSON(200, gin.H{"messages": envelopes})
 
 		})
-		plugin.RegisterPluginRoutes(api, pluginMgr, hostSvc, pluginH)
-
 		// Workflows
 		api.GET("/workflows", workflowH.ListWorkflows)
 		api.POST("/workflows", workflowH.CreateWorkflow)
@@ -566,12 +543,6 @@ func main() {
 
 	}
 
-	// Auto-start discovered plugins
-	started := pluginMgr.StartAll(context.Background())
-	if len(started) > 0 {
-		log.Printf("[Server] Auto-started plugins: %v", started)
-	}
-	
 	// Serve static frontend and SPA fallback
 	webuiDir := "webui"
 	if _, err := os.Stat(webuiDir); err == nil {
