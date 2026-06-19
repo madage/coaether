@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -132,6 +134,35 @@ func (b *ClaudeBackend) HandleMessage(env *protocol.Envelope) (*protocol.Envelop
 	if result.Usage.InputTokens > 0 || result.Usage.OutputTokens > 0 {
 		blocks = append(blocks, protocol.SeparatorBlock(fmt.Sprintf("Tokens: %d in / %d out",
 			result.Usage.InputTokens, result.Usage.OutputTokens)))
+	}
+
+	// Persist session state for recovery (same as CLI backend)
+	taskID, _ := getMetaStr(env.Payload.Metadata, "task_id")
+	queueID, _ := getMetaStr(env.Payload.Metadata, "queue_id")
+	profileID, _ := getMetaStr(env.Payload.Metadata, "agent_profile_id")
+
+	var wsKey string
+	if taskID != "" && profileID != "" && len(taskID) >= 8 && len(profileID) >= 8 {
+		wsKey = taskID[:8] + "-" + profileID[:8]
+	} else {
+		wsKey = env.SessionID
+	}
+
+	if wsKey != "" {
+		wsDir := filepath.Join(WorkspaceBaseDir, "workspaces", wsKey)
+		if err := os.MkdirAll(wsDir, 0755); err == nil {
+			state := &SessionState{
+				SessionID:      env.SessionID,
+				TaskID:         taskID,
+				AgentProfileID: profileID,
+				QueueID:        queueID,
+				Status:         "completed",
+				CreatedAt:      time.Now().UTC().Format(time.RFC3339),
+			}
+			if err := WriteSessionState(wsDir, state); err != nil {
+				log.Printf("[ClaudeAPI] Failed to write session state: %v", err)
+			}
+		}
 	}
 
 	return protocol.NewEnvelope("", "", protocol.MsgMessage, &protocol.Payload{
