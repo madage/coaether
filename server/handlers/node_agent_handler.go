@@ -640,6 +640,12 @@ func (h *NodeAgentHandler) CreateSession(c *gin.Context) {
 
 	// Create session on bus — route to the runtime
 	epID := "runtime://" + auth.NodeID
+
+	// Query token_budget from agent profile and reset task token counters
+	var tokenBudget int64
+	h.DB.QueryRow(`SELECT COALESCE(token_budget, 0) FROM agent_profiles WHERE id = $1`, req.AgentID).Scan(&tokenBudget)
+	h.DB.Exec(`UPDATE tasks SET tokens_used = 0, token_budget = $1 WHERE id = $2`, tokenBudget, req.TaskID)
+
 	createEnv := protocol.NewEnvelope("system://api", epID, protocol.MsgSessionCreate,
 		&protocol.Payload{
 			Agents: []protocol.AgentSpec{
@@ -652,6 +658,7 @@ func (h *NodeAgentHandler) CreateSession(c *gin.Context) {
 				"is_auto_task": true,
 				"queue_id":          req.QueueID,
 				"agent_profile_id":  req.AgentID,
+				"token_budget":      tokenBudget,
 			},
 		},
 	)
@@ -899,11 +906,21 @@ func (h *NodeAgentHandler) ReportTokenUsage(c *gin.Context) {
 		return
 	}
 
+	// Update tasks.tokens_used for real-time display
+	if req.TaskID != "" {
+		h.DB.Exec(`UPDATE tasks SET tokens_used = tokens_used + $1 WHERE id = $2`, req.TotalTokens, req.TaskID)
+	}
+
 	// Update workflow tokens if applicable
 	var workflowID string
 	h.DB.QueryRow(`SELECT workflow_id FROM tasks WHERE id = $1 AND deleted_at IS NULL`, req.TaskID).Scan(&workflowID)
 	if workflowID != "" {
 		h.DB.Exec(`UPDATE workflows SET tokens_used = tokens_used + $1 WHERE id = $2`, req.TotalTokens, workflowID)
+	}
+
+	// Signal dashboard for real-time frontend update
+	if h.Hub != nil {
+		h.Hub.SignalChange("tasks")
 	}
 
 	log.Printf("[NodeAgent] Token usage recorded: agent=%s task=%s tokens=%d", req.AgentProfileID[:8], req.TaskID[:8], req.TotalTokens)

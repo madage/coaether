@@ -289,6 +289,35 @@ export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap, 
         </p>
       )}
 
+      {/* Token budget progress bar */}
+      <div style={{ marginTop: '6px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75em', marginBottom: '2px' }}>
+          <span style={{ color: '#888' }}>💰 {task.tokens_used != null ? task.tokens_used.toLocaleString() : '0'} / {task.token_budget != null && task.token_budget > 0 ? task.token_budget.toLocaleString() : '—'}</span>
+          {task.token_budget != null && task.token_budget > 0 && (
+            <span style={{
+              color: (task.tokens_used ?? 0) / task.token_budget < 0.5 ? '#4caf50'
+                : (task.tokens_used ?? 0) / task.token_budget < 0.8 ? '#ff9800' : '#f44336',
+              fontWeight: 600,
+              animation: (task.tokens_used ?? 0) / task.token_budget >= 0.8 ? 'task-card-pulse 1.5s ease-in-out infinite' : 'none',
+            }}>{Math.round(((task.tokens_used ?? 0) / task.token_budget) * 100)}%</span>
+          )}
+        </div>
+        <div style={{ background: '#eee', borderRadius: '3px', height: '4px', overflow: 'hidden' }}>
+          <div style={{
+            width: task.token_budget != null && task.token_budget > 0
+              ? `${Math.min(((task.tokens_used ?? 0) / task.token_budget) * 100, 100)}%`
+              : '0%',
+            height: '100%',
+            background: task.token_budget != null && task.token_budget > 0
+              ? ((task.tokens_used ?? 0) / task.token_budget < 0.5 ? '#4caf50'
+                : (task.tokens_used ?? 0) / task.token_budget < 0.8 ? '#ff9800' : '#f44336')
+              : '#ddd',
+            transition: 'width 0.3s',
+            animation: task.token_budget != null && task.token_budget > 0 && (task.tokens_used ?? 0) / task.token_budget >= 0.8 ? 'task-card-pulse 1.5s ease-in-out infinite' : 'none',
+          }} />
+        </div>
+      </div>
+
       {/* Bottom row: tags, assignee, due date, subtasks */}
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px', marginTop: '4px' }}>
         {/* Tags */}

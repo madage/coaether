@@ -747,6 +747,10 @@ export const en = {
 
   reviewSampleRateHint: '0.0 = never review, 1.0 = always review',
   reviewTimeout: 'Review Timeout (min)',
+  tokenBudget: 'Token Budget',
+  tokenBudgetHint: 'Max tokens allowed per task execution, 0 for unlimited',
+  tokensUsed: 'Tokens Used',
+  tokenBudgetExceeded: 'Token Budget Exceeded',
   maxReviewLoops: 'Max Review Loops',
   agentMaxDepth: 'Max Depth',
   agentSkills: 'Skills',

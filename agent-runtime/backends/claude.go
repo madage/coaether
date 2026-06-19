@@ -137,7 +137,9 @@ func (b *ClaudeBackend) HandleMessage(env *protocol.Envelope) (*protocol.Envelop
 	return protocol.NewEnvelope("", "", protocol.MsgMessage, &protocol.Payload{
 		Content: blocks,
 		Metadata: map[string]any{
-			"model": result.Model,
+			"model":        result.Model,
+			"token_input":  result.Usage.InputTokens,
+			"token_output": result.Usage.OutputTokens,
 		},
 	}), nil
 }

@@ -747,6 +747,10 @@ export const zh = {
 
   reviewSampleRateHint: '0.0 = 从不审核, 1.0 = 始终审核',
   reviewTimeout: '审核超时（分钟）',
+  tokenBudget: 'Token 预算',
+  tokenBudgetHint: '每次任务允许的 token 消耗上限，0 表示不限制',
+  tokensUsed: '已消耗',
+  tokenBudgetExceeded: 'Token 预算耗尽',
   maxReviewLoops: '最大审核轮次',
   agentMaxDepth: '最大深度',
   agentSkills: '技能',

@@ -36,4 +36,5 @@ type AgentProfile struct {
 	CompletionBehavior string          `json:"completion_behavior,omitempty"`
 	ReviewSampleRate  float64          `json:"review_sample_rate"`
 	ReviewTimeout     int              `json:"review_timeout"`                // minutes
+	TokenBudget       int64            `json:"token_budget"`                  // 0 = unlimited
 }

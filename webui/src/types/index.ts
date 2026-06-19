@@ -59,6 +59,7 @@ export interface AgentProfile {
   completion_behavior?: string;
   review_sample_rate: number;
   review_timeout: number;
+  token_budget: number; // 0 = unlimited
 }
 
 // Agent Folder Types
@@ -207,6 +208,8 @@ export interface Task {
   agent_loop_count?: number;
   completion_behavior?: CompletionBehavior;
   parallel_group?: string | null;
+  tokens_used?: number;
+  token_budget?: number; // snapshot from agent_profile
 }
 
 export interface CreateTaskReq {

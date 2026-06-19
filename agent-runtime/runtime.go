@@ -41,6 +41,9 @@ type Runtime struct {
 	endpoint    string
 	sessionMeta        map[string]map[string]string // sessionID → {queueID, taskID, ...}
 	recentlyCompleted  map[string]time.Time          // "taskID:agentProfileID" → completion time
+	sessionTokens      map[string]int64              // sessionID → cumulative token usage
+	sessionBudget      map[string]int64              // sessionID → token budget limit
+	sessionMu          sync.Mutex
 }
 
 // NewRuntime creates a new Runtime.
@@ -54,6 +57,8 @@ func NewRuntime(serverURL, nodeID, name, token, secret string) *Runtime {
 		backends:    make(map[string]Backend),
 		sessionMeta: make(map[string]map[string]string),
 		recentlyCompleted: make(map[string]time.Time),
+		sessionTokens:     make(map[string]int64),
+		sessionBudget:     make(map[string]int64),
 		endpoint:    "runtime://" + nodeID,
 	}
 }
@@ -179,7 +184,7 @@ func (r *Runtime) handleMessage(env *protocol.Envelope) {
 
 	case protocol.MsgSessionCreate:
 		log.Printf("[Runtime] Session create received: %s", env.SessionID)
-		// Store session context (queue_id, task_id) for completion callback
+		// Store session context (queue_id, task_id, token_budget) for completion callback
 		if env.Payload != nil && env.Payload.Context != nil {
 			ctx, ok := env.Payload.Context.(map[string]any)
 			if !ok {
@@ -194,6 +199,15 @@ func (r *Runtime) handleMessage(env *protocol.Envelope) {
 					if val {
 						meta[k] = "true"
 					}
+				case float64:
+					if k == "token_budget" {
+						r.sessionMu.Lock()
+						r.sessionBudget[env.SessionID] = int64(val)
+						r.sessionTokens[env.SessionID] = 0
+						r.sessionMu.Unlock()
+						log.Printf("[Runtime] Token budget: %d for session %s", int64(val), env.SessionID[:8])
+					}
+					meta[k] = fmt.Sprintf("%d", int64(val))
 				}
 			}
 			r.connMu.Lock()
@@ -220,6 +234,14 @@ func (r *Runtime) handleMessage(env *protocol.Envelope) {
 
 	case protocol.MsgEvent, protocol.MsgToolResult:
 		// Session-scoped events consumed by UI clients
+		// Track token usage from backend events
+		if env.Payload != nil && env.Payload.Metadata != nil {
+			input, _ := env.Payload.Metadata["token_input"].(float64)
+			output, _ := env.Payload.Metadata["token_output"].(float64)
+			if input > 0 || output > 0 {
+				r.reportAndCheckTokens(env.SessionID, int64(input), int64(output))
+			}
+		}
 
 	case protocol.MsgToolUse:
 		// Intercept tool calls from auto-task sessions for Harness execution
@@ -274,6 +296,13 @@ func (r *Runtime) handleAgentMessage(env *protocol.Envelope) {
 			resp.SessionID = env.SessionID
 			resp.ReplyTo = env.ID
 			r.send(resp)
+
+			// Token budget tracking
+			if resp.Payload != nil && resp.Payload.Metadata != nil {
+				input, _ := resp.Payload.Metadata["token_input"].(float64)
+				output, _ := resp.Payload.Metadata["token_output"].(float64)
+				r.reportAndCheckTokens(env.SessionID, int64(input), int64(output))
+			}
 		}
 		break
 	}
@@ -799,6 +828,9 @@ func (r *Runtime) registerBackends() {
 		cli.SetSendFunc(r.send)
 		cli.SetOnSessionComplete(func(sessionID, result, stopReason string, isError bool) {
 			r.handleSessionComplete(sessionID, result, stopReason, isError)
+		})
+		cli.SetOnTokenUsage(func(sessionID string, input, output int64) {
+			r.reportAndCheckTokens(sessionID, input, output)
 		})
 		// Configure MCP server path so .mcp.json is written for each session
 		mcpServerPath := "mcp-server.exe"
@@ -1384,4 +1416,111 @@ func (r *Runtime) runLoop() {
 	log.Println("[Runtime] Shutting down...")
 	cancel()
 	r.Shutdown()
+}
+
+func (r *Runtime) reportAndCheckTokens(sessionID string, input, output int64) {
+	total := input + output
+	if total == 0 {
+		return
+	}
+
+	r.sessionMu.Lock()
+	r.sessionTokens[sessionID] += total
+	current := r.sessionTokens[sessionID]
+	budget := r.sessionBudget[sessionID]
+	exceeded := budget > 0 && current >= budget
+	r.sessionMu.Unlock()
+
+	// Async report to server (non-blocking)
+	go r.reportTokenUsage(sessionID, input, output, total)
+
+	if exceeded {
+		log.Printf("[Runtime] Token budget exceeded for session %s: %d/%d", sessionID[:8], current, budget)
+		// Stop the Claude CLI session
+		if cli, ok := r.backends["claude"].(*backends.ClaudeCLIBackend); ok {
+			cli.CloseSession(sessionID)
+		}
+		// Notify server to block the task
+		r.handleTokenBudgetExceeded(sessionID, current, budget)
+	}
+}
+
+func (r *Runtime) reportTokenUsage(sessionID string, input, output, total int64) {
+	r.connMu.Lock()
+	meta, ok := r.sessionMeta[sessionID]
+	r.connMu.Unlock()
+	if !ok {
+		return
+	}
+
+	baseURL := "http://" + r.ServerURL
+	auth := fmt.Sprintf("node_id=%s&node_secret=%s", r.NodeID, r.Secret)
+
+	body := map[string]interface{}{
+		"task_id":          meta["task_id"],
+		"agent_profile_id": meta["agent_profile_id"],
+		"session_id":       sessionID,
+		"prompt_tokens":    input,
+		"completion_tokens": output,
+		"total_tokens":     total,
+		"stage":            "work",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	u := fmt.Sprintf("%s/api/node/token-usage?%s", baseURL, auth)
+	resp, err := http.Post(u, "application/json", bytes.NewBuffer(bodyBytes))
+	if err != nil {
+		log.Printf("[Runtime] Token report failed: %v", err)
+		return
+	}
+	resp.Body.Close()
+}
+
+func (r *Runtime) handleTokenBudgetExceeded(sessionID string, used, budget int64) {
+	r.connMu.Lock()
+	meta, ok := r.sessionMeta[sessionID]
+	r.connMu.Unlock()
+	if !ok {
+		return
+	}
+
+	baseURL := "http://" + r.ServerURL
+	auth := fmt.Sprintf("node_id=%s&node_secret=%s", r.NodeID, r.Secret)
+
+	queueID := meta["queue_id"]
+	taskID := meta["task_id"]
+	agentProfileID := meta["agent_profile_id"]
+
+	// Mark queue as blocked
+	blockBody := map[string]string{
+		"status":         "blocked",
+		"result_summary": fmt.Sprintf("Token budget exceeded: %d/%d", used, budget),
+	}
+	blockBytes, _ := json.Marshal(blockBody)
+	blockURL := fmt.Sprintf("%s/api/node/queue/%s/status?%s", baseURL, queueID, auth)
+	req, _ := http.NewRequest("PUT", blockURL, bytes.NewBuffer(blockBytes))
+	req.Header.Set("Content-Type", "application/json")
+	if resp, err := http.DefaultClient.Do(req); err == nil {
+		resp.Body.Close()
+		log.Printf("[Runtime] Queue %s blocked (token budget)", queueID[:8])
+	}
+
+	// Post system comment
+	commentBody := map[string]string{
+		"content":          fmt.Sprintf("⚠️ Token 预算耗尽：已消耗 %d tokens（上限 %d）。任务已暂停，请调整预算后重试。", used, budget),
+		"agent_profile_id": agentProfileID,
+		"queue_id":         queueID,
+	}
+	commentBytes, _ := json.Marshal(commentBody)
+	commentURL := fmt.Sprintf("%s/api/node/tasks/%s/comments?%s", baseURL, taskID, auth)
+	req2, _ := http.NewRequest("POST", commentURL, bytes.NewBuffer(commentBytes))
+	req2.Header.Set("Content-Type", "application/json")
+	if resp2, err := http.DefaultClient.Do(req2); err == nil {
+		resp2.Body.Close()
+	}
+
+	// Cleanup session state
+	r.sessionMu.Lock()
+	delete(r.sessionTokens, sessionID)
+	delete(r.sessionBudget, sessionID)
+	r.sessionMu.Unlock()
 }

@@ -20,6 +20,9 @@ import (
 // OnSessionComplete is called when a claude process finishes with a result event.
 type OnSessionComplete func(sessionID string, result string, stopReason string, isError bool)
 
+// OnTokenUsage is called when token usage data is received from the Claude CLI stream.
+type OnTokenUsage func(sessionID string, inputTokens, outputTokens int64)
+
 // ClaudeCLIBackend manages persistent claude subprocesses via stream-json protocol.
 type ClaudeCLIBackend struct {
 	command       string
@@ -27,6 +30,7 @@ type ClaudeCLIBackend struct {
 	sessions      map[string]*claudeSession
 	sendFunc      func(*protocol.Envelope)
 	onComplete    OnSessionComplete
+	onTokenUsage  OnTokenUsage
 	serverURL      string
 	nodeID         string
 	nodeSecret     string
@@ -38,6 +42,10 @@ type ClaudeCLIBackend struct {
 
 func (b *ClaudeCLIBackend) SetOnSessionComplete(fn OnSessionComplete) {
 	b.onComplete = fn
+}
+
+func (b *ClaudeCLIBackend) SetOnTokenUsage(fn OnTokenUsage) {
+	b.onTokenUsage = fn
 }
 
 // SetRuntimeConfig sets the runtime connection info needed by the MCP server.
@@ -181,6 +189,7 @@ type assistantMessage struct {
 	Role    string                   `json:"role,omitempty"`
 	Model   string                   `json:"model,omitempty"`
 	Content []assistantContentBlock  `json:"content"`
+	Usage   map[string]any           `json:"usage,omitempty"`
 }
 
 type assistantContentBlock struct {
@@ -498,6 +507,15 @@ func (b *ClaudeCLIBackend) handleAssistantEvent(sess *claudeSession, evt *stream
 					},
 				}).WithSession(sess.sessionID))
 		}
+
+	// Report per-turn token usage for real-time progress
+	if b.onTokenUsage != nil && msg.Usage != nil {
+		input, _ := toInt64(msg.Usage["input_tokens"])
+		output, _ := toInt64(msg.Usage["output_tokens"])
+		if input > 0 || output > 0 {
+			b.onTokenUsage(sess.sessionID, input, output)
+		}
+	}
 	}
 }
 
@@ -507,6 +525,20 @@ func (b *ClaudeCLIBackend) handleResultEvent(sess *claudeSession, evt *streamJSO
 		"total_cost":  evt.TotalCostUSD,
 		"is_error":    evt.IsError,
 		"stop_reason": evt.StopReason,
+	}
+	if evt.Usage != nil {
+		if v, ok := evt.Usage["input_tokens"]; ok {
+			metadata["token_input"] = v
+		}
+		if v, ok := evt.Usage["output_tokens"]; ok {
+			metadata["token_output"] = v
+		}
+		// Report token usage via callback
+		if b.onTokenUsage != nil {
+			input, _ := toInt64(evt.Usage["input_tokens"])
+			output, _ := toInt64(evt.Usage["output_tokens"])
+			b.onTokenUsage(sess.sessionID, input, output)
+		}
 	}
 	b.sendToBus(protocol.NewEnvelope("", sessionTo(sess.sessionID), protocol.MsgEvent,
 		&protocol.Payload{
@@ -1087,4 +1119,21 @@ func filterClaudeEnv(base []string) []string {
 		out = append(out, entry)
 	}
 	return out
+}
+
+
+func toInt64(v any) (int64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return int64(n), true
+	case int64:
+		return n, true
+	case int:
+		return int64(n), true
+	case json.Number:
+		i, err := n.Int64()
+		return i, err == nil
+	default:
+		return 0, false
+	}
 }

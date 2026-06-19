@@ -63,6 +63,10 @@ type Task struct {
 
 	// Review gate: actions awaiting human approval before dispatch
 	PendingReviewActions json.RawMessage `json:"pending_review_actions,omitempty"`
+
+	// Token budget tracking
+	TokensUsed  int64 `json:"tokens_used"`
+	TokenBudget int64 `json:"token_budget"` // snapshot from agent_profile when task is created
 }
 
 type CreateTaskReq struct {

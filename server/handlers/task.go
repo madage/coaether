@@ -33,7 +33,8 @@ func NewTaskHandler(db *sql.DB) *TaskHandler {
 }
 
 const taskSelectCols = `t.id, t.user_id, COALESCE(u.username, '') AS creator_name, t.title, t.description, t.status, t.project_id,
-	t.parent_id, t.assignee_id, t.assignee_type, t.priority, t.due_at, t.completed_at, t.created_at, t.updated_at`
+	t.parent_id, t.assignee_id, t.assignee_type, t.priority, t.due_at, t.completed_at, t.created_at, t.updated_at,
+	COALESCE(t.tokens_used, 0), COALESCE(t.token_budget, 0)`
 
 func (h *TaskHandler) scanTask(scanner interface {
 	Scan(dest ...interface{}) error
@@ -42,6 +43,7 @@ func (h *TaskHandler) scanTask(scanner interface {
 		&t.ID, &t.UserID, &t.CreatorName, &t.Title, &t.Description, &t.Status,
 		&t.ProjectID, &t.ParentID, &t.AssigneeID, &t.AssigneeType,
 		&t.Priority, &t.DueAt, &t.CompletedAt, &t.CreatedAt, &t.UpdatedAt,
+			&t.TokensUsed, &t.TokenBudget,
 	)
 }
 
@@ -416,6 +418,11 @@ func autoProcessTask(db *sql.DB, bus *protocol.MessageBus, taskID, agentProfileI
 		sessionID, userID, nodeID, agentProfileID, taskID, queueID, agentProfileID, models.SessionPending, prompt, workspaceID, now,
 	)
 
+	// Query token_budget and snapshot to task
+	var tokenBudget int64
+	db.QueryRow(`SELECT COALESCE(token_budget, 0) FROM agent_profiles WHERE id = $1`, agentProfileID).Scan(&tokenBudget)
+	db.Exec(`UPDATE tasks SET token_budget = $1 WHERE id = $2`, tokenBudget, taskID)
+
 	// Send session.create to the runtime
 	createEnv := protocol.NewEnvelope("system://api", runtimeEndpoint, protocol.MsgSessionCreate,
 		&protocol.Payload{
@@ -426,6 +433,7 @@ func autoProcessTask(db *sql.DB, bus *protocol.MessageBus, taskID, agentProfileI
 				"task_id":          taskID,
 				"is_auto_task":     true,
 				"agent_profile_id": agentProfileID,
+				"token_budget":     tokenBudget,
 			},
 		},
 	)
@@ -502,6 +510,11 @@ func autoProcessReview(db *sql.DB, bus *protocol.MessageBus, taskID, agentProfil
 		sessionID, userID, nodeID, agentProfileID, models.SessionPending, reviewPrompt, workspaceID, now,
 	)
 
+	// Query token_budget and snapshot to task
+	var revTokenBudget int64
+	db.QueryRow(`SELECT COALESCE(token_budget, 0) FROM agent_profiles WHERE id = $1`, agentProfileID).Scan(&revTokenBudget)
+	db.Exec(`UPDATE tasks SET token_budget = $1 WHERE id = $2`, revTokenBudget, taskID)
+
 	createEnv := protocol.NewEnvelope("system://api", runtimeEndpoint, protocol.MsgSessionCreate,
 		&protocol.Payload{
 			Agents:    []protocol.AgentSpec{{ID: agentProfileID}},
@@ -512,6 +525,7 @@ func autoProcessReview(db *sql.DB, bus *protocol.MessageBus, taskID, agentProfil
 				"is_auto_task":     true,
 				"trigger":          "review",
 				"agent_profile_id": agentProfileID,
+				"token_budget":     revTokenBudget,
 			},
 		},
 	)
@@ -763,6 +777,7 @@ func (h *TaskHandler) Update(c *gin.Context) {
 		&t.ID, &t.UserID, &t.CreatorName, &t.Title, &t.Description, &t.Status,
 		&t.ProjectID, &t.ParentID, &t.AssigneeID, &t.AssigneeType,
 		&t.Priority, &t.DueAt, &t.CompletedAt, &t.CreatedAt, &t.UpdatedAt,
+			&t.TokensUsed, &t.TokenBudget,
 	)
 	t.Tags = h.fetchTags(t.ID)
 	t.Assignees = h.fetchAssignees(t.ID)
@@ -1023,6 +1038,7 @@ func (h *TaskHandler) SetStatus(c *gin.Context) {
 		&t.ID, &t.UserID, &t.CreatorName, &t.Title, &t.Description, &t.Status,
 		&t.ProjectID, &t.ParentID, &t.AssigneeID, &t.AssigneeType,
 		&t.Priority, &t.DueAt, &t.CompletedAt, &t.CreatedAt, &t.UpdatedAt,
+			&t.TokensUsed, &t.TokenBudget,
 	)
 	t.Tags = h.fetchTags(t.ID)
 	t.Assignees = h.fetchAssignees(t.ID)

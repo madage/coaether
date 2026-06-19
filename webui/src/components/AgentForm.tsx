@@ -54,6 +54,7 @@ export function AgentForm({ onClose, onCreated }: AgentFormProps) {
   const [selectedAgent, setSelectedAgent] = useState('');
   const [loadingAgents, setLoadingAgents] = useState(false);
   const [maxConcurrency, setMaxConcurrency] = useState(1);
+  const [tokenBudget, setTokenBudget] = useState(0);
   const capabilityNameKeys: Record<string, string> = {
     create_sub_task: 'toolName_create_sub_task',
     propose_decomposition_plan: 'toolName_propose_decomposition_plan',
@@ -95,6 +96,7 @@ export function AgentForm({ onClose, onCreated }: AgentFormProps) {
         if (data.instructions) setInstructions(data.instructions);
         if (Array.isArray(data.tags)) setTags(data.tags.join(', '));
         if (typeof data.max_concurrency === 'number') setMaxConcurrency(data.max_concurrency);
+        if (typeof data.token_budget === 'number') setTokenBudget(data.token_budget);
         if (Array.isArray(data.capabilities)) {
           setCapabilities(data.capabilities.filter((c: string) => c in capabilityNameKeys));
         }
@@ -179,6 +181,7 @@ export function AgentForm({ onClose, onCreated }: AgentFormProps) {
         node_id: selectedNode,
         tags: tags.split(',').map(t => t.trim()).filter(Boolean),
         max_concurrency: maxConcurrency,
+        token_budget: tokenBudget,
         capabilities: capabilities.length > 0 ? capabilities : undefined,
       });
       // Apply extra imported fields via update
@@ -300,6 +303,21 @@ export function AgentForm({ onClose, onCreated }: AgentFormProps) {
               max={20}
               style={inputStyle}
             />
+          </div>
+
+          <div style={{ marginBottom: '12px' }}>
+            <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
+              {t('tokenBudget')}
+            </label>
+            <input
+              type="number"
+              value={tokenBudget}
+              onChange={(e) => setTokenBudget(Math.max(0, parseInt(e.target.value) || 0))}
+              min={0}
+              placeholder="0 = unlimited"
+              style={inputStyle}
+            />
+            <div style={{ fontSize: '0.75em', color: '#999', marginTop: '2px' }}>{t('tokenBudgetHint')}</div>
           </div>
 
           <div style={{ marginBottom: '12px' }}>

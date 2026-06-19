@@ -599,6 +599,11 @@ func Migrate() error {
 	// Agent Dispatch Review Gate: pending_review_actions stores actions awaiting human approval
 	"ALTER TABLE tasks ADD COLUMN IF NOT EXISTS pending_review_actions JSONB DEFAULT '[]'",
 
+		// Token budget: per-agent and per-task token tracking
+		"ALTER TABLE agent_profiles ADD COLUMN IF NOT EXISTS token_budget BIGINT NOT NULL DEFAULT 0",
+		"ALTER TABLE tasks ADD COLUMN IF NOT EXISTS tokens_used BIGINT NOT NULL DEFAULT 0",
+		"ALTER TABLE tasks ADD COLUMN IF NOT EXISTS token_budget BIGINT NOT NULL DEFAULT 0",
+
 	}
 
 	// Create Harness-related tables that may not exist yet

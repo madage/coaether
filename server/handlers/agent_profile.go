@@ -27,7 +27,7 @@ func (h *AgentProfileHandler) List(c *gin.Context) {
 	workspaceID := c.Query("workspace_id")
 	isMember, _ := c.Get("is_workspace_member")
 
-	query := `SELECT id, user_id, name, avatar, description, COALESCE(system_prompt,''), COALESCE(instructions,''), agent_id, node_id, version, model, backend, enabled, COALESCE(max_concurrency,1), COALESCE(current_load,0), COALESCE(tags,'[]'::jsonb), COALESCE(capabilities,'[]'::jsonb), COALESCE(skills,'[]'::jsonb), COALESCE(review_sample_rate,0.0), COALESCE(review_timeout,240), COALESCE(max_review_loops,3), COALESCE(max_depth,5), COALESCE(completion_behavior,''), last_active_at, created_at, updated_at
+	query := `SELECT id, user_id, name, avatar, description, COALESCE(system_prompt,''), COALESCE(instructions,''), agent_id, node_id, version, model, backend, enabled, COALESCE(max_concurrency,1), COALESCE(current_load,0), COALESCE(tags,'[]'::jsonb), COALESCE(capabilities,'[]'::jsonb), COALESCE(skills,'[]'::jsonb), COALESCE(review_sample_rate,0.0), COALESCE(review_timeout,240), COALESCE(max_review_loops,3), COALESCE(max_depth,5), COALESCE(completion_behavior,''), COALESCE(token_budget,0), last_active_at, created_at, updated_at
 		 FROM agent_profiles`
 	args := []any{}
 	argIdx := 1
@@ -56,7 +56,7 @@ func (h *AgentProfileHandler) List(c *gin.Context) {
 		var p models.AgentProfile
 		if err := rows.Scan(&p.ID, &p.UserID, &p.Name, &p.Avatar, &p.Description,
 			&p.SystemPrompt, &p.Instructions, &p.AgentID, &p.NodeID, &p.Version, &p.Model, &p.Backend, &p.Enabled,
-				&p.MaxConcurrency, &p.CurrentLoad, &p.Tags, &p.Capabilities, &p.Skills, &p.ReviewSampleRate, &p.ReviewTimeout, &p.MaxReviewLoops, &p.MaxDepth, &p.CompletionBehavior, &p.LastActiveAt, &p.CreatedAt, &p.UpdatedAt); err != nil {
+				&p.MaxConcurrency, &p.CurrentLoad, &p.Tags, &p.Capabilities, &p.Skills, &p.ReviewSampleRate, &p.ReviewTimeout, &p.MaxReviewLoops, &p.MaxDepth, &p.CompletionBehavior, &p.TokenBudget, &p.LastActiveAt, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to scan profile"})
 			return
 		}
@@ -70,7 +70,7 @@ func (h *AgentProfileHandler) Get(c *gin.Context) {
 	isMember, _ := c.Get("is_workspace_member")
 	profileID := c.Param("id")
 
-	query := `SELECT id, user_id, name, avatar, description, COALESCE(system_prompt,''), COALESCE(instructions,''), agent_id, node_id, version, model, backend, enabled, COALESCE(max_concurrency,1), COALESCE(current_load,0), COALESCE(tags,'[]'::jsonb), COALESCE(capabilities,'[]'::jsonb), COALESCE(skills,'[]'::jsonb), COALESCE(review_sample_rate,0.0), COALESCE(review_timeout,240), COALESCE(max_review_loops,3), COALESCE(max_depth,5), COALESCE(completion_behavior,''), last_active_at, created_at, updated_at
+	query := `SELECT id, user_id, name, avatar, description, COALESCE(system_prompt,''), COALESCE(instructions,''), agent_id, node_id, version, model, backend, enabled, COALESCE(max_concurrency,1), COALESCE(current_load,0), COALESCE(tags,'[]'::jsonb), COALESCE(capabilities,'[]'::jsonb), COALESCE(skills,'[]'::jsonb), COALESCE(review_sample_rate,0.0), COALESCE(review_timeout,240), COALESCE(max_review_loops,3), COALESCE(max_depth,5), COALESCE(completion_behavior,''), COALESCE(token_budget,0), last_active_at, created_at, updated_at
 		 FROM agent_profiles WHERE id = $1`
 	args := []any{profileID}
 	argIdx := 2
@@ -87,7 +87,7 @@ func (h *AgentProfileHandler) Get(c *gin.Context) {
 	var p models.AgentProfile
 	err := h.DB.QueryRow(query, args...).Scan(&p.ID, &p.UserID, &p.Name, &p.Avatar, &p.Description,
 		&p.SystemPrompt, &p.Instructions, &p.AgentID, &p.NodeID, &p.Version, &p.Model, &p.Backend, &p.Enabled,
-		&p.MaxConcurrency, &p.CurrentLoad, &p.Tags, &p.Capabilities, &p.Skills, &p.ReviewSampleRate, &p.ReviewTimeout, &p.MaxReviewLoops, &p.MaxDepth, &p.CompletionBehavior, &p.LastActiveAt, &p.CreatedAt, &p.UpdatedAt)
+		&p.MaxConcurrency, &p.CurrentLoad, &p.Tags, &p.Capabilities, &p.Skills, &p.ReviewSampleRate, &p.ReviewTimeout, &p.MaxReviewLoops, &p.MaxDepth, &p.CompletionBehavior, &p.TokenBudget, &p.LastActiveAt, &p.CreatedAt, &p.UpdatedAt)
 	if err == sql.ErrNoRows {
 		c.JSON(http.StatusNotFound, gin.H{"error": "profile not found"})
 		return
@@ -124,6 +124,7 @@ func (h *AgentProfileHandler) Create(c *gin.Context) {
 		Tags         json.RawMessage `json:"tags,omitempty"`
 		MaxConcurrency int             `json:"max_concurrency,omitempty"`
 		Capabilities json.RawMessage `json:"capabilities,omitempty"`
+		TokenBudget  int64           `json:"token_budget,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -152,9 +153,9 @@ func (h *AgentProfileHandler) Create(c *gin.Context) {
 	}
 
 	_, err := h.DB.Exec(
-		`INSERT INTO agent_profiles (id, user_id, workspace_id, name, avatar, description, system_prompt, instructions, agent_id, node_id, tags, max_concurrency, capabilities, version, model, backend, enabled, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, '', '', 'cli', true, $14, $14)`,
-		id, userID, workspaceID, req.Name, avatar, req.Description, req.SystemPrompt, req.Instructions, req.AgentID, req.NodeID, tags, req.MaxConcurrency, capabilities, now,
+		`INSERT INTO agent_profiles (id, user_id, workspace_id, name, avatar, description, system_prompt, instructions, agent_id, node_id, tags, max_concurrency, capabilities, token_budget, version, model, backend, enabled, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, '', '', 'cli', true, $15, $15)`,
+		id, userID, workspaceID, req.Name, avatar, req.Description, req.SystemPrompt, req.Instructions, req.AgentID, req.NodeID, tags, req.MaxConcurrency, capabilities, req.TokenBudget, now,
 	)
 	if err != nil {
 		log.Printf("[Profile] Create error: %v", err)
@@ -190,6 +191,7 @@ func (h *AgentProfileHandler) Update(c *gin.Context) {
 		MaxReviewLoops      *int                `json:"max_review_loops,omitempty"`
 		MaxDepth            *int                `json:"max_depth,omitempty"`
 		CompletionBehavior  *string             `json:"completion_behavior,omitempty"`
+		TokenBudget       *int64              `json:"token_budget,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -202,7 +204,7 @@ func (h *AgentProfileHandler) Update(c *gin.Context) {
 		req.AgentID == nil && req.SystemPrompt == nil && req.Instructions == nil && req.NodeID == nil &&
 		req.MaxConcurrency == nil && req.Capabilities == nil && req.Tags == nil && req.Skills == nil &&
 		req.ReviewSampleRate == nil && req.ReviewTimeout == nil && req.MaxReviewLoops == nil &&
-		req.MaxDepth == nil && req.CompletionBehavior == nil
+		req.MaxDepth == nil && req.CompletionBehavior == nil && req.TokenBudget == nil
 
 	if !enabledOnly {
 		var creatorID string
@@ -277,6 +279,9 @@ func (h *AgentProfileHandler) Update(c *gin.Context) {
 		}
 		if req.Enabled != nil {
 			addField("enabled", *req.Enabled)
+		}
+		if req.TokenBudget != nil {
+			addField("token_budget", *req.TokenBudget)
 		}
 
 	if len(setClauses) == 0 {

@@ -81,6 +81,7 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
   const [editMaxConcurrency, setEditMaxConcurrency] = useState(profile.max_concurrency || 1);
   const [editReviewSampleRate, setEditReviewSampleRate] = useState(profile.review_sample_rate ?? 0);
   const [editReviewTimeout, setEditReviewTimeout] = useState(profile.review_timeout ?? 240);
+  const [editTokenBudget, setEditTokenBudget] = useState(profile.token_budget || 0);
   const [editMaxReviewLoops, setEditMaxReviewLoops] = useState(profile.max_review_loops ?? 3);
   const [editMaxDepth, setEditMaxDepth] = useState(profile.max_depth ?? 5);
   const [editCompletionBehavior, setEditCompletionBehavior] = useState(profile.completion_behavior || 'auto_done');
@@ -174,6 +175,7 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
       skills: editSkills.split(',').map(t => t.trim()).filter(Boolean),
       review_sample_rate: editReviewSampleRate,
       review_timeout: editReviewTimeout,
+      token_budget: editTokenBudget,
       max_review_loops: editMaxReviewLoops,
       max_depth: editMaxDepth,
       completion_behavior: editCompletionBehavior,
@@ -191,6 +193,7 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
     setEditMaxConcurrency(profile.max_concurrency || 1);
     setEditReviewSampleRate(profile.review_sample_rate ?? 0);
     setEditReviewTimeout(profile.review_timeout ?? 240);
+    setEditTokenBudget(profile.token_budget || 0);
     setEditMaxReviewLoops(profile.max_review_loops ?? 3);
     setEditMaxDepth(profile.max_depth ?? 5);
     setEditCompletionBehavior(profile.completion_behavior || 'auto_done');
@@ -487,6 +490,20 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
                   style={inputStyle}
                 />
               </div>
+              <div>
+                <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
+                  {t('tokenBudget')}
+                </label>
+                <input
+                  type="number"
+                  value={editTokenBudget}
+                  onChange={(e) => setEditTokenBudget(Math.max(0, parseInt(e.target.value) || 0))}
+                  min={0}
+                  placeholder="0 = unlimited"
+                  style={inputStyle}
+                />
+                <div style={{ fontSize: '0.75em', color: '#999', marginTop: '2px' }}>{t('tokenBudgetHint')}</div>
+              </div>
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', paddingTop: '12px', borderTop: '1px solid #eee' }}>
@@ -668,6 +685,10 @@ export function AgentDetailModal({ profile, runtimeName, nodeName, onClose, onSa
               <div>
                 <div style={{ color: '#999', fontSize: '0.85em' }}>{t('reviewTimeout')}</div>
                 <div style={{ color: '#333', fontWeight: 500 }}>{profile.review_timeout ?? 240} min</div>
+              </div>
+              <div>
+                <div style={{ color: '#999', fontSize: '0.85em' }}>{t('tokenBudget')}</div>
+                <div style={{ color: '#333', fontWeight: 500 }}>{profile.token_budget || 0}</div>
               </div>
               <div>
                 <div style={{ color: '#999', fontSize: '0.85em' }}>{t('agentMaxDepth')}</div>
